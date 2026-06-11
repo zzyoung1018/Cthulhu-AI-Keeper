@@ -42,7 +42,7 @@ set_kv AI_BASE_URL "${AI_BASE_URL}"
 set_kv AI_API_KEY "${AI_API_KEY}"
 set_kv AI_MODEL "${AI_MODEL}"
 set_kv AI_TEMPERATURE "${AI_TEMPERATURE:-0.8}"
-set_kv AI_TIMEOUT_MS "${AI_TIMEOUT_MS:-120000}"
+set_kv AI_TIMEOUT_MS "${AI_TIMEOUT_MS:-240000}"
 set_kv AI_LOCAL_FALLBACK "${AI_LOCAL_FALLBACK:-false}"
 
 install -m 600 -o root -g root "${tmp_file}" "${ENV_FILE}"

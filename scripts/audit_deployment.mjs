@@ -6,7 +6,7 @@ const args = process.argv.slice(2);
 const requireAi = args.includes('--require-ai');
 const baseArg = args.find((arg) => !arg.startsWith('--')) || 'http://127.0.0.1:4173';
 const baseUrl = baseArg.replace(/\/+$/, '');
-const aiStreamTimeoutMs = Number(process.env.DEPLOYMENT_AUDIT_AI_TIMEOUT_MS || 120_000);
+const aiStreamTimeoutMs = Number(process.env.DEPLOYMENT_AUDIT_AI_TIMEOUT_MS || 300_000);
 
 function timeoutSignal(ms) {
   const controller = new AbortController();
@@ -84,6 +84,7 @@ async function waitForStreamedDm(code, playerId, sendMessage) {
   let buffer = '';
   let sawDelta = false;
   let completedMessage = null;
+  let errorMessage = null;
   let reader = null;
 
   try {
@@ -104,13 +105,20 @@ async function waitForStreamedDm(code, playerId, sendMessage) {
       buffer = parseSseChunk(buffer, (event, data) => {
         events.push(event);
         if (event === 'message_delta') sawDelta = true;
+        if (event === 'message_error' && data.message?.authorType === 'dm') {
+          errorMessage = data.message;
+        }
         if (event === 'message_completed' && data.message?.authorType === 'dm') {
           completedMessage = data.message;
         }
       });
+      if (errorMessage) break;
     }
 
     await sent;
+    if (errorMessage) {
+      throw new Error(`DM generation failed: ${errorMessage.content || 'unknown error'}`);
+    }
     assert.ok(events.includes('message_created'), 'expected message_created event');
     assert.equal(sawDelta, true, 'expected streaming message_delta event');
     assert.ok(completedMessage?.content, 'expected completed DM message content');
@@ -118,6 +126,11 @@ async function waitForStreamedDm(code, playerId, sendMessage) {
       assert.ok(
         !completedMessage.content.includes('外部大模型还没有完成配置'),
         'strict AI mode must not use local fallback text'
+      );
+      assert.notEqual(
+        completedMessage.content,
+        '（DM 沉默片刻，等待玩家继续行动。）',
+        'strict AI mode must receive non-empty model content'
       );
     }
     return completedMessage;

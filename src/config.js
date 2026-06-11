@@ -25,7 +25,7 @@ export function loadConfig(env = process.env) {
       apiKey: env.AI_API_KEY || '',
       model: env.AI_MODEL || '',
       temperature: readNumber(env.AI_TEMPERATURE, 0.8),
-      timeoutMs: readNumber(env.AI_TIMEOUT_MS, 120_000),
+      timeoutMs: readNumber(env.AI_TIMEOUT_MS, 240_000),
       localFallback: readBoolean(env.AI_LOCAL_FALLBACK, true)
     }
   };
