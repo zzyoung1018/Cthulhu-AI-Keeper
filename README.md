@@ -25,6 +25,15 @@ AI_MODEL=你的_model
 
 没有配置外部模型时，`AI_LOCAL_FALLBACK=true` 会启用本地占位流式回复，便于测试房间、聊天和流式 UI。正式部署时请设置真实的 `AI_API_KEY` 和 `AI_MODEL`。
 
+服务器上可以用下面的方式安全写入配置并重启服务；脚本不会把密钥打印到终端：
+
+```bash
+AI_BASE_URL=https://api.openai.com/v1 \
+AI_MODEL=你的_model \
+AI_API_KEY=你的_key \
+bash deploy/configure_ai.sh
+```
+
 ## 部署
 
 将仓库复制到服务器后，以 root 身份执行：
