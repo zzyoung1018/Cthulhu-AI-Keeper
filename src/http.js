@@ -66,7 +66,7 @@ export function serveStatic(request, response, publicDir) {
 
   response.writeHead(200, {
     'Content-Type': MIME_TYPES[extname(target)] || 'application/octet-stream',
-    'Cache-Control': target.endsWith('index.html') ? 'no-store' : 'public, max-age=3600'
+    'Cache-Control': 'no-store'
   });
   createReadStream(target).pipe(response);
 }
