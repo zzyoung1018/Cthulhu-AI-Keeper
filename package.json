@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test",
-    "check": "node --check src/*.js && node --check public/app.js"
+    "check": "node --check src/*.js && node --check public/app.js && node --check scripts/*.mjs",
+    "audit:deployment": "node scripts/audit_deployment.mjs"
   }
 }

@@ -60,3 +60,17 @@ journalctl -u dm-online -n 100 --no-pager
 nginx -t
 curl -s http://127.0.0.1:4173/api/health
 ```
+
+## 线上审计
+
+部署后可从任意能访问服务器的机器运行：
+
+```bash
+npm run audit:deployment -- http://8.153.147.137
+```
+
+外部 AI 配置完成后运行严格模式：
+
+```bash
+npm run audit:deployment -- http://8.153.147.137 --require-ai
+```
