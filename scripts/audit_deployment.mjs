@@ -6,6 +6,7 @@ const args = process.argv.slice(2);
 const requireAi = args.includes('--require-ai');
 const baseArg = args.find((arg) => !arg.startsWith('--')) || 'http://127.0.0.1:4173';
 const baseUrl = baseArg.replace(/\/+$/, '');
+const aiStreamTimeoutMs = Number(process.env.DEPLOYMENT_AUDIT_AI_TIMEOUT_MS || 120_000);
 
 function timeoutSignal(ms) {
   const controller = new AbortController();
@@ -78,7 +79,7 @@ function parseSseChunk(buffer, onEvent) {
 }
 
 async function waitForStreamedDm(code, playerId, sendMessage) {
-  const timeout = timeoutSignal(45_000);
+  const timeout = timeoutSignal(aiStreamTimeoutMs);
   const events = [];
   let buffer = '';
   let sawDelta = false;
