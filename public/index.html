@@ -13,11 +13,18 @@
           <div class="brand-mark">D20</div>
           <div>
             <h1>DM Online</h1>
-            <p id="connectionStatus">未进入房间</p>
+            <p class="connection-line">
+              <span class="status-dot" id="connectionDot" aria-hidden="true"></span>
+              <span id="connectionStatus">未进入房间</span>
+            </p>
           </div>
         </div>
 
         <section class="panel" id="entryPanel">
+          <div class="panel-title">
+            <span class="kicker">开桌</span>
+            <h2 id="entryTitle">准备冒险</h2>
+          </div>
           <div class="tabs" role="tablist" aria-label="房间操作">
             <button class="tab active" id="createTab" type="button">创建</button>
             <button class="tab" id="joinTab" type="button">加入</button>
@@ -80,6 +87,7 @@
           <div>
             <span class="kicker">跑团桌</span>
             <h2 id="tableTitle">等待开局</h2>
+            <p id="tableSubtitle">创建或加入房间后开始记录冒险。</p>
           </div>
           <div class="ai-pill" id="aiPill">AI 待命</div>
         </header>
@@ -101,6 +109,6 @@
       </section>
     </main>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/app.js?v=20260611"></script>
+    <script type="module" src="/app.js?v=20260611-ui"></script>
   </body>
 </html>

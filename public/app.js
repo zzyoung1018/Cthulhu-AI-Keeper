@@ -58,6 +58,8 @@ const els = {
   chatLog: document.querySelector('#chatLog'),
   messageForm: document.querySelector('#messageForm'),
   connectionStatus: document.querySelector('#connectionStatus'),
+  connectionDot: document.querySelector('#connectionDot'),
+  tableSubtitle: document.querySelector('#tableSubtitle'),
   aiPill: document.querySelector('#aiPill'),
   copyRoomCode: document.querySelector('#copyRoomCode'),
   toast: document.querySelector('#toast')
@@ -97,7 +99,12 @@ function setMode(mode) {
 
 function setAiBusy(isBusy) {
   els.aiPill.classList.toggle('busy', isBusy);
-  els.aiPill.textContent = isBusy ? 'AI 生成中' : 'AI 待命';
+  els.aiPill.textContent = isBusy ? 'AI 正在写下一幕' : 'AI 待命';
+}
+
+function setConnection(status, text) {
+  els.connectionStatus.textContent = text;
+  els.connectionDot.className = `status-dot ${status}`;
 }
 
 function applyRoomPayload(payload) {
@@ -113,14 +120,14 @@ function renderPlayers() {
   els.players.innerHTML = '';
   for (const participant of state.participants) {
     const node = document.createElement('div');
-    node.className = 'player';
+    node.className = participant.playerId === state.playerId ? 'player self' : 'player';
     node.innerHTML = `
       <div class="player-name"></div>
       <div class="player-meta"></div>
     `;
     node.querySelector('.player-name').textContent = participant.characterName || participant.displayName;
     node.querySelector('.player-meta').textContent = participant.characterName
-      ? participant.displayName
+      ? `${participant.displayName} · 已填写角色`
       : '未填写角色名';
     els.players.append(node);
   }
@@ -137,7 +144,11 @@ function renderMessages() {
   if (!state.room) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = '创建或加入房间后，聊天记录会出现在这里。';
+    empty.innerHTML = `
+      <div class="empty-mark">D20</div>
+      <h3>等待开桌</h3>
+      <p>创建或加入房间后，聊天记录和 AI DM 的回应会出现在这里。</p>
+    `;
     els.chatLog.append(empty);
     return;
   }
@@ -145,7 +156,11 @@ function renderMessages() {
   if (state.messages.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = '桌面已准备好。';
+    empty.innerHTML = `
+      <div class="empty-mark">D20</div>
+      <h3>桌面已准备好</h3>
+      <p>发出第一段行动，AI DM 会接住这一幕。</p>
+    `;
     els.chatLog.append(empty);
     return;
   }
@@ -204,11 +219,13 @@ function render() {
     els.tableTitle.textContent = state.room.name;
     els.roomCode.textContent = state.room.code;
     els.playerCount.textContent = `${state.participants.length}/5`;
-    els.connectionStatus.textContent = `房间 ${state.room.code}`;
+    setConnection('online', `房间 ${state.room.code}`);
+    els.tableSubtitle.textContent = `${state.participants.length}/5 名玩家 · 房间码 ${state.room.code}`;
     els.summaryInput.value = state.room.summary || '';
   } else {
     els.tableTitle.textContent = '等待开局';
-    els.connectionStatus.textContent = '未进入房间';
+    els.tableSubtitle.textContent = '创建或加入房间后开始记录冒险。';
+    setConnection('', '未进入房间');
   }
 
   renderPlayers();
@@ -224,7 +241,7 @@ function connectEvents() {
   state.events = source;
 
   source.addEventListener('connected', () => {
-    els.connectionStatus.textContent = `房间 ${state.room.code}`;
+    setConnection('online', `房间 ${state.room.code}`);
   });
 
   source.addEventListener('room_state', (event) => {
@@ -273,7 +290,7 @@ function connectEvents() {
   });
 
   source.onerror = () => {
-    els.connectionStatus.textContent = '正在重连';
+    setConnection('reconnecting', '正在重连');
   };
 }
 
