@@ -1,0 +1,15 @@
+{
+  "name": "dm-online",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Multiplayer online tabletop RPG DM room with streaming AI narration.",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test",
+    "check": "node --check src/*.js && node --check public/app.js"
+  }
+}

@@ -1,0 +1,20 @@
+[Unit]
+Description=DM Online tabletop RPG service
+After=network.target
+
+[Service]
+Type=simple
+User=dm-online
+Group=dm-online
+WorkingDirectory=/opt/dm-online
+EnvironmentFile=/etc/dm-online.env
+ExecStart=/usr/local/bin/node /opt/dm-online/src/server.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/dm-online
+
+[Install]
+WantedBy=multi-user.target

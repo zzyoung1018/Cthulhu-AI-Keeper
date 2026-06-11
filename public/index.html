@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DM Online</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">D20</div>
+          <div>
+            <h1>DM Online</h1>
+            <p id="connectionStatus">未进入房间</p>
+          </div>
+        </div>
+
+        <section class="panel" id="entryPanel">
+          <div class="tabs" role="tablist" aria-label="房间操作">
+            <button class="tab active" id="createTab" type="button">创建</button>
+            <button class="tab" id="joinTab" type="button">加入</button>
+          </div>
+
+          <form id="roomForm" class="form">
+            <label>
+              玩家名
+              <input name="displayName" maxlength="40" autocomplete="nickname" required>
+            </label>
+            <label id="roomNameField">
+              房间名
+              <input name="roomName" maxlength="80" value="暮色边境">
+            </label>
+            <label id="roomCodeField" hidden>
+              房间码
+              <input name="roomCode" maxlength="8" autocapitalize="characters">
+            </label>
+            <button class="primary" type="submit">进入房间</button>
+          </form>
+        </section>
+
+        <section class="panel room-panel" id="roomPanel" hidden>
+          <div class="room-head">
+            <div>
+              <span class="kicker">房间</span>
+              <h2 id="roomTitle">-</h2>
+            </div>
+            <button class="ghost" id="copyRoomCode" type="button" title="复制房间码">复制码</button>
+          </div>
+          <div class="code-row">
+            <span id="roomCode">------</span>
+            <span id="playerCount">0/5</span>
+          </div>
+          <div class="players" id="players"></div>
+        </section>
+
+        <section class="panel editor-panel" id="editorPanel" hidden>
+          <h2>角色</h2>
+          <form id="profileForm" class="form compact">
+            <label>
+              角色名
+              <input name="characterName" maxlength="80">
+            </label>
+            <label>
+              角色卡
+              <textarea name="characterCard" rows="6" maxlength="4000"></textarea>
+            </label>
+            <label>
+              状态
+              <textarea name="state" rows="4" maxlength="2000"></textarea>
+            </label>
+            <button class="secondary" type="submit">保存角色</button>
+          </form>
+        </section>
+      </aside>
+
+      <section class="table">
+        <header class="table-header">
+          <div>
+            <span class="kicker">跑团桌</span>
+            <h2 id="tableTitle">等待开局</h2>
+          </div>
+          <div class="ai-pill" id="aiPill">AI 待命</div>
+        </header>
+
+        <section class="summary-band" id="summaryPanel" hidden>
+          <form id="summaryForm">
+            <label for="summaryInput">剧情摘要</label>
+            <textarea id="summaryInput" name="summary" rows="3" maxlength="6000"></textarea>
+            <button class="ghost" type="submit">保存摘要</button>
+          </form>
+        </section>
+
+        <section class="chat-log" id="chatLog" aria-live="polite"></section>
+
+        <form class="composer" id="messageForm" hidden>
+          <textarea name="content" rows="2" maxlength="4000" placeholder="描述你的行动..." required></textarea>
+          <button class="primary send" type="submit">发送</button>
+        </form>
+      </section>
+    </main>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
