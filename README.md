@@ -20,16 +20,16 @@ npm start
 ```bash
 AI_BASE_URL=https://api.openai.com/v1
 AI_API_KEY=你的_key
-AI_MODEL=你的_model
+AI_MODEL=gpt-4.1-mini
 ```
 
-没有配置外部模型时，`AI_LOCAL_FALLBACK=true` 会启用本地占位流式回复，便于测试房间、聊天和流式 UI。正式部署时请设置真实的 `AI_API_KEY` 和 `AI_MODEL`。
+没有配置外部模型时，`AI_LOCAL_FALLBACK=true` 会启用本地占位流式回复，便于测试房间、聊天和流式 UI。正式部署时请设置真实的 `AI_API_KEY` 和 `AI_MODEL`。推荐先使用 `gpt-4.1-mini` 这类响应较快且流式输出稳定的模型，再按预算和质量需求调整。
 
 服务器上可以用下面的方式安全写入配置并重启服务；脚本不会把密钥打印到终端：
 
 ```bash
 AI_BASE_URL=https://api.openai.com/v1 \
-AI_MODEL=你的_model \
+AI_MODEL=gpt-4.1-mini \
 AI_API_KEY=你的_key \
 bash deploy/configure_ai.sh
 ```
