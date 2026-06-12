@@ -19,6 +19,14 @@ function publicError(error) {
   return text.length > 220 ? `${text.slice(0, 220)}...` : text;
 }
 
+export function parseRequestUrl(request) {
+  try {
+    return new URL(request.url || '/', 'http://localhost');
+  } catch {
+    throw new HttpError(400, 'Invalid request URL');
+  }
+}
+
 export function createApp({ config, database = createDatabase(config.dbPath), publicDir = resolve('public') }) {
   const hub = new RoomEventHub();
   const queue = new RoomAiQueue({
@@ -186,10 +194,10 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
   }
 
   const server = createServer(async (request, response) => {
-    const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
-    const parts = route(url.pathname);
-
     try {
+      const url = parseRequestUrl(request);
+      const parts = route(url.pathname);
+
       if (parts) {
         await handleApi(request, response, parts, url);
       } else if (request.method === 'GET' || request.method === 'HEAD') {
