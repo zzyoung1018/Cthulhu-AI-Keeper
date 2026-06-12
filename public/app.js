@@ -24,10 +24,17 @@ function createPlayerId() {
   ].join('-');
 }
 
+const storageKeys = {
+  playerId: 'dm-online-player-id',
+  displayName: 'dm-online-display-name',
+  lastRoomCode: 'dm-online-last-room-code',
+  lastRoomName: 'dm-online-last-room-name'
+};
+
 const state = {
   mode: 'create',
-  playerId: localStorage.getItem('dm-online-player-id') || createPlayerId(),
-  displayName: localStorage.getItem('dm-online-display-name') || '',
+  playerId: localStorage.getItem(storageKeys.playerId) || createPlayerId(),
+  displayName: localStorage.getItem(storageKeys.displayName) || '',
   room: null,
   participant: null,
   participants: [],
@@ -35,7 +42,7 @@ const state = {
   events: null
 };
 
-localStorage.setItem('dm-online-player-id', state.playerId);
+localStorage.setItem(storageKeys.playerId, state.playerId);
 
 const els = {
   createTab: document.querySelector('#createTab'),
@@ -62,6 +69,7 @@ const els = {
   tableSubtitle: document.querySelector('#tableSubtitle'),
   aiPill: document.querySelector('#aiPill'),
   copyRoomCode: document.querySelector('#copyRoomCode'),
+  leaveRoom: document.querySelector('#leaveRoom'),
   toast: document.querySelector('#toast')
 };
 
@@ -84,7 +92,9 @@ async function api(path, options = {}) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error || `HTTP ${response.status}`);
+    const error = new Error(payload.error || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }
@@ -107,13 +117,43 @@ function setConnection(status, text) {
   els.connectionDot.className = `status-dot ${status}`;
 }
 
+function rememberRoom(room) {
+  if (!room) return;
+  localStorage.setItem(storageKeys.lastRoomCode, room.code);
+  localStorage.setItem(storageKeys.lastRoomName, room.name);
+}
+
+function forgetRoom() {
+  localStorage.removeItem(storageKeys.lastRoomCode);
+  localStorage.removeItem(storageKeys.lastRoomName);
+}
+
+function selfFromParticipants(participants) {
+  return participants.find((participant) => participant.playerId === state.playerId) || null;
+}
+
+function syncDisplayNameFromParticipant(participant) {
+  if (!participant?.displayName) return;
+  state.displayName = participant.displayName;
+  localStorage.setItem(storageKeys.displayName, participant.displayName);
+  els.roomForm.displayName.value = participant.displayName;
+}
+
 function applyRoomPayload(payload) {
   state.room = payload.room;
-  state.participant = payload.participant || state.participant;
   state.participants = payload.participants || [];
+  state.participant = payload.participant || selfFromParticipants(state.participants) || state.participant;
+  syncDisplayNameFromParticipant(state.participant);
+  rememberRoom(state.room);
   state.messages = payload.messages || [];
   render();
   connectEvents();
+}
+
+function disconnectEvents() {
+  if (!state.events) return;
+  state.events.close();
+  state.events = null;
 }
 
 function renderPlayers() {
@@ -235,7 +275,7 @@ function render() {
 
 function connectEvents() {
   if (!state.room) return;
-  if (state.events) state.events.close();
+  disconnectEvents();
 
   const source = new EventSource(`/api/rooms/${state.room.code}/events?playerId=${encodeURIComponent(state.playerId)}`);
   state.events = source;
@@ -294,6 +334,21 @@ function connectEvents() {
   };
 }
 
+async function restoreLastRoom() {
+  const roomCode = localStorage.getItem(storageKeys.lastRoomCode);
+  if (!roomCode) return;
+
+  setConnection('reconnecting', `恢复房间 ${roomCode}`);
+  try {
+    const payload = await api(`/api/rooms/${encodeURIComponent(roomCode)}?playerId=${encodeURIComponent(state.playerId)}`);
+    applyRoomPayload(payload);
+    toast(`已恢复房间 ${roomCode}`);
+  } catch (error) {
+    if (error.status === 403 || error.status === 404) forgetRoom();
+    setConnection('', '未进入房间');
+  }
+}
+
 els.createTab.addEventListener('click', () => setMode('create'));
 els.joinTab.addEventListener('click', () => setMode('join'));
 
@@ -302,7 +357,7 @@ els.roomForm.addEventListener('submit', async (event) => {
   const form = new FormData(els.roomForm);
   const displayName = String(form.get('displayName') || '').trim();
   state.displayName = displayName;
-  localStorage.setItem('dm-online-display-name', displayName);
+  localStorage.setItem(storageKeys.displayName, displayName);
 
   try {
     if (state.mode === 'create') {
@@ -400,4 +455,17 @@ els.copyRoomCode.addEventListener('click', async () => {
   toast('房间码已复制');
 });
 
+els.leaveRoom.addEventListener('click', () => {
+  disconnectEvents();
+  state.room = null;
+  state.participant = null;
+  state.participants = [];
+  state.messages = [];
+  forgetRoom();
+  setAiBusy(false);
+  render();
+  toast('已离开房间');
+});
+
 render();
+restoreLastRoom();

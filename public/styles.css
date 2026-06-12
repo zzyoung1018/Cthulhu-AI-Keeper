@@ -95,6 +95,13 @@ textarea:focus-visible {
   gap: 12px;
 }
 
+.room-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .brand {
   justify-content: flex-start;
   min-height: 58px;
