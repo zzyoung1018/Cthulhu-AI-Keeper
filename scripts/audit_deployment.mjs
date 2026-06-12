@@ -199,13 +199,24 @@ async function main() {
     })
   });
 
+  const activeRoom = await jsonRequest(`/api/rooms/${created.room.code}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      playerId: ownerId,
+      status: 'ACTIVE'
+    })
+  });
+  assert.equal(activeRoom.room.status, 'ACTIVE');
+
   const dmMessage = await waitForStreamedDm(created.room.code, ownerId, () => jsonRequest(
     `/api/rooms/${created.room.code}/messages`,
     {
       method: 'POST',
       body: JSON.stringify({
         playerId: ownerId,
-        content: '我点亮提灯，观察走廊尽头。'
+        content: '我点亮提灯，观察走廊尽头。',
+        messageType: 'ACTION',
+        submitToDm: true
       })
     }
   ));

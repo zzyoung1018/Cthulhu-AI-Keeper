@@ -105,10 +105,14 @@ export function buildDmMessages({ room, participants, messages }) {
     })
     .join('\n\n');
 
-  const recent = messages.slice(-24).map((message) => {
-    const name = message.authorType === 'dm' ? 'DM' : message.displayName;
-    return `${name}: ${message.content}`;
-  });
+  const recent = messages
+    .filter((message) => !['OOC', 'PRIVATE'].includes(message.messageType))
+    .slice(-24)
+    .map((message) => {
+      const name = message.authorType === 'dm' ? 'DM' : message.displayName;
+      const type = message.messageType === 'ACTION' ? '正式行动' : message.messageType;
+      return `[${type}] ${name}: ${message.content}`;
+    });
 
   return [
     {

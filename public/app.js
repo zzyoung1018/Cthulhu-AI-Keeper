@@ -33,6 +33,7 @@ const storageKeys = {
 
 const state = {
   mode: 'create',
+  messageType: 'IC',
   playerId: localStorage.getItem(storageKeys.playerId) || createPlayerId(),
   displayName: localStorage.getItem(storageKeys.displayName) || '',
   room: null,
@@ -58,6 +59,7 @@ const els = {
   summaryPanel: document.querySelector('#summaryPanel'),
   summaryInput: document.querySelector('#summaryInput'),
   roomTitle: document.querySelector('#roomTitle'),
+  roomStatus: document.querySelector('#roomStatus'),
   tableTitle: document.querySelector('#tableTitle'),
   roomCode: document.querySelector('#roomCode'),
   playerCount: document.querySelector('#playerCount'),
@@ -70,10 +72,32 @@ const els = {
   aiPill: document.querySelector('#aiPill'),
   copyRoomCode: document.querySelector('#copyRoomCode'),
   leaveRoom: document.querySelector('#leaveRoom'),
+  startGame: document.querySelector('#startGame'),
+  pauseGame: document.querySelector('#pauseGame'),
+  resumeGame: document.querySelector('#resumeGame'),
+  endGame: document.querySelector('#endGame'),
+  typeOptions: [...document.querySelectorAll('[data-message-type]')],
   toast: document.querySelector('#toast')
 };
 
 els.roomForm.displayName.value = state.displayName;
+
+const roomStatusLabels = {
+  PREPARING: '准备阶段',
+  ACTIVE: '游玩阶段',
+  PAUSED: '暂停阶段',
+  ENDED: '已结束',
+  ARCHIVED: '已归档'
+};
+
+const messageTypeLabels = {
+  IC: 'IC',
+  OOC: 'OOC',
+  ACTION: 'ACTION',
+  SYSTEM: 'SYSTEM',
+  AI_DM: 'AI DM',
+  PRIVATE: 'PRIVATE'
+};
 
 function toast(message) {
   els.toast.textContent = message;
@@ -132,6 +156,10 @@ function selfFromParticipants(participants) {
   return participants.find((participant) => participant.playerId === state.playerId) || null;
 }
 
+function isOwner() {
+  return Boolean(state.participant?.isOwner || state.room?.ownerPlayerId === state.playerId);
+}
+
 function syncDisplayNameFromParticipant(participant) {
   if (!participant?.displayName) return;
   state.displayName = participant.displayName;
@@ -175,6 +203,7 @@ function renderPlayers() {
 
 function messageClass(message) {
   const classes = ['message', message.authorType];
+  if (message.messageType) classes.push(message.messageType.toLowerCase());
   if (message.status === 'error') classes.push('error');
   return classes.join(' ');
 }
@@ -212,11 +241,13 @@ function renderMessages() {
     node.innerHTML = `
       <div class="message-head">
         <strong></strong>
+        <span class="message-type"></span>
         <time></time>
       </div>
       <div class="message-body"></div>
     `;
     node.querySelector('strong').textContent = message.displayName;
+    node.querySelector('.message-type').textContent = messageTypeLabels[message.messageType] || message.messageType || 'IC';
     node.querySelector('time').textContent = new Date(message.createdAt).toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit'
@@ -246,6 +277,20 @@ function renderProfile() {
   els.profileForm.state.value = state.participant.state || '';
 }
 
+function renderLifecycleActions() {
+  const owner = isOwner();
+  const status = state.room?.status || 'PREPARING';
+  const canStart = owner && status === 'PREPARING';
+  const canPause = owner && status === 'ACTIVE';
+  const canResume = owner && status === 'PAUSED';
+  const canEnd = owner && ['PREPARING', 'ACTIVE', 'PAUSED'].includes(status);
+
+  els.startGame.hidden = !canStart;
+  els.pauseGame.hidden = !canPause;
+  els.resumeGame.hidden = !canResume;
+  els.endGame.hidden = !canEnd;
+}
+
 function render() {
   const inRoom = Boolean(state.room);
   els.entryPanel.hidden = inRoom;
@@ -256,6 +301,7 @@ function render() {
 
   if (inRoom) {
     els.roomTitle.textContent = state.room.name;
+    els.roomStatus.textContent = roomStatusLabels[state.room.status] || state.room.status || '准备阶段';
     els.tableTitle.textContent = state.room.name;
     els.roomCode.textContent = state.room.code;
     els.playerCount.textContent = `${state.participants.length}/5`;
@@ -269,6 +315,7 @@ function render() {
   }
 
   renderPlayers();
+  renderLifecycleActions();
   renderMessages();
   renderProfile();
 }
@@ -334,6 +381,18 @@ function connectEvents() {
   };
 }
 
+function setMessageType(messageType) {
+  state.messageType = messageType;
+  for (const option of els.typeOptions) {
+    option.classList.toggle('active', option.dataset.messageType === messageType);
+  }
+  els.messageForm.content.placeholder = messageType === 'ACTION'
+    ? '声明正式行动，提交给 AI DM...'
+    : messageType === 'OOC'
+      ? '场外讨论，不触发 AI...'
+      : '角色内发言，不自动触发 AI...';
+}
+
 async function restoreLastRoom() {
   const roomCode = localStorage.getItem(storageKeys.lastRoomCode);
   if (!roomCode) return;
@@ -351,6 +410,9 @@ async function restoreLastRoom() {
 
 els.createTab.addEventListener('click', () => setMode('create'));
 els.joinTab.addEventListener('click', () => setMode('join'));
+els.typeOptions.forEach((option) => {
+  option.addEventListener('click', () => setMessageType(option.dataset.messageType));
+});
 
 els.roomForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -433,18 +495,21 @@ els.messageForm.addEventListener('submit', async (event) => {
   if (!content) return;
 
   els.messageForm.content.value = '';
-  setAiBusy(true);
+  const shouldTriggerAi = state.messageType === 'ACTION';
+  if (shouldTriggerAi) setAiBusy(true);
 
   try {
     await api(`/api/rooms/${state.room.code}/messages`, {
       method: 'POST',
       body: JSON.stringify({
         playerId: state.playerId,
-        content
+        content,
+        messageType: state.messageType,
+        submitToDm: shouldTriggerAi
       })
     });
   } catch (error) {
-    setAiBusy(false);
+    if (shouldTriggerAi) setAiBusy(false);
     toast(error.message);
   }
 });
@@ -467,5 +532,31 @@ els.leaveRoom.addEventListener('click', () => {
   toast('已离开房间');
 });
 
+async function changeRoomStatus(status) {
+  if (!state.room) return;
+  try {
+    const payload = await api(`/api/rooms/${state.room.code}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        playerId: state.playerId,
+        status
+      })
+    });
+    state.room = payload.room;
+    state.participants = payload.participants || state.participants;
+    const self = selfFromParticipants(state.participants);
+    if (self) state.participant = self;
+    render();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+els.startGame.addEventListener('click', () => changeRoomStatus('ACTIVE'));
+els.pauseGame.addEventListener('click', () => changeRoomStatus('PAUSED'));
+els.resumeGame.addEventListener('click', () => changeRoomStatus('ACTIVE'));
+els.endGame.addEventListener('click', () => changeRoomStatus('ENDED'));
+
 render();
+setMessageType('IC');
 restoreLastRoom();

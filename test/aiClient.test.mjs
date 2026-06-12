@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { streamChatCompletion } from '../src/aiClient.js';
+import { buildDmMessages, streamChatCompletion } from '../src/aiClient.js';
 
 test('streams OpenAI-compatible chat completion chunks', async () => {
   const originalFetch = globalThis.fetch;
@@ -47,4 +47,26 @@ test('streams OpenAI-compatible chat completion chunks', async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('builds AI context from action and IC messages while excluding OOC', () => {
+  const messages = buildDmMessages({
+    room: { name: 'Table', code: 'ABC123', summary: '队伍进入旧宅。' },
+    participants: [{
+      displayName: 'Player',
+      characterName: 'Investigator',
+      characterCard: '侦探',
+      state: 'SAN 60'
+    }],
+    messages: [
+      { authorType: 'player', messageType: 'OOC', displayName: 'Player', content: '我去倒杯水。' },
+      { authorType: 'player', messageType: 'IC', displayName: 'Investigator', content: '这里太安静了。' },
+      { authorType: 'player', messageType: 'ACTION', displayName: 'Investigator', content: '我检查壁炉。' }
+    ]
+  });
+
+  assert.equal(messages.length, 2);
+  assert.match(messages[1].content, /我检查壁炉/);
+  assert.match(messages[1].content, /正式行动/);
+  assert.doesNotMatch(messages[1].content, /倒杯水/);
 });

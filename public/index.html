@@ -62,6 +62,15 @@
             <span id="roomCode">------</span>
             <span id="playerCount">0/5</span>
           </div>
+          <div class="status-row">
+            <span id="roomStatus">准备阶段</span>
+            <div class="lifecycle-actions">
+              <button class="ghost" id="startGame" type="button">开始</button>
+              <button class="ghost" id="pauseGame" type="button">暂停</button>
+              <button class="ghost" id="resumeGame" type="button">恢复</button>
+              <button class="ghost danger" id="endGame" type="button">结束</button>
+            </div>
+          </div>
           <div class="players" id="players"></div>
         </section>
 
@@ -106,12 +115,17 @@
         <section class="chat-log" id="chatLog" aria-live="polite"></section>
 
         <form class="composer" id="messageForm" hidden>
+          <div class="message-type-toggle" role="radiogroup" aria-label="消息类型">
+            <button class="type-option active" type="button" data-message-type="IC">IC</button>
+            <button class="type-option" type="button" data-message-type="OOC">OOC</button>
+            <button class="type-option" type="button" data-message-type="ACTION">ACTION</button>
+          </div>
           <textarea name="content" rows="2" maxlength="4000" placeholder="描述你的行动..." required></textarea>
           <button class="primary send" type="submit">发送</button>
         </form>
       </section>
     </main>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/app.js?v=20260612-restore"></script>
+    <script type="module" src="/app.js?v=20260613-coc-flow"></script>
   </body>
 </html>

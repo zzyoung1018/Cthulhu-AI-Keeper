@@ -88,7 +88,8 @@ textarea:focus-visible {
 .brand,
 .room-head,
 .table-header,
-.code-row {
+.code-row,
+.status-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -100,6 +101,13 @@ textarea:focus-visible {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.lifecycle-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .brand {
@@ -287,6 +295,11 @@ textarea:focus {
   padding: 0 12px;
 }
 
+.ghost.danger {
+  color: #f1b5b2;
+  border-color: rgba(184, 92, 88, 0.72);
+}
+
 .room-panel,
 .editor-panel {
   gap: 12px;
@@ -301,6 +314,23 @@ textarea:focus {
   color: var(--gold);
   font-weight: 800;
   letter-spacing: 0.04em;
+}
+
+.status-row {
+  align-items: flex-start;
+  padding: 10px;
+  border: 1px solid rgba(215, 173, 95, 0.28);
+  border-radius: 6px;
+  background: rgba(215, 173, 95, 0.07);
+}
+
+#roomStatus {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--gold);
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .players {
@@ -503,6 +533,29 @@ textarea:focus {
   padding: 16px 22px 20px;
   border-top: 1px solid var(--line);
   background: rgba(17, 19, 22, 0.95);
+}
+
+.message-type-toggle {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.type-option {
+  min-width: 72px;
+  min-height: 34px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: #15191e;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.type-option.active {
+  border-color: var(--gold);
+  background: var(--gold);
+  color: #17140e;
 }
 
 .composer textarea {

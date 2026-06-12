@@ -4,6 +4,7 @@ import { buildDmMessages, streamChatCompletion } from './aiClient.js';
 import { RoomAiQueue } from './aiQueue.js';
 import { isAiConfigured } from './config.js';
 import { createDatabase } from './db.js';
+import { rollCocCheck, rollDiceExpression, rollSanityLoss } from './dice.js';
 import { assertString, optionalString, HttpError } from './errors.js';
 import { readJson, sendError, sendJson, serveStatic } from './http.js';
 import { RoomEventHub } from './sse.js';
@@ -18,6 +19,14 @@ function publicError(error) {
   const text = error?.message || 'unknown error';
   return text.length > 220 ? `${text.slice(0, 220)}...` : text;
 }
+
+const STATUS_LABELS = {
+  PREPARING: '准备阶段',
+  ACTIVE: '游玩阶段',
+  PAUSED: '暂停阶段',
+  ENDED: '已结束',
+  ARCHIVED: '已归档'
+};
 
 export function parseRequestUrl(request) {
   try {
@@ -38,6 +47,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     const dmMessage = database.createMessage({
       code,
       authorType: 'dm',
+      messageType: 'AI_DM',
       displayName: 'AI DM',
       content: '',
       status: 'streaming'
@@ -79,6 +89,58 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
   function enqueueDm(code) {
     const { room } = database.getRoomState(code, 1);
     queue.enqueue(room.id, () => generateDmReply(code));
+  }
+
+  function createSystemMessage(code, content) {
+    return database.createMessage({
+      code,
+      authorType: 'system',
+      messageType: 'SYSTEM',
+      displayName: '系统',
+      content,
+      status: 'complete'
+    });
+  }
+
+  function buildRollResult(body) {
+    try {
+      const rollType = String(body.rollType || body.type || (body.target === undefined ? 'expression' : 'check')).toLowerCase();
+
+      if (rollType === 'check' || rollType === 'coc_check') {
+        const target = Number(body.target);
+        if (!Number.isInteger(target)) throw new Error('target is required');
+        return rollCocCheck({
+          target,
+          difficulty: body.difficulty || 'REGULAR',
+          bonusDice: Number(body.bonusDice || 0),
+          penaltyDice: Number(body.penaltyDice || 0)
+        });
+      }
+
+      if (rollType === 'sanity' || rollType === 'sanity_loss') {
+        return rollSanityLoss(assertString(body.expression, 'expression', 40), Boolean(body.passed));
+      }
+
+      return rollDiceExpression(assertString(body.expression || '1d100', 'expression', 40));
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(400, error.message || 'Invalid roll');
+    }
+  }
+
+  function rollSummary({ participant, label, result }) {
+    const prefix = `${participant.characterName || participant.displayName} · ${label || '骰子'}`;
+
+    if (result.type === 'coc_check') {
+      return `${prefix}：1d100 = ${result.total} / ${result.target}，${result.successLevel}，${result.passed ? '通过' : '未通过'}`;
+    }
+
+    if (result.type === 'sanity_loss') {
+      return `${prefix}：理智损失 ${result.expression}，结果 ${result.total}`;
+    }
+
+    const modifier = result.modifier ? ` ${result.modifier > 0 ? '+' : '-'} ${Math.abs(result.modifier)}` : '';
+    return `${prefix}：${result.expression} = [${result.rolls.join(', ')}]${modifier}，合计 ${result.total}`;
   }
 
   async function handleApi(request, response, parts, url) {
@@ -127,6 +189,22 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         return;
       }
 
+      if (request.method === 'PATCH' && parts[3] === 'status') {
+        const body = await readJson(request);
+        const playerId = assertString(body.playerId, 'playerId', 80);
+        const room = database.setRoomStatus({
+          code,
+          playerId,
+          status: assertString(body.status, 'status', 20)
+        });
+        const message = createSystemMessage(code, `房间状态变更为：${STATUS_LABELS[room.status] || room.status}`);
+        const state = database.getRoomState(code);
+        hub.broadcast(code, 'room_state', state);
+        hub.broadcast(code, 'message_created', { message });
+        sendJson(response, 200, { ...state, message });
+        return;
+      }
+
       if (request.method === 'PATCH' && parts[3] === 'profile') {
         const body = await readJson(request);
         const participant = database.updateProfile({
@@ -160,10 +238,46 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         const body = await readJson(request);
         const playerId = assertString(body.playerId, 'playerId', 80);
         const content = assertString(body.content, 'content', 4000);
-        const message = database.createPlayerMessage({ code, playerId, content });
+        const submitToDm = Boolean(body.submitToDm);
+        const messageType = String(body.messageType || (submitToDm ? 'ACTION' : 'IC')).trim().toUpperCase();
+        const { room } = database.getParticipant(code, playerId);
+        const triggersAi = messageType === 'ACTION' || submitToDm;
+        if (triggersAi && room.status !== 'ACTIVE') {
+          throw new HttpError(409, 'Game is not active');
+        }
+
+        const message = database.createPlayerMessage({ code, playerId, content, messageType });
         hub.broadcast(code, 'message_created', { message });
-        enqueueDm(code);
-        sendJson(response, 201, { message, aiQueued: true });
+        if (triggersAi) enqueueDm(code);
+        sendJson(response, 201, { message, aiQueued: triggersAi });
+        return;
+      }
+
+      if (request.method === 'POST' && parts[3] === 'rolls') {
+        const body = await readJson(request);
+        const playerId = assertString(body.playerId, 'playerId', 80);
+        const label = optionalString(body.label, 80);
+        const isPrivate = Boolean(body.isPrivate);
+        const result = buildRollResult(body);
+        const { participant } = database.getParticipant(code, playerId);
+        const roll = database.createDiceRoll({
+          code,
+          playerId,
+          rollType: result.type,
+          expression: result.expression,
+          label,
+          isPrivate,
+          result
+        });
+
+        let message = null;
+        if (!isPrivate) {
+          message = createSystemMessage(code, rollSummary({ participant, label, result }));
+          hub.broadcast(code, 'message_created', { message });
+          hub.broadcast(code, 'dice_rolled', { roll });
+        }
+
+        sendJson(response, 201, { roll, message });
         return;
       }
 
