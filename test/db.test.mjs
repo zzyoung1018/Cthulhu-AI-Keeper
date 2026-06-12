@@ -18,16 +18,35 @@ function withDb() {
   };
 }
 
+function createModule(database, ownerPlayerId = 'p1') {
+  return database.createModule({
+    ownerPlayerId,
+    title: '死亡之光',
+    originalName: 'light.txt',
+    fileType: 'txt',
+    contentType: 'text/plain',
+    sizeBytes: 42,
+    storagePath: '/tmp/light.txt',
+    parsedText: '场景：旧宅\n调查员来到旧宅。',
+    parseStatus: 'PARSED',
+    segments: [{ title: '旧宅', scene: '旧宅 #1', content: '调查员来到旧宅。' }]
+  });
+}
+
 test('creates rooms, joins players, and enforces the five-player limit', () => {
   const { database, cleanup } = withDb();
   try {
+    const module = createModule(database, 'p1');
     const created = database.createRoom({
       name: 'Test Table',
       playerId: 'p1',
-      displayName: 'Player 1'
+      displayName: 'Player 1',
+      moduleId: module.id
     });
 
     assert.equal(created.room.code.length, 6);
+    assert.equal(created.room.moduleId, module.id);
+    assert.equal(created.room.moduleTitle, '死亡之光');
     assert.equal(created.room.status, 'PREPARING');
     assert.equal(created.room.ownerPlayerId, 'p1');
     assert.equal(created.participant.isOwner, true);
@@ -59,10 +78,12 @@ test('creates rooms, joins players, and enforces the five-player limit', () => {
 test('enforces room lifecycle transitions and owner permissions', () => {
   const { database, cleanup } = withDb();
   try {
+    const module = createModule(database, 'keeper');
     const { room } = database.createRoom({
       name: 'Lifecycle',
       playerId: 'keeper',
-      displayName: 'Keeper'
+      displayName: 'Keeper',
+      moduleId: module.id
     });
     database.joinRoom({ code: room.code, playerId: 'player', displayName: 'Player' });
 
@@ -92,10 +113,12 @@ test('enforces room lifecycle transitions and owner permissions', () => {
 test('persists chat, character profile, state, and story summary', () => {
   const { database, cleanup } = withDb();
   try {
+    const module = createModule(database, 'p1');
     const { room } = database.createRoom({
       name: 'Archive',
       playerId: 'p1',
-      displayName: 'Keeper'
+      displayName: 'Keeper',
+      moduleId: module.id
     });
 
     const profile = database.updateProfile({
@@ -138,10 +161,12 @@ test('persists chat, character profile, state, and story summary', () => {
 test('persists public dice rolls with room state', () => {
   const { database, cleanup } = withDb();
   try {
+    const module = createModule(database, 'p1');
     const { room } = database.createRoom({
       name: 'Dice',
       playerId: 'p1',
-      displayName: 'Keeper'
+      displayName: 'Keeper',
+      moduleId: module.id
     });
 
     const roll = database.createDiceRoll({
@@ -156,6 +181,38 @@ test('persists public dice rolls with room state', () => {
     assert.equal(roll.label, '侦查');
     assert.equal(roll.result.successLevel, 'REGULAR');
     assert.equal(database.getRoomState(room.code).diceRolls[0].id, roll.id);
+  } finally {
+    cleanup();
+  }
+});
+
+test('stores reusable private modules and exposes preview only to owner', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const module = createModule(database, 'owner');
+    assert.equal(database.listModules('owner')[0].id, module.id);
+
+    const preview = database.getModuleForOwner(module.id, 'owner', {
+      includeText: true,
+      includeSegments: true
+    });
+    assert.match(preview.module.parsedText, /旧宅/);
+    assert.equal(preview.segments.length, 1);
+
+    assert.throws(
+      () => database.getModuleForOwner(module.id, 'other', { includeSegments: true }),
+      (error) => error instanceof HttpError && error.statusCode === 403
+    );
+
+    assert.throws(
+      () => database.createRoom({
+        name: 'Private',
+        playerId: 'other',
+        displayName: 'Other',
+        moduleId: module.id
+      }),
+      (error) => error instanceof HttpError && error.statusCode === 403
+    );
   } finally {
     cleanup();
   }

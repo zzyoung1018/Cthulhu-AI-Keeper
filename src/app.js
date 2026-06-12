@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { buildDmMessages, streamChatCompletion } from './aiClient.js';
 import { RoomAiQueue } from './aiQueue.js';
 import { isAiConfigured } from './config.js';
@@ -7,6 +9,8 @@ import { createDatabase } from './db.js';
 import { rollCocCheck, rollDiceExpression, rollSanityLoss } from './dice.js';
 import { assertString, optionalString, HttpError } from './errors.js';
 import { readJson, sendError, sendJson, serveStatic } from './http.js';
+import { extractModuleText, scoreModuleSegment, segmentModuleText, validateModuleFile } from './moduleParser.js';
+import { readMultipartForm } from './multipart.js';
 import { RoomEventHub } from './sse.js';
 
 function route(pathname) {
@@ -44,6 +48,18 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
   async function generateDmReply(code) {
     const state = database.getRoomState(code, 80);
+    const moduleSegments = database.getRoomModuleSegments(code, 120);
+    const query = [
+      state.room.summary,
+      ...state.messages.slice(-12).map((message) => message.content),
+      ...state.diceRolls.slice(-8).map((roll) => `${roll.label} ${roll.expression} ${JSON.stringify(roll.result)}`)
+    ].join('\n');
+    state.moduleSegments = moduleSegments
+      .map((segment) => ({ segment, score: scoreModuleSegment(segment, query) }))
+      .sort((a, b) => b.score - a.score || a.segment.sortOrder - b.segment.sortOrder)
+      .slice(0, 6)
+      .map((item) => item.segment);
+
     const dmMessage = database.createMessage({
       code,
       authorType: 'dm',
@@ -102,6 +118,52 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     });
   }
 
+  function saveModuleFile({ fileName, extension, buffer }) {
+    const modulesDir = resolve(config.dataDir, 'modules');
+    mkdirSync(modulesDir, { recursive: true });
+    const storageName = `${randomUUID()}.${extension}`;
+    const storagePath = join(modulesDir, storageName);
+    writeFileSync(storagePath, buffer, { mode: 0o600 });
+    return storagePath;
+  }
+
+  function parseUploadedModule({ ownerPlayerId, title, file }) {
+    const metadata = validateModuleFile(file);
+    const storagePath = saveModuleFile({
+      fileName: metadata.originalName,
+      extension: metadata.extension,
+      buffer: file.buffer
+    });
+
+    let parsedText = '';
+    let segments = [];
+    let parseStatus = 'PARSED';
+    let parseError = '';
+
+    try {
+      parsedText = extractModuleText({ extension: metadata.extension, buffer: file.buffer });
+      segments = segmentModuleText(parsedText);
+      if (segments.length === 0) throw new Error('No text segments were extracted');
+    } catch (error) {
+      parseStatus = 'FAILED';
+      parseError = publicError(error);
+    }
+
+    return database.createModule({
+      ownerPlayerId,
+      title,
+      originalName: metadata.originalName,
+      fileType: metadata.extension,
+      contentType: metadata.contentType,
+      sizeBytes: metadata.size,
+      storagePath,
+      parsedText,
+      parseStatus,
+      parseError,
+      segments
+    });
+  }
+
   function buildRollResult(body) {
     try {
       const rollType = String(body.rollType || body.type || (body.target === undefined ? 'expression' : 'check')).toLowerCase();
@@ -154,12 +216,46 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       return;
     }
 
+    if (parts[1] === 'modules') {
+      if (request.method === 'GET' && parts.length === 2) {
+        const playerId = assertString(url.searchParams.get('playerId'), 'playerId', 80);
+        sendJson(response, 200, { modules: database.listModules(playerId) });
+        return;
+      }
+
+      if (request.method === 'POST' && parts.length === 2) {
+        const { fields, files } = await readMultipartForm(request);
+        const playerId = assertString(fields.playerId, 'playerId', 80);
+        const title = assertString(fields.title || files.file?.fileName || '未命名模组', 'title', 120);
+        const file = files.file || files.module;
+        if (!file) throw new HttpError(400, 'Module file is required');
+        const module = parseUploadedModule({ ownerPlayerId: playerId, title, file });
+        sendJson(response, 201, { module });
+        return;
+      }
+
+      if (request.method === 'GET' && parts.length === 4 && parts[3] === 'preview') {
+        const playerId = assertString(url.searchParams.get('playerId'), 'playerId', 80);
+        const moduleId = Number(parts[2]);
+        if (!Number.isInteger(moduleId)) throw new HttpError(400, 'Invalid module id');
+        const preview = database.getModuleForOwner(moduleId, playerId, {
+          includeText: true,
+          includeSegments: true,
+          limit: 60
+        });
+        sendJson(response, 200, preview);
+        return;
+      }
+    }
+
     if (request.method === 'POST' && parts.length === 2 && parts[1] === 'rooms') {
       const body = await readJson(request);
       const name = assertString(body.roomName || '新的冒险', 'roomName', 80);
       const playerId = assertString(body.playerId, 'playerId', 80);
       const displayName = assertString(body.displayName, 'displayName', 40);
-      const result = database.createRoom({ name, playerId, displayName });
+      const moduleId = Number(body.moduleId);
+      if (!Number.isInteger(moduleId)) throw new HttpError(400, 'moduleId is required');
+      const result = database.createRoom({ name, playerId, displayName, moduleId });
       sendJson(response, 201, {
         ...result,
         participants: [result.participant],

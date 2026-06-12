@@ -33,11 +33,47 @@ function rowToRoom(row) {
     id: row.id,
     code: row.code,
     name: row.name,
+    moduleId: row.module_id || null,
+    moduleTitle: row.module_title || '',
+    moduleParseStatus: row.module_parse_status || '',
     status: row.status || 'PREPARING',
     ownerPlayerId: row.owner_player_id || '',
     summary: row.summary || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+function rowToModule(row, { includeText = false } = {}) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    ownerPlayerId: row.owner_player_id,
+    title: row.title,
+    originalName: row.original_name,
+    fileType: row.file_type,
+    contentType: row.content_type,
+    sizeBytes: row.size_bytes,
+    storagePath: row.storage_path,
+    parseStatus: row.parse_status,
+    parseError: row.parse_error || '',
+    segmentCount: row.segment_count || 0,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(includeText ? { parsedText: row.parsed_text || '' } : {})
+  };
+}
+
+function rowToModuleSegment(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    moduleId: row.module_id,
+    sortOrder: row.sort_order,
+    title: row.title,
+    scene: row.scene,
+    content: row.content,
+    createdAt: row.created_at
   };
 }
 
@@ -125,11 +161,39 @@ export function createDatabase(dbPath) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       code TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL,
+      module_id INTEGER REFERENCES modules(id) ON DELETE SET NULL,
       status TEXT NOT NULL DEFAULT 'PREPARING',
       owner_player_id TEXT NOT NULL DEFAULT '',
       summary TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS modules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_player_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      original_name TEXT NOT NULL,
+      file_type TEXT NOT NULL,
+      content_type TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      storage_path TEXT NOT NULL,
+      parsed_text TEXT NOT NULL DEFAULT '',
+      parse_status TEXT NOT NULL,
+      parse_error TEXT NOT NULL DEFAULT '',
+      segment_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS module_segments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
+      sort_order INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      scene TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS participants (
@@ -185,6 +249,8 @@ export function createDatabase(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_messages_room_created ON messages(room_id, created_at, id);
     CREATE INDEX IF NOT EXISTS idx_story_summaries_room ON story_summaries(room_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_dice_rolls_room_created ON dice_rolls(room_id, created_at, id);
+    CREATE INDEX IF NOT EXISTS idx_modules_owner ON modules(owner_player_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_module_segments_module ON module_segments(module_id, sort_order);
   `);
 
   function hasColumn(table, column) {
@@ -208,6 +274,9 @@ export function createDatabase(dbPath) {
       WHERE owner_player_id = ''
     `);
   }
+  if (!hasColumn('rooms', 'module_id')) {
+    db.exec('ALTER TABLE rooms ADD COLUMN module_id INTEGER REFERENCES modules(id) ON DELETE SET NULL');
+  }
   if (!hasColumn('participants', 'is_ready')) {
     db.exec('ALTER TABLE participants ADD COLUMN is_ready INTEGER NOT NULL DEFAULT 0');
   }
@@ -224,13 +293,42 @@ export function createDatabase(dbPath) {
   }
 
   const statements = {
-    getRoomByCode: db.prepare('SELECT * FROM rooms WHERE code = ?'),
-    getRoomById: db.prepare('SELECT * FROM rooms WHERE id = ?'),
+    getRoomByCode: db.prepare(`
+      SELECT rooms.*, modules.title AS module_title, modules.parse_status AS module_parse_status
+      FROM rooms
+      LEFT JOIN modules ON modules.id = rooms.module_id
+      WHERE rooms.code = ?
+    `),
+    getRoomById: db.prepare(`
+      SELECT rooms.*, modules.title AS module_title, modules.parse_status AS module_parse_status
+      FROM rooms
+      LEFT JOIN modules ON modules.id = rooms.module_id
+      WHERE rooms.id = ?
+    `),
     createRoom: db.prepare(`
-      INSERT INTO rooms (code, name, status, owner_player_id, summary, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO rooms (code, name, module_id, status, owner_player_id, summary, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `),
     updateRoomStatus: db.prepare('UPDATE rooms SET status = ?, updated_at = ? WHERE id = ?'),
+    getModuleById: db.prepare('SELECT * FROM modules WHERE id = ?'),
+    listModulesByOwner: db.prepare('SELECT * FROM modules WHERE owner_player_id = ? ORDER BY created_at DESC, id DESC'),
+    createModule: db.prepare(`
+      INSERT INTO modules (
+        owner_player_id, title, original_name, file_type, content_type, size_bytes,
+        storage_path, parsed_text, parse_status, parse_error, segment_count, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    createModuleSegment: db.prepare(`
+      INSERT INTO module_segments (module_id, sort_order, title, scene, content, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `),
+    listModuleSegments: db.prepare(`
+      SELECT * FROM module_segments
+      WHERE module_id = ?
+      ORDER BY sort_order ASC, id ASC
+      LIMIT ?
+    `),
     participantCount: db.prepare('SELECT COUNT(*) AS total FROM participants WHERE room_id = ?'),
     getParticipant: db.prepare('SELECT * FROM participants WHERE room_id = ? AND player_id = ?'),
     getParticipantById: db.prepare('SELECT * FROM participants WHERE id = ?'),
@@ -321,7 +419,77 @@ export function createDatabase(dbPath) {
       db.close();
     },
 
-    createRoom({ name, playerId, displayName }) {
+    createModule({
+      ownerPlayerId,
+      title,
+      originalName,
+      fileType,
+      contentType,
+      sizeBytes,
+      storagePath,
+      parsedText,
+      parseStatus,
+      parseError = '',
+      segments = []
+    }) {
+      const created = now();
+      return transaction(() => {
+        const inserted = statements.createModule.run(
+          ownerPlayerId,
+          title,
+          originalName,
+          fileType,
+          contentType,
+          sizeBytes,
+          storagePath,
+          parsedText,
+          parseStatus,
+          parseError,
+          segments.length,
+          created,
+          created
+        );
+        const moduleId = Number(inserted.lastInsertRowid);
+        segments.forEach((segment, index) => {
+          statements.createModuleSegment.run(
+            moduleId,
+            index + 1,
+            segment.title,
+            segment.scene,
+            segment.content,
+            created
+          );
+        });
+        return rowToModule(statements.getModuleById.get(moduleId));
+      });
+    },
+
+    listModules(playerId) {
+      return statements.listModulesByOwner.all(playerId).map(rowToModule);
+    },
+
+    getModuleForOwner(moduleId, playerId, { includeText = false, includeSegments = false, limit = 40 } = {}) {
+      const module = rowToModule(statements.getModuleById.get(moduleId), { includeText });
+      if (!module) throw new HttpError(404, 'Module not found');
+      if (module.ownerPlayerId !== playerId) throw new HttpError(403, 'Module is private');
+      return {
+        module,
+        segments: includeSegments ? statements.listModuleSegments.all(module.id, limit).map(rowToModuleSegment) : []
+      };
+    },
+
+    getRoomModuleSegments(code, limit = 80) {
+      const room = ensureRoom(code);
+      if (!room.moduleId) return [];
+      return statements.listModuleSegments.all(room.moduleId, limit).map(rowToModuleSegment);
+    },
+
+    createRoom({ name, playerId, displayName, moduleId }) {
+      const module = rowToModule(statements.getModuleById.get(moduleId));
+      if (!module) throw new HttpError(404, 'Module not found');
+      if (module.ownerPlayerId !== playerId) throw new HttpError(403, 'Module is private');
+      if (module.parseStatus !== 'PARSED') throw new HttpError(409, 'Module is not parsed');
+
       let code = roomCode();
       while (statements.getRoomByCode.get(code)) {
         code = roomCode();
@@ -329,7 +497,7 @@ export function createDatabase(dbPath) {
 
       const created = now();
       return transaction(() => {
-        const result = statements.createRoom.run(code, name, 'PREPARING', playerId, '', created, created);
+        const result = statements.createRoom.run(code, name, module.id, 'PREPARING', playerId, '', created, created);
         const room = rowToRoom(statements.getRoomById.get(Number(result.lastInsertRowid)));
         const participant = rowToParticipant(createParticipant(Number(result.lastInsertRowid), playerId, displayName), room);
         return { room, participant };

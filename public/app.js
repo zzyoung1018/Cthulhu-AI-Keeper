@@ -37,6 +37,8 @@ const state = {
   playerId: localStorage.getItem(storageKeys.playerId) || createPlayerId(),
   displayName: localStorage.getItem(storageKeys.displayName) || '',
   room: null,
+  modules: [],
+  selectedModuleId: '',
   participant: null,
   participants: [],
   messages: [],
@@ -50,6 +52,11 @@ const els = {
   joinTab: document.querySelector('#joinTab'),
   roomForm: document.querySelector('#roomForm'),
   roomNameField: document.querySelector('#roomNameField'),
+  moduleField: document.querySelector('#moduleField'),
+  moduleSelect: document.querySelector('#moduleSelect'),
+  moduleFile: document.querySelector('#moduleFile'),
+  uploadModule: document.querySelector('#uploadModule'),
+  modulePreview: document.querySelector('#modulePreview'),
   roomCodeField: document.querySelector('#roomCodeField'),
   entryPanel: document.querySelector('#entryPanel'),
   roomPanel: document.querySelector('#roomPanel'),
@@ -123,11 +130,31 @@ async function api(path, options = {}) {
   return payload;
 }
 
+async function uploadModuleFile(file) {
+  const form = new FormData();
+  form.set('playerId', state.playerId);
+  form.set('title', file.name.replace(/\.[^.]+$/, ''));
+  form.set('file', file);
+
+  const response = await fetch('/api/modules', {
+    method: 'POST',
+    body: form
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload.error || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
 function setMode(mode) {
   state.mode = mode;
   els.createTab.classList.toggle('active', mode === 'create');
   els.joinTab.classList.toggle('active', mode === 'join');
   els.roomNameField.hidden = mode !== 'create';
+  els.moduleField.hidden = mode !== 'create';
   els.roomCodeField.hidden = mode !== 'join';
 }
 
@@ -176,6 +203,50 @@ function applyRoomPayload(payload) {
   state.messages = payload.messages || [];
   render();
   connectEvents();
+}
+
+function renderModules() {
+  const current = state.selectedModuleId || els.moduleSelect.value;
+  els.moduleSelect.innerHTML = '<option value="">先上传或选择模组</option>';
+  for (const module of state.modules) {
+    const option = document.createElement('option');
+    option.value = String(module.id);
+    option.textContent = `${module.title} · ${module.parseStatus} · ${module.segmentCount} 段`;
+    option.disabled = module.parseStatus !== 'PARSED';
+    els.moduleSelect.append(option);
+  }
+  if (current && state.modules.some((module) => String(module.id) === String(current))) {
+    els.moduleSelect.value = String(current);
+    state.selectedModuleId = String(current);
+  }
+}
+
+async function previewModule(moduleId) {
+  if (!moduleId) {
+    els.modulePreview.textContent = '模组内容仅房主和 AI DM 可见。';
+    return;
+  }
+
+  try {
+    const payload = await api(`/api/modules/${encodeURIComponent(moduleId)}/preview?playerId=${encodeURIComponent(state.playerId)}`);
+    const first = payload.segments[0];
+    els.modulePreview.textContent = first
+      ? `${payload.module.title}：${payload.segments.length} 个片段。预览：${first.scene} - ${first.content.slice(0, 90)}`
+      : `${payload.module.title}：暂无可预览片段。`;
+  } catch (error) {
+    els.modulePreview.textContent = error.message;
+  }
+}
+
+async function loadModules() {
+  try {
+    const payload = await api(`/api/modules?playerId=${encodeURIComponent(state.playerId)}`);
+    state.modules = payload.modules || [];
+    renderModules();
+    if (state.selectedModuleId) await previewModule(state.selectedModuleId);
+  } catch (error) {
+    els.modulePreview.textContent = error.message;
+  }
 }
 
 function disconnectEvents() {
@@ -306,7 +377,11 @@ function render() {
     els.roomCode.textContent = state.room.code;
     els.playerCount.textContent = `${state.participants.length}/5`;
     setConnection('online', `房间 ${state.room.code}`);
-    els.tableSubtitle.textContent = `${state.participants.length}/5 名玩家 · 房间码 ${state.room.code}`;
+    els.tableSubtitle.textContent = [
+      `${state.participants.length}/5 名玩家`,
+      `房间码 ${state.room.code}`,
+      state.room.moduleTitle ? `模组 ${state.room.moduleTitle}` : ''
+    ].filter(Boolean).join(' · ');
     els.summaryInput.value = state.room.summary || '';
   } else {
     els.tableTitle.textContent = '等待开局';
@@ -410,6 +485,32 @@ async function restoreLastRoom() {
 
 els.createTab.addEventListener('click', () => setMode('create'));
 els.joinTab.addEventListener('click', () => setMode('join'));
+els.moduleSelect.addEventListener('change', async () => {
+  state.selectedModuleId = els.moduleSelect.value;
+  await previewModule(state.selectedModuleId);
+});
+els.uploadModule.addEventListener('click', async () => {
+  const file = els.moduleFile.files?.[0];
+  if (!file) {
+    toast('请选择 TXT、PDF 或 DOCX 模组');
+    return;
+  }
+
+  els.uploadModule.disabled = true;
+  els.modulePreview.textContent = '正在上传并解析...';
+  try {
+    const payload = await uploadModuleFile(file);
+    state.selectedModuleId = String(payload.module.id);
+    await loadModules();
+    await previewModule(state.selectedModuleId);
+    toast(payload.module.parseStatus === 'PARSED' ? '模组已解析' : '模组已保存，但解析失败');
+  } catch (error) {
+    els.modulePreview.textContent = error.message;
+    toast(error.message);
+  } finally {
+    els.uploadModule.disabled = false;
+  }
+});
 els.typeOptions.forEach((option) => {
   option.addEventListener('click', () => setMessageType(option.dataset.messageType));
 });
@@ -423,12 +524,18 @@ els.roomForm.addEventListener('submit', async (event) => {
 
   try {
     if (state.mode === 'create') {
+      const moduleId = Number(form.get('moduleId') || state.selectedModuleId);
+      if (!Number.isInteger(moduleId) || moduleId <= 0) {
+        toast('请先选择已解析的模组');
+        return;
+      }
       const payload = await api('/api/rooms', {
         method: 'POST',
         body: JSON.stringify({
           playerId: state.playerId,
           displayName,
-          roomName: String(form.get('roomName') || '').trim()
+          roomName: String(form.get('roomName') || '').trim(),
+          moduleId
         })
       });
       applyRoomPayload(payload);
@@ -559,4 +666,5 @@ els.endGame.addEventListener('click', () => changeRoomStatus('ENDED'));
 
 render();
 setMessageType('IC');
+loadModules();
 restoreLastRoom();

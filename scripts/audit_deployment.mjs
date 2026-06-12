@@ -61,6 +61,33 @@ async function expectHttpError(path, expectedStatus, options = {}) {
   }
 }
 
+async function multipartRequest(path, { fields = {}, file }) {
+  const timeout = timeoutSignal(15_000);
+  try {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(fields)) {
+      form.set(key, value);
+    }
+    if (file) {
+      form.set('file', new Blob([file.content], { type: file.contentType }), file.name);
+    }
+
+    const response = await fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      body: form,
+      signal: timeout.signal
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = payload.error ? `: ${payload.error}` : '';
+      throw new Error(`POST ${path} failed with ${response.status}${detail}`);
+    }
+    return payload;
+  } finally {
+    timeout.cancel();
+  }
+}
+
 function parseSseChunk(buffer, onEvent) {
   const blocks = buffer.split(/\n\n/);
   const rest = blocks.pop() || '';
@@ -148,15 +175,36 @@ async function main() {
   }
 
   const ownerId = randomUUID();
+  const uploadedModule = await multipartRequest('/api/modules', {
+    fields: {
+      playerId: ownerId,
+      title: '部署审计模组'
+    },
+    file: {
+      name: 'audit-module.txt',
+      contentType: 'text/plain',
+      content: [
+        '场景：审计走廊',
+        '调查员站在一条狭窄走廊中，墙面潮湿，尽头有一扇半掩的门。',
+        '',
+        '场景：隐藏书房',
+        '书房内有一本记录异常梦境的皮面笔记。'
+      ].join('\n')
+    }
+  });
+  assert.equal(uploadedModule.module.parseStatus, 'PARSED');
+
   const created = await jsonRequest('/api/rooms', {
     method: 'POST',
     body: JSON.stringify({
       playerId: ownerId,
       displayName: 'Audit Owner',
-      roomName: `Audit ${Date.now()}`
+      roomName: `Audit ${Date.now()}`,
+      moduleId: uploadedModule.module.id
     })
   });
   assert.equal(created.room.code.length, 6);
+  assert.equal(created.room.moduleId, uploadedModule.module.id);
   assert.equal(created.participants.length, 1);
 
   for (let index = 2; index <= 5; index += 1) {

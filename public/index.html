@@ -39,6 +39,20 @@
               房间名
               <input name="roomName" maxlength="80" value="暮色边境">
             </label>
+            <div class="module-picker" id="moduleField">
+              <label>
+                模组
+                <select name="moduleId" id="moduleSelect" required>
+                  <option value="">先上传或选择模组</option>
+                </select>
+              </label>
+              <label>
+                上传模组
+                <input type="file" id="moduleFile" accept=".txt,.pdf,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+              </label>
+              <button class="secondary" id="uploadModule" type="button">上传并解析</button>
+              <div class="module-preview" id="modulePreview">模组内容仅房主和 AI DM 可见。</div>
+            </div>
             <label id="roomCodeField" hidden>
               房间码
               <input name="roomCode" maxlength="8" autocapitalize="characters">
@@ -126,6 +140,6 @@
       </section>
     </main>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/app.js?v=20260613-coc-flow"></script>
+    <script type="module" src="/app.js?v=20260613-modules"></script>
   </body>
 </html>
