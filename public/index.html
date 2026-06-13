@@ -99,7 +99,7 @@
             </div>
             <div class="form-actions">
               <button class="secondary" type="submit">保存角色</button>
-              <button class="ghost" id="readyCharacter" type="button">准备</button>
+              <button class="primary" id="readyCharacter" type="button">准备</button>
             </div>
           </form>
         </section>
@@ -135,7 +135,9 @@
         </section>
 
         <section class="play-area">
-          <section class="chat-log" id="chatLog" aria-live="polite"></section>
+          <section class="chat-log" id="chatLog" aria-live="polite">
+            <button class="ghost char-toggle" id="btnCharSheet" type="button" hidden>📋 角色状态</button>
+          </section>
           <aside class="status-panel" id="statusPanel" hidden>
             <div class="panel-title">
               <span class="kicker">状态</span>
@@ -229,6 +231,17 @@
           <p class="hint">API 地址和密钥在服务器环境变量中配置，此处无需填写。</p>
           <button class="secondary" type="submit">保存设置</button>
         </form>
+      </div>
+    </dialog>
+
+    <!-- 角色状态大弹窗 -->
+    <dialog id="charSheetDialog">
+      <div class="dialog-content char-sheet-overlay">
+        <div class="dialog-header">
+          <h2 id="charSheetTitle">角色状态</h2>
+          <button class="ghost dialog-close" id="closeCharSheet" type="button">✕</button>
+        </div>
+        <div class="char-sheet-body" id="charSheetBody"></div>
       </div>
     </dialog>
 

@@ -94,6 +94,11 @@ const els = {
   statusPanel: document.querySelector('#statusPanel'),
   statusName: document.querySelector('#statusName'),
   statusCards: document.querySelector('#statusCards'),
+  // 角色状态弹窗
+  btnCharSheet: document.querySelector('#btnCharSheet'),
+  charSheetDialog: document.querySelector('#charSheetDialog'),
+  charSheetTitle: document.querySelector('#charSheetTitle'),
+  charSheetBody: document.querySelector('#charSheetBody'),
   // 摘要
   summaryForm: document.querySelector('#summaryForm'),
   summaryPanel: document.querySelector('#summaryPanel'),
@@ -705,6 +710,58 @@ function renderStatusPanel() {
       <strong>${value}</strong>
     </div>
   `).join('');
+
+  // 角色状态大弹窗
+  els.btnCharSheet.hidden = !state.participant;
+  renderCharSheetOverlay();
+}
+
+function renderCharSheetOverlay() {
+  if (!state.participant) return;
+  const sheet = currentSheet();
+  const derived = calculateDerived(sheet.characteristics, sheet.status);
+  const inv = sheet.investigator || {};
+  const chars = sheet.characteristics || {};
+  const st = sheet.status || {};
+  const skills = Object.entries(sheet.skills || {}).sort((a, b) => a[0].localeCompare(b[0], 'zh-Hans-CN'));
+
+  els.charSheetTitle.textContent = inv.name || state.participant.characterName || '调查员';
+
+  const html = [
+    '<div class="char-overview">',
+    inv.occupation ? `<p><strong>职业：</strong>${inv.occupation}</p>` : '',
+    inv.age ? `<p><strong>年龄：</strong>${inv.age}</p>` : '',
+    inv.residence ? `<p><strong>居住地：</strong>${inv.residence}</p>` : '',
+    '</div>',
+    '<div class="char-stats-grid">',
+    ...['STR','CON','SIZ','DEX','APP','INT','POW','EDU','Luck'].map(k =>
+      `<div class="char-stat"><span>${k}</span><strong>${chars[k] ?? '-'}</strong></div>`
+    ),
+    '</div>',
+    '<div class="char-resources">',
+    `<div>HP <strong>${st.hp ?? derived.currentHp}/${derived.hp}</strong></div>`,
+    `<div>MP <strong>${st.mp ?? derived.currentMp}/${derived.mp}</strong></div>`,
+    `<div>SAN <strong>${st.san ?? derived.currentSan}/${derived.san}</strong></div>`,
+    `<div>Luck <strong>${st.luck ?? derived.currentLuck}</strong></div>`,
+    `<div>MOV <strong>${derived.mov}</strong></div>`,
+    `<div>DB <strong>${derived.damageBonus}</strong></div>`,
+    `<div>Build <strong>${derived.build}</strong></div>`,
+    '</div>',
+    '<h3>技能</h3>',
+    '<div class="char-skills-grid">',
+    ...skills.map(([name, val]) => {
+      const half = Math.floor((chars[name] || derived[name] || 50) / 2);
+      const fifth = Math.floor((chars[name] || derived[name] || 50) / 5);
+      return `<div class="char-skill-row"><span>${name}</span><strong>${val}</strong><span class="skill-levels">/ ${half} / ${fifth}</span></div>`;
+    }),
+    '</div>',
+    sheet.weapons?.length ? `<h3>武器</h3><div class="char-weapons">${sheet.weapons.map(w => `<div>${w.name} · ${w.damage}${w.range ? ' · '+w.range : ''}</div>`).join('')}</div>` : '',
+    sheet.equipment ? `<h3>装备</h3><p>${sheet.equipment}</p>` : '',
+    sheet.relationships ? `<h3>人际关系</h3><p>${sheet.relationships}</p>` : '',
+    sheet.beliefs ? `<h3>思想与信念</h3><p>${sheet.beliefs}</p>` : '',
+  ].join('\n');
+
+  els.charSheetBody.innerHTML = html;
 }
 
 function setTextField(name, value) {
@@ -1349,3 +1406,11 @@ restoreLastRoom();
 els.createRoomDialog.addEventListener('click', (e) => { if (e.target === els.createRoomDialog) closeCreateDialog(); });
 els.joinRoomDialog.addEventListener('click', (e) => { if (e.target === els.joinRoomDialog) closeJoinDialog(); });
 els.settingsDialog.addEventListener('click', (e) => { if (e.target === els.settingsDialog) closeSettingsDialog(); });
+
+// 角色状态弹窗
+els.btnCharSheet.addEventListener('click', () => {
+  renderCharSheetOverlay();
+  els.charSheetDialog.showModal();
+});
+document.querySelector('#closeCharSheet').addEventListener('click', () => els.charSheetDialog.close());
+els.charSheetDialog.addEventListener('click', (e) => { if (e.target === els.charSheetDialog) els.charSheetDialog.close(); });
