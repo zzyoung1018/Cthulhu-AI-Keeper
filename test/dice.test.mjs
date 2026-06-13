@@ -3,11 +3,16 @@ import assert from 'node:assert/strict';
 import {
   cocCheckPasses,
   cocSuccessLevel,
+  dispatchDiceRoll,
+  formatRollSummary,
   parseDiceExpression,
   rollCocCheck,
   rollD100,
   rollDiceExpression,
-  rollSanityLoss
+  rollOpposedCheck,
+  rollPushedCheck,
+  rollSanityLoss,
+  spendLuck
 } from '../src/dice.js';
 
 function sequence(values) {
@@ -59,4 +64,188 @@ test('rolls complete CoC checks and sanity loss expressions', () => {
   assert.equal(successLoss.total, 0);
   const failureLoss = rollSanityLoss('0/1d6', false, sequence([0.5]));
   assert.equal(failureLoss.total, 4);
+});
+
+test('opposed checks determine winner by success level then roll value', () => {
+  // Active rolls HARD (22), passive rolls REGULAR (50) - same target but active wins by higher level
+  const result = rollOpposedCheck({
+    activeTarget: 60,
+    passiveTarget: 60,
+    rng: sequence([0.2, 0.2, 0.5, 0.5])
+  });
+
+  assert.equal(result.type, 'opposed_check');
+  assert.equal(result.active.roll, 22);
+  assert.equal(result.passive.roll, 55);
+  assert.equal(result.active.successLevel, 'HARD');
+  assert.equal(result.passive.successLevel, 'REGULAR');
+  assert.equal(result.winner, 'active');
+});
+
+test('pushed rolls mark fumbles and consequences', () => {
+  const pushed = rollPushedCheck({
+    target: 60,
+    difficulty: 'REGULAR',
+    rng: sequence([0.7, 0.7])
+  });
+
+  assert.equal(pushed.type, 'pushed_check');
+  assert.equal(pushed.pushed, true);
+  assert.ok(['success', 'fail', 'fumble'].includes(pushed.consequence));
+});
+
+test('pushed roll with roll=100 is always a fumble', () => {
+  // total=100 requires ones=0, tens=0 (value 0 → 100)
+  const pushed = rollPushedCheck({
+    target: 90,
+    difficulty: 'REGULAR',
+    rng: sequence([0, 0])
+  });
+
+  assert.equal(pushed.total, 100);
+  assert.equal(pushed.fumbled, true);
+  assert.equal(pushed.consequence, 'fumble');
+});
+
+test('luck spending reduces roll value and deducts from luck pool', () => {
+  // Roll 75, target 60, need 15 points, spend 20 (only 15 needed)
+  const result = spendLuck({
+    currentLuck: 50,
+    rollTotal: 75,
+    target: 60,
+    amount: 20
+  });
+
+  assert.equal(result.type, 'luck_spend');
+  assert.equal(result.spent, 15); // Only spends what's needed
+  assert.equal(result.rollAfter, 60);
+  assert.equal(result.passed, true);
+  assert.equal(result.newLuck, 35);
+});
+
+test('luck spending fails when insufficient luck points', () => {
+  assert.throws(() => {
+    spendLuck({ currentLuck: 5, rollTotal: 75, target: 60, amount: 20 });
+  }, /Not enough luck/);
+});
+
+test('dispatch routes skill checks with target from character sheet', () => {
+  const { result, label } = dispatchDiceRoll({
+    rollType: 'skill',
+    skillName: '侦查',
+    skillTarget: 68,
+    difficulty: 'HARD'
+  });
+
+  assert.equal(result.type, 'skill_check');
+  assert.equal(result.skillName, '侦查');
+  assert.equal(result.target, 68);
+  assert.equal(result.difficulty, 'HARD');
+  assert.equal(label, '侦查');
+});
+
+test('dispatch routes opposed checks with both targets', () => {
+  const { result } = dispatchDiceRoll({
+    rollType: 'opposed',
+    target: 60,
+    passiveTarget: 45
+  });
+
+  assert.equal(result.type, 'opposed_check');
+  assert.equal(result.active.target, 60);
+  assert.equal(result.passive.target, 45);
+});
+
+test('dispatch routes pushed checks', () => {
+  const { result } = dispatchDiceRoll({
+    rollType: 'pushed',
+    target: 50,
+    difficulty: 'HARD'
+  });
+
+  assert.equal(result.type, 'pushed_check');
+  assert.equal(result.pushed, true);
+});
+
+test('format roll summary for opposed checks', () => {
+  const text = formatRollSummary({
+    participantName: '林娜',
+    label: '对抗',
+    result: {
+      type: 'opposed_check',
+      active: { roll: 22, target: 60, successLevel: 'HARD' },
+      passive: { roll: 55, target: 60, successLevel: 'REGULAR' },
+      winner: 'active'
+    }
+  });
+
+  assert.match(text, /林娜/);
+  assert.match(text, /对抗检定/);
+  assert.match(text, /主动方胜/);
+});
+
+test('format roll summary for pushed checks', () => {
+  const text = formatRollSummary({
+    participantName: '林娜',
+    label: '推骰',
+    result: {
+      type: 'pushed_check',
+      total: 45,
+      target: 60,
+      successLevel: 'REGULAR',
+      passed: true,
+      pushed: true,
+      fumbled: false,
+      consequence: 'success'
+    }
+  });
+
+  assert.match(text, /推骰/);
+  assert.match(text, /推骰成功/);
+});
+
+test('format roll summary for luck spend', () => {
+  const text = formatRollSummary({
+    participantName: '林娜',
+    label: '幸运',
+    result: {
+      type: 'luck_spend',
+      spent: 15,
+      rollBefore: 75,
+      rollAfter: 60,
+      target: 60,
+      passed: true,
+      newLuck: 35
+    }
+  });
+
+  assert.match(text, /消耗 15 点幸运值/);
+  assert.match(text, /通过/);
+});
+
+test('dispatch routes sanity loss expressions', () => {
+  const { result } = dispatchDiceRoll({
+    rollType: 'sanity',
+    expression: '0/1d6',
+    passed: false
+  });
+
+  assert.equal(result.type, 'sanity_loss');
+  assert.equal(result.passed, false);
+});
+
+test('format roll summary for sanity loss', () => {
+  const text = formatRollSummary({
+    participantName: '林娜',
+    label: '理智',
+    result: {
+      type: 'sanity_loss',
+      expression: '1/1d6',
+      passed: false,
+      total: 4
+    }
+  });
+
+  assert.match(text, /理智损失/);
+  assert.match(text, /4/);
 });

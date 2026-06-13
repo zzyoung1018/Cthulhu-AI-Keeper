@@ -408,3 +408,247 @@ test('persists AI task lifecycle, idempotency, and cancellation permissions', ()
     cleanup();
   }
 });
+
+test('filters private messages from other players in room state', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const mod = createModule(database, 'keeper');
+    const { room } = database.createRoom({
+      name: 'Private Msg',
+      playerId: 'keeper',
+      displayName: 'Keeper',
+      moduleId: mod.id
+    });
+    database.joinRoom({ code: room.code, playerId: 'player1', displayName: 'Alice' });
+    database.joinRoom({ code: room.code, playerId: 'player2', displayName: 'Bob' });
+
+    // Keeper sends private message to player1
+    const { participant: keeperP } = database.getParticipant(room.code, 'keeper');
+    database.createMessage({
+      code: room.code,
+      authorType: 'player',
+      messageType: 'PRIVATE',
+      playerId: 'keeper',
+      participantId: keeperP.id,
+      displayName: 'Keeper',
+      content: 'secret for Alice',
+      status: 'complete',
+      privateTarget: 'player1'
+    });
+
+    // Public message
+    database.createPlayerMessage({ code: room.code, playerId: 'keeper', content: 'public msg', messageType: 'IC' });
+
+    // Player1 sees both messages (public + their private)
+    const state1 = database.getRoomState(room.code, { playerId: 'player1' });
+    assert.equal(state1.messages.length, 2);
+    assert.ok(state1.messages.some((m) => m.content === 'secret for Alice'));
+    assert.ok(state1.messages.some((m) => m.content === 'public msg'));
+
+    // Player2 only sees public message
+    const state2 = database.getRoomState(room.code, { playerId: 'player2' });
+    assert.equal(state2.messages.length, 1);
+    assert.equal(state2.messages[0].content, 'public msg');
+
+    // Anonymous viewer (no playerId) sees only public
+    const state3 = database.getRoomState(room.code);
+    assert.equal(state3.messages.length, 1);
+  } finally {
+    cleanup();
+  }
+});
+
+test('filters private dice rolls from other players', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const mod = createModule(database, 'keeper');
+    const { room } = database.createRoom({
+      name: 'Dice Priv',
+      playerId: 'keeper',
+      displayName: 'Keeper',
+      moduleId: mod.id
+    });
+    database.joinRoom({ code: room.code, playerId: 'player1', displayName: 'Alice' });
+
+    database.createDiceRoll({
+      code: room.code,
+      playerId: 'keeper',
+      rollType: 'coc_check',
+      expression: '1d100',
+      label: '秘密侦察',
+      isPrivate: true,
+      result: { type: 'coc_check', total: 41, target: 50, successLevel: 'REGULAR', passed: true }
+    });
+    database.createDiceRoll({
+      code: room.code,
+      playerId: 'keeper',
+      rollType: 'expression',
+      expression: '2d6',
+      label: '公开伤害',
+      result: { type: 'expression', total: 7, rolls: [3, 4] }
+    });
+
+    const keeperState = database.getRoomState(room.code, { playerId: 'keeper' });
+    assert.equal(keeperState.diceRolls.length, 2);
+
+    const playerState = database.getRoomState(room.code, { playerId: 'player1' });
+    assert.equal(playerState.diceRolls.length, 1);
+    assert.equal(playerState.diceRolls[0].label, '公开伤害');
+  } finally {
+    cleanup();
+  }
+});
+
+test('creates and lists round states for rollback tracking', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const mod = createModule(database, 'keeper');
+    const { room } = database.createRoom({
+      name: 'Rounds',
+      playerId: 'keeper',
+      displayName: 'Keeper',
+      moduleId: mod.id
+    });
+
+    const round = database.createRoundState({
+      roomId: room.id,
+      aiTaskUid: 'test-task-uid',
+      dmMessageId: null,
+      snapshotJson: JSON.stringify({ participants: [], summary: 'test' })
+    });
+
+    assert.ok(round.id > 0);
+    assert.equal(round.roomId, room.id);
+    assert.equal(round.aiTaskUid, 'test-task-uid');
+    assert.equal(round.isRolledBack, false);
+
+    const rounds = database.listRoundStates(room.id);
+    assert.equal(rounds.length, 1);
+
+    database.markRoundRolledBack(round.id);
+    const rolled = database.getRoundState(round.id);
+    assert.equal(rolled.isRolledBack, true);
+  } finally {
+    cleanup();
+  }
+});
+
+test('rollback restores character snapshots and marks messages rolled back', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const mod = createModule(database, 'keeper');
+    const { room } = database.createRoom({
+      name: 'Rollback',
+      playerId: 'keeper',
+      displayName: 'Keeper',
+      moduleId: mod.id
+    });
+
+    // Set initial character
+    database.updateCharacterSheet({
+      code: room.code,
+      playerId: 'keeper',
+      displayName: 'Keeper',
+      characterSheet: characterSheet('林娜', 60)
+    });
+
+    // Create a message
+    const msg = database.createPlayerMessage({
+      code: room.code,
+      playerId: 'keeper',
+      content: 'test',
+      messageType: 'IC'
+    });
+
+    // Create round state with pre-change snapshot
+    const round = database.createRoundState({
+      roomId: room.id,
+      aiTaskUid: 'rollback-test',
+      dmMessageId: msg.id,
+      snapshotJson: JSON.stringify({
+        participants: [{
+          playerId: 'keeper',
+          characterSheet: characterSheet('旧名', 50),
+          characterRevision: 0
+        }],
+        summary: 'old summary'
+      })
+    });
+
+    // Simulate rollback: restore snapshot and mark message
+    const snap = JSON.parse(round.snapshotJson);
+    for (const s of snap.participants) {
+      const p = database.getParticipantByPlayerId(room.id, s.playerId);
+      if (p) {
+        database.restoreCharacterSnapshot({
+          participantId: p.id,
+          characterSheet: s.characterSheet,
+          characterRevision: s.characterRevision
+        });
+      }
+    }
+    database.markMessageRolledBack(msg.id);
+    database.markRoundRolledBack(round.id);
+    database.forceUpdateSummary(room.id, snap.summary);
+
+    // Verify rollback
+    const rolledMsg = database.getMessageById(msg.id);
+    assert.equal(rolledMsg.isRolledBack, true);
+
+    const state = database.getRoomState(room.code);
+    assert.equal(state.messages.length, 0); // Rolled back messages are filtered
+  } finally {
+    cleanup();
+  }
+});
+
+test('export state includes all messages and dice rolls', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const mod = createModule(database, 'keeper');
+    const { room } = database.createRoom({
+      name: 'Export',
+      playerId: 'keeper',
+      displayName: 'Keeper',
+      moduleId: mod.id
+    });
+
+    database.createPlayerMessage({ code: room.code, playerId: 'keeper', content: 'msg1', messageType: 'IC' });
+    database.createPlayerMessage({ code: room.code, playerId: 'keeper', content: 'msg2', messageType: 'ACTION' });
+    database.createDiceRoll({
+      code: room.code,
+      playerId: 'keeper',
+      rollType: 'coc_check',
+      expression: '1d100',
+      label: '侦察',
+      result: { total: 41, target: 60, successLevel: 'REGULAR', passed: true }
+    });
+
+    const exportState = database.getExportState(room.code, 'keeper');
+    assert.equal(exportState.messages.length, 2);
+    assert.equal(exportState.diceRolls.length, 1);
+    assert.equal(exportState.room.code, room.code);
+    assert.equal(exportState.participants.length, 1);
+  } finally {
+    cleanup();
+  }
+});
+
+test('getRoomByCode returns room without participant lookup', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const mod = createModule(database, 'keeper');
+    const { room } = database.createRoom({
+      name: 'Lookup',
+      playerId: 'keeper',
+      displayName: 'Keeper',
+      moduleId: mod.id
+    });
+
+    const found = database.getRoomByCode(room.code);
+    assert.ok(found);
+    assert.equal(found.code, room.code);
+  } finally {
+    cleanup();
+  }
+});
