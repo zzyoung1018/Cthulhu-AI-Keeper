@@ -295,3 +295,116 @@ test('stores reusable private modules and exposes preview only to owner', () => 
     cleanup();
   }
 });
+
+test('stores room AI settings without exposing API keys', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const module = createModule(database, 'keeper');
+    const { room } = database.createRoom({
+      name: 'AI Config',
+      playerId: 'keeper',
+      displayName: 'Keeper',
+      moduleId: module.id
+    });
+    database.joinRoom({ code: room.code, playerId: 'player', displayName: 'Player' });
+
+    assert.throws(
+      () => database.updateRoomAiConfig({
+        code: room.code,
+        playerId: 'player',
+        aiConfig: { model: 'bad' }
+      }),
+      (error) => error instanceof HttpError && error.statusCode === 403
+    );
+
+    const updated = database.updateRoomAiConfig({
+      code: room.code,
+      playerId: 'keeper',
+      aiConfig: {
+        baseUrl: 'https://example.test/v1/',
+        apiKey: 'room-secret',
+        model: 'keeper-model',
+        dmStyle: '冷静、克制。',
+        narrativeDetail: 'RICH',
+        rulesStrictness: 'STRICT',
+        allowModuleExpansion: true,
+        triggerMode: 'ROUND',
+        keeperReviewRequired: true,
+        contentBoundaries: '不描述血腥细节。'
+      }
+    });
+
+    assert.equal(updated.aiConfig.baseUrl, 'https://example.test/v1');
+    assert.equal(updated.aiConfig.model, 'keeper-model');
+    assert.equal(updated.aiConfig.apiKeyConfigured, true);
+    assert.equal(updated.aiConfig.apiKey, undefined);
+    assert.equal(database.getRoomAiSettings(room.code).apiKey, 'room-secret');
+    assert.equal(database.getRoomState(room.code).room.aiConfig.apiKey, undefined);
+  } finally {
+    cleanup();
+  }
+});
+
+test('persists AI task lifecycle, idempotency, and cancellation permissions', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const module = createModule(database, 'keeper');
+    const { room } = database.createRoom({
+      name: 'AI Tasks',
+      playerId: 'keeper',
+      displayName: 'Keeper',
+      moduleId: module.id
+    });
+    database.joinRoom({ code: room.code, playerId: 'player', displayName: 'Player' });
+    const message = database.createPlayerMessage({
+      code: room.code,
+      playerId: 'keeper',
+      content: '我推门。',
+      messageType: 'ACTION'
+    });
+
+    const first = database.createAiTask({
+      code: room.code,
+      playerId: 'keeper',
+      triggerMessageId: message.id,
+      idempotencyKey: `message:${message.id}`
+    });
+    const duplicate = database.createAiTask({
+      code: room.code,
+      playerId: 'keeper',
+      triggerMessageId: message.id,
+      idempotencyKey: `message:${message.id}`
+    });
+
+    assert.equal(first.created, true);
+    assert.equal(duplicate.created, false);
+    assert.equal(duplicate.task.uid, first.task.uid);
+    assert.equal(database.getRoomState(room.code).activeAiTask.uid, first.task.uid);
+
+    const streaming = database.updateAiTaskStatus({ taskUid: first.task.uid, status: 'STREAMING' });
+    assert.equal(streaming.status, 'STREAMING');
+    assert.ok(streaming.startedAt);
+
+    assert.throws(
+      () => database.requestAiTaskCancel({ code: room.code, playerId: 'player', taskUid: first.task.uid }),
+      (error) => error instanceof HttpError && error.statusCode === 403
+    );
+
+    const cancelled = database.requestAiTaskCancel({ code: room.code, playerId: 'keeper', taskUid: first.task.uid });
+    assert.equal(cancelled.cancelRequested, true);
+    const completed = database.updateAiTaskStatus({ taskUid: first.task.uid, status: 'CANCELLED' });
+    assert.equal(completed.status, 'CANCELLED');
+    assert.ok(completed.completedAt);
+    assert.equal(database.getRoomState(room.code).activeAiTask, null);
+
+    const regenerated = database.createRegenerationTask({
+      code: room.code,
+      playerId: 'keeper',
+      sourceTaskUid: first.task.uid
+    });
+    assert.equal(regenerated.created, true);
+    assert.equal(regenerated.task.triggerMessageId, message.id);
+  } finally {
+    cleanup();
+  }
+});

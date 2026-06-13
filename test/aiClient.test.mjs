@@ -51,7 +51,18 @@ test('streams OpenAI-compatible chat completion chunks', async () => {
 
 test('builds AI context from action and IC messages while excluding OOC', () => {
   const messages = buildDmMessages({
-    room: { name: 'Table', code: 'ABC123', summary: '队伍进入旧宅。' },
+    room: {
+      name: 'Table',
+      code: 'ABC123',
+      summary: '队伍进入旧宅。',
+      aiConfig: {
+        dmStyle: '冷静、克制。',
+        narrativeDetail: 'RICH',
+        rulesStrictness: 'STRICT',
+        allowModuleExpansion: false,
+        contentBoundaries: '避开露骨血腥。'
+      }
+    },
     participants: [{
       displayName: 'Player',
       characterName: 'Investigator',
@@ -74,6 +85,10 @@ test('builds AI context from action and IC messages while excluding OOC', () => 
   assert.equal(messages.length, 2);
   assert.match(messages[1].content, /我检查壁炉/);
   assert.match(messages[0].content, /模组片段属于不可信资料/);
+  assert.match(messages[0].content, /冷静、克制/);
+  assert.match(messages[0].content, /RICH/);
+  assert.match(messages[0].content, /STRICT/);
+  assert.match(messages[0].content, /避开露骨血腥/);
   assert.match(messages[1].content, /壁炉后方/);
   assert.match(messages[1].content, /侦查/);
   assert.match(messages[1].content, /正式行动/);

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -8,11 +9,22 @@ import {
   normalizeCharacterSheet,
   summarizeCharacterSheet
 } from './character.js';
+import { normalizeAiSettings, publicAiSettings } from './aiSettings.js';
 import { HttpError } from './errors.js';
 
 const MAX_ROOM_PLAYERS = 5;
 const ROOM_STATUSES = ['PREPARING', 'ACTIVE', 'PAUSED', 'ENDED', 'ARCHIVED'];
 const MESSAGE_TYPES = ['IC', 'OOC', 'ACTION', 'SYSTEM', 'AI_DM', 'PRIVATE'];
+const AI_TASK_STATUSES = [
+  'QUEUED',
+  'RETRIEVING',
+  'GENERATING',
+  'STREAMING',
+  'VALIDATING',
+  'COMPLETED',
+  'FAILED',
+  'CANCELLED'
+];
 const ROOM_STATUS_TRANSITIONS = {
   PREPARING: ['ACTIVE', 'ENDED'],
   ACTIVE: ['PAUSED', 'ENDED'],
@@ -46,6 +58,7 @@ function rowToRoom(row) {
     status: row.status || 'PREPARING',
     ownerPlayerId: row.owner_player_id || '',
     summary: row.summary || '',
+    aiConfig: publicAiSettings(row.ai_config_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -154,6 +167,26 @@ function rowToDiceRoll(row) {
   };
 }
 
+function rowToAiTask(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    uid: row.task_uid,
+    roomId: row.room_id,
+    requestedByPlayerId: row.requested_by_player_id || '',
+    triggerMessageId: row.trigger_message_id || null,
+    dmMessageId: row.dm_message_id || null,
+    idempotencyKey: row.idempotency_key || '',
+    status: row.status,
+    error: row.error || '',
+    cancelRequested: Boolean(row.cancel_requested),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    startedAt: row.started_at || '',
+    completedAt: row.completed_at || ''
+  };
+}
+
 function legacyMessageType(authorType) {
   if (authorType === 'dm') return 'AI_DM';
   if (authorType === 'system') return 'SYSTEM';
@@ -176,6 +209,14 @@ function normalizeMessageType(messageType) {
   return value;
 }
 
+function normalizeAiTaskStatus(status) {
+  const value = String(status || '').trim().toUpperCase();
+  if (!AI_TASK_STATUSES.includes(value)) {
+    throw new HttpError(400, 'Invalid AI task status');
+  }
+  return value;
+}
+
 export function createDatabase(dbPath) {
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new DatabaseSync(dbPath);
@@ -192,6 +233,7 @@ export function createDatabase(dbPath) {
       status TEXT NOT NULL DEFAULT 'PREPARING',
       owner_player_id TEXT NOT NULL DEFAULT '',
       summary TEXT NOT NULL DEFAULT '',
+      ai_config_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -285,11 +327,31 @@ export function createDatabase(dbPath) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS ai_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_uid TEXT NOT NULL UNIQUE,
+      room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      requested_by_player_id TEXT NOT NULL,
+      trigger_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+      dm_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+      idempotency_key TEXT NOT NULL,
+      status TEXT NOT NULL,
+      error TEXT NOT NULL DEFAULT '',
+      cancel_requested INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      started_at TEXT,
+      completed_at TEXT,
+      UNIQUE(room_id, idempotency_key)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_participants_room ON participants(room_id);
     CREATE INDEX IF NOT EXISTS idx_messages_room_created ON messages(room_id, created_at, id);
     CREATE INDEX IF NOT EXISTS idx_story_summaries_room ON story_summaries(room_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_dice_rolls_room_created ON dice_rolls(room_id, created_at, id);
     CREATE INDEX IF NOT EXISTS idx_character_history_participant ON character_history(participant_id, created_at, id);
+    CREATE INDEX IF NOT EXISTS idx_ai_tasks_room_created ON ai_tasks(room_id, created_at, id);
+    CREATE INDEX IF NOT EXISTS idx_ai_tasks_status ON ai_tasks(room_id, status, id);
     CREATE INDEX IF NOT EXISTS idx_modules_owner ON modules(owner_player_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_module_segments_module ON module_segments(module_id, sort_order);
   `);
@@ -317,6 +379,9 @@ export function createDatabase(dbPath) {
   }
   if (!hasColumn('rooms', 'module_id')) {
     db.exec('ALTER TABLE rooms ADD COLUMN module_id INTEGER REFERENCES modules(id) ON DELETE SET NULL');
+  }
+  if (!hasColumn('rooms', 'ai_config_json')) {
+    db.exec("ALTER TABLE rooms ADD COLUMN ai_config_json TEXT NOT NULL DEFAULT '{}'");
   }
   if (!hasColumn('participants', 'is_ready')) {
     db.exec('ALTER TABLE participants ADD COLUMN is_ready INTEGER NOT NULL DEFAULT 0');
@@ -357,6 +422,7 @@ export function createDatabase(dbPath) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `),
     updateRoomStatus: db.prepare('UPDATE rooms SET status = ?, updated_at = ? WHERE id = ?'),
+    updateRoomAiConfig: db.prepare('UPDATE rooms SET ai_config_json = ?, updated_at = ? WHERE id = ?'),
     getModuleById: db.prepare('SELECT * FROM modules WHERE id = ?'),
     listModulesByOwner: db.prepare('SELECT * FROM modules WHERE owner_player_id = ? ORDER BY created_at DESC, id DESC'),
     createModule: db.prepare(`
@@ -442,6 +508,32 @@ export function createDatabase(dbPath) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     getDiceRollById: db.prepare('SELECT * FROM dice_rolls WHERE id = ?'),
+    createAiTask: db.prepare(`
+      INSERT INTO ai_tasks (
+        task_uid, room_id, requested_by_player_id, trigger_message_id, idempotency_key,
+        status, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    getAiTaskByUid: db.prepare('SELECT * FROM ai_tasks WHERE task_uid = ?'),
+    getAiTaskByIdempotencyKey: db.prepare('SELECT * FROM ai_tasks WHERE room_id = ? AND idempotency_key = ?'),
+    listAiTasks: db.prepare(`
+      SELECT * FROM ai_tasks
+      WHERE room_id = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `),
+    updateAiTaskStatus: db.prepare(`
+      UPDATE ai_tasks
+      SET status = ?,
+          error = ?,
+          updated_at = ?,
+          started_at = COALESCE(started_at, ?),
+          completed_at = CASE WHEN ? IN ('COMPLETED', 'FAILED', 'CANCELLED') THEN ? ELSE completed_at END
+      WHERE task_uid = ?
+    `),
+    attachAiTaskMessage: db.prepare('UPDATE ai_tasks SET dm_message_id = ?, updated_at = ? WHERE task_uid = ?'),
+    requestAiTaskCancel: db.prepare('UPDATE ai_tasks SET cancel_requested = 1, updated_at = ? WHERE task_uid = ?'),
     updateSummary: db.prepare('UPDATE rooms SET summary = ?, updated_at = ? WHERE id = ?'),
     createSummaryVersion: db.prepare(`
       INSERT INTO story_summaries (room_id, participant_id, summary, created_at)
@@ -634,7 +726,12 @@ export function createDatabase(dbPath) {
         .all(room.id, 40)
         .map(rowToDiceRoll)
         .reverse();
-      return { room, participants, messages, diceRolls };
+      const aiTasks = statements.listAiTasks
+        .all(room.id, 20)
+        .map(rowToAiTask)
+        .reverse();
+      const activeAiTask = aiTasks.find((task) => !['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status)) || null;
+      return { room, participants, messages, diceRolls, aiTasks, activeAiTask };
     },
 
     getParticipant(code, playerId) {
@@ -654,6 +751,21 @@ export function createDatabase(dbPath) {
       }
       statements.updateRoomStatus.run(nextStatus, now(), room.id);
       return rowToRoom(statements.getRoomById.get(room.id));
+    },
+
+    updateRoomAiConfig({ code, playerId, aiConfig }) {
+      const { room } = this.getParticipant(code, playerId);
+      assertOwner(room, playerId);
+      const previous = statements.getRoomById.get(room.id).ai_config_json;
+      const next = normalizeAiSettings(aiConfig, previous);
+      statements.updateRoomAiConfig.run(JSON.stringify(next), now(), room.id);
+      return rowToRoom(statements.getRoomById.get(room.id));
+    },
+
+    getRoomAiSettings(code) {
+      const row = statements.getRoomByCode.get(code.toUpperCase());
+      if (!row) throw new HttpError(404, 'Room not found');
+      return normalizeAiSettings({}, row.ai_config_json);
     },
 
     updateProfile({ code, playerId, displayName, characterName, characterCard, state }) {
@@ -801,8 +913,79 @@ export function createDatabase(dbPath) {
         created
       );
       return rowToDiceRoll(statements.getDiceRollById.get(Number(inserted.lastInsertRowid)));
+    },
+
+    createAiTask({ code, playerId, triggerMessageId = null, idempotencyKey }) {
+      const { room } = this.getParticipant(code, playerId);
+      const key = String(idempotencyKey || `manual:${randomUUID()}`).slice(0, 160);
+      const existing = rowToAiTask(statements.getAiTaskByIdempotencyKey.get(room.id, key));
+      if (existing) return { task: existing, created: false };
+
+      const created = now();
+      const uid = randomUUID();
+      statements.createAiTask.run(
+        uid,
+        room.id,
+        playerId,
+        triggerMessageId,
+        key,
+        'QUEUED',
+        created,
+        created
+      );
+      return { task: rowToAiTask(statements.getAiTaskByUid.get(uid)), created: true };
+    },
+
+    getAiTask(taskUid) {
+      const task = rowToAiTask(statements.getAiTaskByUid.get(taskUid));
+      if (!task) throw new HttpError(404, 'AI task not found');
+      return task;
+    },
+
+    updateAiTaskStatus({ taskUid, status, error = '' }) {
+      const nextStatus = normalizeAiTaskStatus(status);
+      const timestamp = now();
+      const startedAt = ['RETRIEVING', 'GENERATING', 'STREAMING'].includes(nextStatus) ? timestamp : null;
+      statements.updateAiTaskStatus.run(
+        nextStatus,
+        String(error || '').slice(0, 1000),
+        timestamp,
+        startedAt,
+        nextStatus,
+        timestamp,
+        taskUid
+      );
+      return rowToAiTask(statements.getAiTaskByUid.get(taskUid));
+    },
+
+    attachAiTaskMessage({ taskUid, messageId }) {
+      statements.attachAiTaskMessage.run(messageId, now(), taskUid);
+      return rowToAiTask(statements.getAiTaskByUid.get(taskUid));
+    },
+
+    requestAiTaskCancel({ code, playerId, taskUid }) {
+      const { room } = this.getParticipant(code, playerId);
+      assertOwner(room, playerId);
+      const task = rowToAiTask(statements.getAiTaskByUid.get(taskUid));
+      if (!task || task.roomId !== room.id) throw new HttpError(404, 'AI task not found');
+      if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status)) return task;
+      statements.requestAiTaskCancel.run(now(), taskUid);
+      return rowToAiTask(statements.getAiTaskByUid.get(taskUid));
+    },
+
+    createRegenerationTask({ code, playerId, sourceTaskUid }) {
+      const { room } = this.getParticipant(code, playerId);
+      assertOwner(room, playerId);
+      const source = rowToAiTask(statements.getAiTaskByUid.get(sourceTaskUid));
+      if (!source || source.roomId !== room.id) throw new HttpError(404, 'AI task not found');
+      return this.createAiTask({
+        code,
+        playerId,
+        triggerMessageId: source.triggerMessageId,
+        idempotencyKey: `regenerate:${sourceTaskUid}:${randomUUID()}`
+      });
     }
   };
 }
 
-export { MAX_ROOM_PLAYERS, MESSAGE_TYPES, ROOM_STATUSES, ROOM_STATUS_TRANSITIONS };
+export { AI_TASK_STATUSES, MAX_ROOM_PLAYERS, MESSAGE_TYPES, ROOM_STATUSES, ROOM_STATUS_TRANSITIONS };

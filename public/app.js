@@ -42,6 +42,8 @@ const state = {
   participant: null,
   participants: [],
   messages: [],
+  aiTasks: [],
+  activeAiTask: null,
   events: null
 };
 
@@ -60,6 +62,8 @@ const els = {
   roomCodeField: document.querySelector('#roomCodeField'),
   entryPanel: document.querySelector('#entryPanel'),
   roomPanel: document.querySelector('#roomPanel'),
+  aiConfigPanel: document.querySelector('#aiConfigPanel'),
+  aiConfigForm: document.querySelector('#aiConfigForm'),
   editorPanel: document.querySelector('#editorPanel'),
   profileForm: document.querySelector('#profileForm'),
   characteristicsGrid: document.querySelector('#characteristicsGrid'),
@@ -86,6 +90,8 @@ const els = {
   connectionDot: document.querySelector('#connectionDot'),
   tableSubtitle: document.querySelector('#tableSubtitle'),
   aiPill: document.querySelector('#aiPill'),
+  cancelAiTask: document.querySelector('#cancelAiTask'),
+  regenerateAiTask: document.querySelector('#regenerateAiTask'),
   copyRoomCode: document.querySelector('#copyRoomCode'),
   leaveRoom: document.querySelector('#leaveRoom'),
   startGame: document.querySelector('#startGame'),
@@ -114,6 +120,19 @@ const messageTypeLabels = {
   AI_DM: 'AI DM',
   PRIVATE: 'PRIVATE'
 };
+
+const aiTaskLabels = {
+  QUEUED: 'AI 排队中',
+  RETRIEVING: '检索模组',
+  GENERATING: '生成中',
+  STREAMING: '流式输出',
+  VALIDATING: '验证事件',
+  COMPLETED: 'AI 完成',
+  FAILED: 'AI 失败',
+  CANCELLED: 'AI 已取消'
+};
+
+const activeAiStatuses = ['QUEUED', 'RETRIEVING', 'GENERATING', 'STREAMING', 'VALIDATING'];
 
 const characteristicKeys = ['STR', 'CON', 'SIZ', 'DEX', 'APP', 'INT', 'POW', 'EDU', 'Luck'];
 
@@ -321,6 +340,26 @@ function setAiBusy(isBusy) {
   els.aiPill.textContent = isBusy ? 'AI 正在写下一幕' : 'AI 待命';
 }
 
+function latestFinishedAiTask() {
+  return [...state.aiTasks].reverse().find((task) => ['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status)) || null;
+}
+
+function renderAiTaskControls() {
+  const activeTask = state.activeAiTask || findActiveAiTask(state.aiTasks);
+  state.activeAiTask = activeTask;
+  const busy = Boolean(activeTask);
+  const label = activeTask ? aiTaskLabels[activeTask.status] || activeTask.status : 'AI 待命';
+  els.aiPill.classList.toggle('busy', busy);
+  els.aiPill.textContent = activeTask ? `${label} · ${activeTask.uid.slice(0, 8)}` : label;
+
+  const owner = isOwner();
+  els.cancelAiTask.hidden = !owner || !activeTask || !['QUEUED', 'RETRIEVING', 'GENERATING', 'STREAMING'].includes(activeTask.status);
+  const finished = latestFinishedAiTask();
+  els.regenerateAiTask.hidden = !owner || Boolean(activeTask) || !finished;
+  els.cancelAiTask.dataset.taskUid = activeTask?.uid || '';
+  els.regenerateAiTask.dataset.taskUid = finished?.uid || '';
+}
+
 function setConnection(status, text) {
   els.connectionStatus.textContent = text;
   els.connectionDot.className = `status-dot ${status}`;
@@ -345,6 +384,10 @@ function isOwner() {
   return Boolean(state.participant?.isOwner || state.room?.ownerPlayerId === state.playerId);
 }
 
+function findActiveAiTask(tasks = []) {
+  return tasks.find((task) => activeAiStatuses.includes(task.status)) || null;
+}
+
 function syncDisplayNameFromParticipant(participant) {
   if (!participant?.displayName) return;
   state.displayName = participant.displayName;
@@ -359,6 +402,8 @@ function applyRoomPayload(payload) {
   syncDisplayNameFromParticipant(state.participant);
   rememberRoom(state.room);
   state.messages = payload.messages || [];
+  state.aiTasks = payload.aiTasks || [];
+  state.activeAiTask = payload.activeAiTask || findActiveAiTask(state.aiTasks);
   render();
   connectEvents();
 }
@@ -718,10 +763,40 @@ function renderLifecycleActions() {
   els.endGame.hidden = !canEnd;
 }
 
+function setFormValue(form, name, value) {
+  const field = form.elements[name];
+  if (!field) return;
+  if (field.type === 'checkbox') {
+    field.checked = Boolean(value);
+  } else {
+    field.value = value ?? '';
+  }
+}
+
+function renderAiConfig() {
+  const owner = isOwner();
+  els.aiConfigPanel.hidden = !state.room || !owner;
+  if (!state.room || !owner) return;
+
+  const config = state.room.aiConfig || {};
+  setFormValue(els.aiConfigForm, 'baseUrl', config.baseUrl || '');
+  setFormValue(els.aiConfigForm, 'apiKey', '');
+  els.aiConfigForm.apiKey.placeholder = config.apiKeyConfigured ? '已配置，留空保持不变' : '留空使用服务器默认';
+  setFormValue(els.aiConfigForm, 'model', config.model || '');
+  setFormValue(els.aiConfigForm, 'dmStyle', config.dmStyle || '');
+  setFormValue(els.aiConfigForm, 'narrativeDetail', config.narrativeDetail || 'BALANCED');
+  setFormValue(els.aiConfigForm, 'rulesStrictness', config.rulesStrictness || 'STANDARD');
+  setFormValue(els.aiConfigForm, 'triggerMode', config.triggerMode || 'ACTION');
+  setFormValue(els.aiConfigForm, 'allowModuleExpansion', config.allowModuleExpansion);
+  setFormValue(els.aiConfigForm, 'keeperReviewRequired', config.keeperReviewRequired);
+  setFormValue(els.aiConfigForm, 'contentBoundaries', config.contentBoundaries || '');
+}
+
 function render() {
   const inRoom = Boolean(state.room);
   els.entryPanel.hidden = inRoom;
   els.roomPanel.hidden = !inRoom;
+  els.aiConfigPanel.hidden = true;
   els.editorPanel.hidden = !inRoom;
   els.summaryPanel.hidden = !inRoom;
   els.messageForm.hidden = !inRoom;
@@ -748,6 +823,8 @@ function render() {
 
   renderPlayers();
   renderLifecycleActions();
+  renderAiConfig();
+  renderAiTaskControls();
   renderMessages();
   renderProfile();
 }
@@ -767,6 +844,8 @@ function connectEvents() {
     const payload = JSON.parse(event.data);
     state.room = payload.room;
     state.participants = payload.participants || [];
+    state.aiTasks = payload.aiTasks || state.aiTasks;
+    state.activeAiTask = payload.activeAiTask || findActiveAiTask(state.aiTasks);
     const self = state.participants.find((participant) => participant.playerId === state.playerId);
     if (self) state.participant = self;
     render();
@@ -797,6 +876,16 @@ function connectEvents() {
     if (index >= 0) state.messages[index] = message;
     updateMessageNode(message);
     setAiBusy(false);
+  });
+
+  source.addEventListener('ai_task_updated', (event) => {
+    const { task } = JSON.parse(event.data);
+    const index = state.aiTasks.findIndex((item) => item.uid === task.uid);
+    if (index >= 0) state.aiTasks[index] = task;
+    else state.aiTasks.push(task);
+    state.aiTasks = state.aiTasks.slice(-20);
+    state.activeAiTask = findActiveAiTask(state.aiTasks);
+    renderAiTaskControls();
   });
 
   source.addEventListener('message_error', (event) => {
@@ -989,6 +1078,38 @@ els.summaryForm.addEventListener('submit', async (event) => {
   }
 });
 
+els.aiConfigForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.room) return;
+  const form = new FormData(els.aiConfigForm);
+
+  try {
+    const payload = await api(`/api/rooms/${state.room.code}/ai-config`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        playerId: state.playerId,
+        aiConfig: {
+          baseUrl: String(form.get('baseUrl') || ''),
+          apiKey: String(form.get('apiKey') || ''),
+          model: String(form.get('model') || ''),
+          dmStyle: String(form.get('dmStyle') || ''),
+          narrativeDetail: String(form.get('narrativeDetail') || 'BALANCED'),
+          rulesStrictness: String(form.get('rulesStrictness') || 'STANDARD'),
+          triggerMode: String(form.get('triggerMode') || 'ACTION'),
+          allowModuleExpansion: form.get('allowModuleExpansion') === 'on',
+          keeperReviewRequired: form.get('keeperReviewRequired') === 'on',
+          contentBoundaries: String(form.get('contentBoundaries') || '')
+        }
+      })
+    });
+    state.room = payload.room;
+    renderAiConfig();
+    toast('AI 配置已保存');
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
 els.messageForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (!state.room) return;
@@ -1000,7 +1121,7 @@ els.messageForm.addEventListener('submit', async (event) => {
   if (shouldTriggerAi) setAiBusy(true);
 
   try {
-    await api(`/api/rooms/${state.room.code}/messages`, {
+    const payload = await api(`/api/rooms/${state.room.code}/messages`, {
       method: 'POST',
       body: JSON.stringify({
         playerId: state.playerId,
@@ -1009,8 +1130,48 @@ els.messageForm.addEventListener('submit', async (event) => {
         submitToDm: shouldTriggerAi
       })
     });
+    if (payload.aiTask) {
+      const index = state.aiTasks.findIndex((task) => task.uid === payload.aiTask.uid);
+      if (index >= 0) state.aiTasks[index] = payload.aiTask;
+      else state.aiTasks.push(payload.aiTask);
+      state.activeAiTask = findActiveAiTask(state.aiTasks);
+      renderAiTaskControls();
+    }
   } catch (error) {
     if (shouldTriggerAi) setAiBusy(false);
+    toast(error.message);
+  }
+});
+
+els.cancelAiTask.addEventListener('click', async () => {
+  if (!state.room || !els.cancelAiTask.dataset.taskUid) return;
+  try {
+    const payload = await api(`/api/rooms/${state.room.code}/ai-tasks/${els.cancelAiTask.dataset.taskUid}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ playerId: state.playerId })
+    });
+    const index = state.aiTasks.findIndex((task) => task.uid === payload.task.uid);
+    if (index >= 0) state.aiTasks[index] = payload.task;
+    state.activeAiTask = findActiveAiTask(state.aiTasks);
+    renderAiTaskControls();
+    toast('AI 任务已取消');
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+els.regenerateAiTask.addEventListener('click', async () => {
+  if (!state.room || !els.regenerateAiTask.dataset.taskUid) return;
+  try {
+    const payload = await api(`/api/rooms/${state.room.code}/ai-tasks/${els.regenerateAiTask.dataset.taskUid}/regenerate`, {
+      method: 'POST',
+      body: JSON.stringify({ playerId: state.playerId })
+    });
+    state.aiTasks.push(payload.task);
+    state.activeAiTask = findActiveAiTask(state.aiTasks);
+    renderAiTaskControls();
+    toast('AI 已重新排队');
+  } catch (error) {
     toast(error.message);
   }
 });
@@ -1027,6 +1188,8 @@ els.leaveRoom.addEventListener('click', () => {
   state.participant = null;
   state.participants = [];
   state.messages = [];
+  state.aiTasks = [];
+  state.activeAiTask = null;
   forgetRoom();
   setAiBusy(false);
   render();

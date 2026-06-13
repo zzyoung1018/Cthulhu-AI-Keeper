@@ -254,10 +254,22 @@ label,
 
 .character-grid,
 .stat-grid,
-.resource-grid {
+.resource-grid,
+.config-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.inline-toggle {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  color: var(--text);
+}
+
+.inline-toggle input {
+  width: 18px;
+  aspect-ratio: 1;
 }
 
 .sheet-section {
@@ -445,7 +457,8 @@ select:focus {
 }
 
 .room-panel,
-.editor-panel {
+.editor-panel,
+.ai-config-panel {
   gap: 12px;
 }
 
@@ -562,6 +575,24 @@ select:focus {
   color: #17140e;
   background: var(--gold);
   border-color: var(--gold);
+}
+
+.ai-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-task-actions .ghost {
+  min-height: 36px;
 }
 
 .summary-band {
@@ -794,7 +825,8 @@ select:focus {
 
   .character-grid,
   .stat-grid,
-  .resource-grid {
+  .resource-grid,
+  .config-grid {
     grid-template-columns: 1fr;
   }
 

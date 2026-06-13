@@ -308,6 +308,8 @@ async function main() {
   const finalRoom = await jsonRequest(`/api/rooms/${created.room.code}?playerId=${ownerId}`);
   assert.ok(finalRoom.messages.some((message) => message.id === dmMessage.id));
   assert.ok(finalRoom.room.summary.includes('审计房间'));
+  assert.ok(finalRoom.aiTasks.some((task) => task.dmMessageId === dmMessage.id && task.status === 'COMPLETED'));
+  assert.equal(finalRoom.activeAiTask, null);
 
   console.log(JSON.stringify({
     ok: true,

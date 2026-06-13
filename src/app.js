@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { buildDmMessages, streamChatCompletion } from './aiClient.js';
 import { RoomAiQueue } from './aiQueue.js';
+import { assertAiSettingsInput, roomRuntimeAiConfig } from './aiSettings.js';
 import { getSkillTarget } from './character.js';
 import { isAiConfigured } from './config.js';
 import { createDatabase } from './db.js';
@@ -33,6 +34,13 @@ const STATUS_LABELS = {
   ARCHIVED: '已归档'
 };
 
+class AiTaskCancelled extends Error {
+  constructor() {
+    super('AI task was cancelled');
+    this.name = 'AiTaskCancelled';
+  }
+}
+
 export function parseRequestUrl(request) {
   try {
     return new URL(request.url || '/', 'http://localhost');
@@ -47,7 +55,36 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     onError: (error) => console.error('[ai-queue]', error)
   });
 
-  async function generateDmReply(code) {
+  function broadcastAiTask(code, task) {
+    hub.broadcast(code, 'ai_task_updated', { task });
+  }
+
+  function setAiTaskStatus(code, taskUid, status, error = '') {
+    const task = database.updateAiTaskStatus({ taskUid, status, error });
+    if (task) broadcastAiTask(code, task);
+    return task;
+  }
+
+  function assertTaskNotCancelled(taskUid) {
+    const task = database.getAiTask(taskUid);
+    if (task.cancelRequested || task.status === 'CANCELLED') {
+      throw new AiTaskCancelled();
+    }
+    return task;
+  }
+
+  async function generateDmReply(code, taskUid) {
+    try {
+      assertTaskNotCancelled(taskUid);
+    } catch (error) {
+      if (error instanceof AiTaskCancelled) {
+        setAiTaskStatus(code, taskUid, 'CANCELLED');
+        return;
+      }
+      throw error;
+    }
+
+    setAiTaskStatus(code, taskUid, 'RETRIEVING');
     const state = database.getRoomState(code, 80);
     const moduleSegments = database.getRoomModuleSegments(code, 120);
     const query = [
@@ -61,6 +98,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       .slice(0, 6)
       .map((item) => item.segment);
 
+    setAiTaskStatus(code, taskUid, 'GENERATING');
     const dmMessage = database.createMessage({
       code,
       authorType: 'dm',
@@ -69,15 +107,19 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       content: '',
       status: 'streaming'
     });
+    broadcastAiTask(code, database.attachAiTaskMessage({ taskUid, messageId: dmMessage.id }));
 
     hub.broadcast(code, 'message_created', { message: dmMessage });
+    setAiTaskStatus(code, taskUid, 'STREAMING');
 
     let content = '';
     let lastPersistedAt = Date.now();
 
     try {
       const aiMessages = buildDmMessages(state);
-      for await (const chunk of streamChatCompletion(config.ai, aiMessages)) {
+      const taskAiConfig = roomRuntimeAiConfig(config.ai, database.getRoomAiSettings(code));
+      for await (const chunk of streamChatCompletion(taskAiConfig, aiMessages)) {
+        assertTaskNotCancelled(taskUid);
         content += chunk;
         hub.broadcast(code, 'message_delta', { id: dmMessage.id, delta: chunk, content });
 
@@ -87,25 +129,29 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         }
       }
 
+      setAiTaskStatus(code, taskUid, 'VALIDATING');
       const completed = database.updateMessage({
         id: dmMessage.id,
         content: content.trim() || '（DM 沉默片刻，等待玩家继续行动。）',
         status: 'complete'
       });
+      setAiTaskStatus(code, taskUid, 'COMPLETED');
       hub.broadcast(code, 'message_completed', { message: completed });
     } catch (error) {
+      const cancelled = error instanceof AiTaskCancelled;
       const failed = database.updateMessage({
         id: dmMessage.id,
-        content: `${content}\n\n[AI DM 生成失败：${publicError(error)}]`.trim(),
+        content: `${content}\n\n[AI DM ${cancelled ? '已取消' : `生成失败：${publicError(error)}`}]`.trim(),
         status: 'error'
       });
+      setAiTaskStatus(code, taskUid, cancelled ? 'CANCELLED' : 'FAILED', cancelled ? '' : publicError(error));
       hub.broadcast(code, 'message_error', { message: failed });
     }
   }
 
-  function enqueueDm(code) {
+  function enqueueDm(code, taskUid) {
     const { room } = database.getRoomState(code, 1);
-    queue.enqueue(room.id, () => generateDmReply(code));
+    queue.enqueue(room.id, () => generateDmReply(code, taskUid));
   }
 
   function createSystemMessage(code, content) {
@@ -386,6 +432,19 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         return;
       }
 
+      if (request.method === 'PATCH' && parts[3] === 'ai-config') {
+        const body = await readJson(request);
+        const room = database.updateRoomAiConfig({
+          code,
+          playerId: assertString(body.playerId, 'playerId', 80),
+          aiConfig: assertAiSettingsInput(body.aiConfig || {})
+        });
+        const state = database.getRoomState(code);
+        hub.broadcast(code, 'room_state', state);
+        sendJson(response, 200, { room });
+        return;
+      }
+
       if (request.method === 'POST' && parts[3] === 'messages') {
         const body = await readJson(request);
         const playerId = assertString(body.playerId, 'playerId', 80);
@@ -400,8 +459,50 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
         const message = database.createPlayerMessage({ code, playerId, content, messageType });
         hub.broadcast(code, 'message_created', { message });
-        if (triggersAi) enqueueDm(code);
-        sendJson(response, 201, { message, aiQueued: triggersAi });
+        let aiTask = null;
+        if (triggersAi) {
+          const idempotencyKey = body.actionId
+            ? `action:${playerId}:${String(body.actionId).slice(0, 80)}`
+            : `message:${message.id}`;
+          const result = database.createAiTask({
+            code,
+            playerId,
+            triggerMessageId: message.id,
+            idempotencyKey
+          });
+          aiTask = result.task;
+          broadcastAiTask(code, aiTask);
+          if (result.created) enqueueDm(code, aiTask.uid);
+        }
+        sendJson(response, 201, { message, aiQueued: Boolean(aiTask), aiTask });
+        return;
+      }
+
+      if (request.method === 'POST' && parts[3] === 'ai-tasks' && parts[4] && parts[5] === 'cancel') {
+        const body = await readJson(request);
+        const task = database.requestAiTaskCancel({
+          code,
+          playerId: assertString(body.playerId, 'playerId', 80),
+          taskUid: parts[4]
+        });
+        broadcastAiTask(code, task);
+        if (task.status === 'QUEUED') {
+          setAiTaskStatus(code, task.uid, 'CANCELLED');
+        }
+        sendJson(response, 200, { task: database.getAiTask(task.uid) });
+        return;
+      }
+
+      if (request.method === 'POST' && parts[3] === 'ai-tasks' && parts[4] && parts[5] === 'regenerate') {
+        const body = await readJson(request);
+        const result = database.createRegenerationTask({
+          code,
+          playerId: assertString(body.playerId, 'playerId', 80),
+          sourceTaskUid: parts[4]
+        });
+        broadcastAiTask(code, result.task);
+        if (result.created) enqueueDm(code, result.task.uid);
+        sendJson(response, 201, { task: result.task });
         return;
       }
 
