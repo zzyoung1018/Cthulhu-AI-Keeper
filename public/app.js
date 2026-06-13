@@ -92,6 +92,11 @@ const els = {
   aiPill: document.querySelector('#aiPill'),
   cancelAiTask: document.querySelector('#cancelAiTask'),
   regenerateAiTask: document.querySelector('#regenerateAiTask'),
+  rollbackRound: document.querySelector('#rollbackRound'),
+  submitRound: document.querySelector('#submitRound'),
+  exportGame: document.querySelector('#exportGame'),
+  privateTargetRow: document.querySelector('#privateTargetRow'),
+  privateTargetSelect: document.querySelector('#privateTargetSelect'),
   copyRoomCode: document.querySelector('#copyRoomCode'),
   leaveRoom: document.querySelector('#leaveRoom'),
   startGame: document.querySelector('#startGame'),
@@ -358,6 +363,17 @@ function renderAiTaskControls() {
   els.regenerateAiTask.hidden = !owner || Boolean(activeTask) || !finished;
   els.cancelAiTask.dataset.taskUid = activeTask?.uid || '';
   els.regenerateAiTask.dataset.taskUid = finished?.uid || '';
+
+  // Rollback: show when there's a finished AI task and no active task
+  els.rollbackRound.hidden = !owner || Boolean(activeTask) || !finished;
+  els.rollbackRound.dataset.taskUid = finished?.uid || '';
+
+  // Round submit: show in ROUND trigger mode when no active task
+  const triggerMode = state.room?.aiConfig?.triggerMode || 'ACTION';
+  els.submitRound.hidden = triggerMode !== 'ROUND';
+
+  // Export always visible when in room
+  els.exportGame.hidden = !state.room;
 }
 
 function setConnection(status, text) {
@@ -907,11 +923,28 @@ function setMessageType(messageType) {
   for (const option of els.typeOptions) {
     option.classList.toggle('active', option.dataset.messageType === messageType);
   }
+  els.privateTargetRow.hidden = messageType !== 'PRIVATE';
+  if (messageType === 'PRIVATE') {
+    updatePrivateTargetOptions();
+  }
   els.messageForm.content.placeholder = messageType === 'ACTION'
     ? '声明正式行动，提交给 AI DM...'
-    : messageType === 'OOC'
-      ? '场外讨论，不触发 AI...'
-      : '角色内发言，不自动触发 AI...';
+    : messageType === 'PRIVATE'
+      ? '私密消息，仅你和目标玩家可见...'
+      : messageType === 'OOC'
+        ? '场外讨论，不触发 AI...'
+        : '角色内发言，不自动触发 AI...';
+}
+
+function updatePrivateTargetOptions() {
+  els.privateTargetSelect.innerHTML = '<option value="">选择私聊对象</option>';
+  for (const p of state.participants) {
+    if (p.playerId === state.playerId) continue;
+    const option = document.createElement('option');
+    option.value = p.playerId;
+    option.textContent = p.characterName || p.displayName;
+    els.privateTargetSelect.append(option);
+  }
 }
 
 async function restoreLastRoom() {
@@ -1120,15 +1153,21 @@ els.messageForm.addEventListener('submit', async (event) => {
   const shouldTriggerAi = state.messageType === 'ACTION';
   if (shouldTriggerAi) setAiBusy(true);
 
+  const body = {
+    playerId: state.playerId,
+    content,
+    messageType: state.messageType,
+    submitToDm: shouldTriggerAi
+  };
+
+  if (state.messageType === 'PRIVATE') {
+    body.privateTarget = els.privateTargetSelect.value;
+  }
+
   try {
     const payload = await api(`/api/rooms/${state.room.code}/messages`, {
       method: 'POST',
-      body: JSON.stringify({
-        playerId: state.playerId,
-        content,
-        messageType: state.messageType,
-        submitToDm: shouldTriggerAi
-      })
+      body: JSON.stringify(body)
     });
     if (payload.aiTask) {
       const index = state.aiTasks.findIndex((task) => task.uid === payload.aiTask.uid);
@@ -1171,6 +1210,54 @@ els.regenerateAiTask.addEventListener('click', async () => {
     state.activeAiTask = findActiveAiTask(state.aiTasks);
     renderAiTaskControls();
     toast('AI 已重新排队');
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+els.rollbackRound.addEventListener('click', async () => {
+  if (!state.room) return;
+  const roundId = els.rollbackRound.dataset.taskUid;
+  if (!roundId) return;
+  try {
+    await api(`/api/rooms/${state.room.code}/rollback/${encodeURIComponent(roundId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ playerId: state.playerId })
+    });
+    toast('已撤回');
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+els.submitRound.addEventListener('click', async () => {
+  if (!state.room) return;
+  try {
+    await api(`/api/rooms/${state.room.code}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: state.playerId,
+        content: '提交回合行动',
+        messageType: 'ACTION',
+        submitToDm: true,
+        actionId: `round:${Date.now()}`
+      })
+    });
+    toast('回合已提交');
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+els.exportGame.addEventListener('click', async () => {
+  if (!state.room) return;
+  const format = confirm('导出 JSON？确定=JSON，取消=Markdown') ? 'json' : 'markdown';
+  try {
+    const link = document.createElement('a');
+    link.href = `/api/rooms/${state.room.code}/export?playerId=${encodeURIComponent(state.playerId)}&format=${format}`;
+    link.download = `dm-online-${state.room.code}.${format === 'json' ? 'json' : 'md'}`;
+    link.click();
+    toast(`正在导出 ${format.toUpperCase()}...`);
   } catch (error) {
     toast(error.message);
   }

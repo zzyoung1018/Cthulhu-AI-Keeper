@@ -96,8 +96,46 @@ export async function* streamChatCompletion(aiConfig, messages) {
   }
 }
 
+// Rough token estimator: ~4 chars per token for English, ~1.5 CJK chars per token
+function estimateTokens(text) {
+  const str = String(text || '');
+  let cjk = 0;
+  let other = 0;
+  for (const ch of str) {
+    const code = ch.codePointAt(0);
+    if ((code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3400 && code <= 0x4DBF) ||
+        (code >= 0x3000 && code <= 0x303F) || (code >= 0xFF00 && code <= 0xFFEF)) {
+      cjk += 1;
+    } else {
+      other += 1;
+    }
+  }
+  return Math.ceil(cjk / 1.5 + other / 4);
+}
+
+const DEFAULT_TOKEN_BUDGET = 6000;
+
+function trimToBudget(text, maxTokens, label) {
+  const estimated = estimateTokens(text);
+  if (estimated <= maxTokens) return text;
+
+  const lines = text.split('\n');
+  let result = '';
+  for (const line of lines) {
+    const candidate = result ? `${result}\n${line}` : line;
+    if (estimateTokens(candidate) > maxTokens && result) break;
+    result = candidate;
+  }
+  console.error(`[ai-budget] trimmed ${label}: ${estimated} → ~${estimateTokens(result)} tokens (budget: ${maxTokens})`);
+  return result || text.slice(0, maxTokens * 4);
+}
+
 export function buildDmMessages({ room, participants, messages, diceRolls = [], moduleSegments = [] }) {
   const aiConfig = room.aiConfig || {};
+  const tokenBudget = Number(aiConfig.tokenBudget) || DEFAULT_TOKEN_BUDGET;
+  // Reserve ~800 tokens for system prompt + overhead
+  const contextBudget = Math.max(800, tokenBudget - 800);
+
   const roster = participants
     .map((participant, index) => {
       const character = participant.characterName || '未命名角色';
@@ -130,6 +168,45 @@ export function buildDmMessages({ room, participants, messages, diceRolls = [], 
     segment.content
   ].join('\n')).join('\n\n---\n\n');
 
+  // Build user message with budget-aware trimming
+  const summaryText = `剧情摘要：${room.summary || '暂无摘要'}`;
+  const moduleText = `相关模组片段：\n${moduleContext || '暂无可用片段'}`;
+  const rosterText = `角色资料：\n${roster || '暂无角色'}`;
+  const diceText = `最近骰子：\n${recentRolls.join('\n') || '暂无骰子'}`;
+  const prelude = `房间：${room.name} (${room.code})\n模组：${room.moduleTitle || '未命名模组'}`;
+
+  let chatText = `最近聊天：\n${recent.join('\n') || '暂无聊天'}`;
+  const fixedTokens = estimateTokens([prelude, summaryText, rosterText, diceText].join('\n\n')) + 100;
+
+  // Trim chat first if over budget
+  const remainingForChat = contextBudget - fixedTokens - estimateTokens(moduleText);
+  if (remainingForChat < 200) {
+    chatText = `最近聊天：\n${recent.slice(-6).join('\n') || '暂无聊天'}`;
+  }
+
+  // Trim module if still over budget
+  let finalModuleText = moduleText;
+  const revisedRemaining = contextBudget - fixedTokens - estimateTokens(chatText);
+  if (estimateTokens(finalModuleText) > Math.max(200, revisedRemaining - 200)) {
+    const fewerModules = moduleSegments.slice(0, 3).map((segment, index) => [
+      `片段 ${index + 1}：${segment.scene || segment.title}`,
+      segment.content
+    ].join('\n')).join('\n\n---\n\n');
+    finalModuleText = `相关模组片段：\n${fewerModules || '暂无可用片段'}`;
+  }
+
+  const userContent = [
+    prelude,
+    finalModuleText,
+    summaryText,
+    rosterText,
+    diceText,
+    chatText,
+    '请生成下一段 DM 回复。'
+  ].join('\n\n');
+
+  const estimatedTotal = estimateTokens(userContent) + 200;
+
   return [
     {
       role: 'system',
@@ -148,16 +225,7 @@ export function buildDmMessages({ room, participants, messages, diceRolls = [], 
     },
     {
       role: 'user',
-      content: [
-        `房间：${room.name} (${room.code})`,
-        `模组：${room.moduleTitle || '未命名模组'}`,
-        `相关模组片段：\n${moduleContext || '暂无可用片段'}`,
-        `剧情摘要：${room.summary || '暂无摘要'}`,
-        `角色资料：\n${roster || '暂无角色'}`,
-        `最近骰子：\n${recentRolls.join('\n') || '暂无骰子'}`,
-        `最近聊天：\n${recent.join('\n') || '暂无聊天'}`,
-        '请生成下一段 DM 回复。'
-      ].join('\n\n')
+      content: userContent
     }
   ];
 }
