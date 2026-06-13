@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { buildDmMessages, streamChatCompletion } from './aiClient.js';
 import { RoomAiQueue } from './aiQueue.js';
+import { getSkillTarget } from './character.js';
 import { isAiConfigured } from './config.js';
 import { createDatabase } from './db.js';
 import { rollCocCheck, rollDiceExpression, rollSanityLoss } from './dice.js';
@@ -164,9 +165,23 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     });
   }
 
-  function buildRollResult(body) {
+  function buildRollResult(body, participant = null) {
     try {
       const rollType = String(body.rollType || body.type || (body.target === undefined ? 'expression' : 'check')).toLowerCase();
+
+      if (rollType === 'skill' || rollType === 'skill_check') {
+        if (!participant) throw new Error('participant is required');
+        const skillName = assertString(body.skillName || body.label, 'skillName', 80);
+        const target = getSkillTarget(participant.characterSheet, skillName);
+        if (!Number.isInteger(target)) throw new Error('Unknown skill');
+        const check = rollCocCheck({
+          target,
+          difficulty: body.difficulty || 'REGULAR',
+          bonusDice: Number(body.bonusDice || 0),
+          penaltyDice: Number(body.penaltyDice || 0)
+        });
+        return { ...check, type: 'skill_check', skillName };
+      }
 
       if (rollType === 'check' || rollType === 'coc_check') {
         const target = Number(body.target);
@@ -193,8 +208,9 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
   function rollSummary({ participant, label, result }) {
     const prefix = `${participant.characterName || participant.displayName} · ${label || '骰子'}`;
 
-    if (result.type === 'coc_check') {
-      return `${prefix}：1d100 = ${result.total} / ${result.target}，${result.successLevel}，${result.passed ? '通过' : '未通过'}`;
+    if (result.type === 'coc_check' || result.type === 'skill_check') {
+      const skill = result.skillName ? `${result.skillName} ` : '';
+      return `${prefix}：${skill}1d100 = ${result.total} / ${result.target}，${result.successLevel}，${result.passed ? '通过' : '未通过'}`;
     }
 
     if (result.type === 'sanity_loss') {
@@ -317,6 +333,46 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         return;
       }
 
+      if (request.method === 'PATCH' && parts[3] === 'character') {
+        const body = await readJson(request);
+        const participant = database.updateCharacterSheet({
+          code,
+          playerId: assertString(body.playerId, 'playerId', 80),
+          displayName: optionalString(body.displayName, 40),
+          characterSheet: body.characterSheet || {}
+        });
+        const state = database.getRoomState(code);
+        hub.broadcast(code, 'room_state', state);
+        sendJson(response, 200, { participant });
+        return;
+      }
+
+      if (request.method === 'PATCH' && parts[3] === 'ready') {
+        const body = await readJson(request);
+        const participant = database.setParticipantReady({
+          code,
+          playerId: assertString(body.playerId, 'playerId', 80),
+          isReady: Boolean(body.isReady)
+        });
+        const state = database.getRoomState(code);
+        hub.broadcast(code, 'room_state', state);
+        sendJson(response, 200, { participant });
+        return;
+      }
+
+      if (request.method === 'GET' && parts[3] === 'character' && parts[4] === 'history') {
+        const playerId = assertString(url.searchParams.get('playerId'), 'playerId', 80);
+        const targetPlayerId = optionalString(url.searchParams.get('targetPlayerId'), 80) || playerId;
+        const history = database.getCharacterHistory({
+          code,
+          playerId,
+          targetPlayerId,
+          limit: Number(url.searchParams.get('limit') || 80)
+        });
+        sendJson(response, 200, { history });
+        return;
+      }
+
       if (request.method === 'PATCH' && parts[3] === 'summary') {
         const body = await readJson(request);
         const room = database.updateSummary({
@@ -352,10 +408,10 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       if (request.method === 'POST' && parts[3] === 'rolls') {
         const body = await readJson(request);
         const playerId = assertString(body.playerId, 'playerId', 80);
-        const label = optionalString(body.label, 80);
-        const isPrivate = Boolean(body.isPrivate);
-        const result = buildRollResult(body);
         const { participant } = database.getParticipant(code, playerId);
+        const result = buildRollResult(body, participant);
+        const label = optionalString(body.label || result.skillName, 80);
+        const isPrivate = Boolean(body.isPrivate);
         const roll = database.createDiceRoll({
           code,
           playerId,

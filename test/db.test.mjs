@@ -33,6 +33,26 @@ function createModule(database, ownerPlayerId = 'p1') {
   });
 }
 
+function characterSheet(name, skillValue = 60) {
+  return {
+    investigator: { name, occupation: '调查员' },
+    characteristics: {
+      STR: 55,
+      CON: 60,
+      SIZ: 50,
+      DEX: 65,
+      APP: 50,
+      INT: 70,
+      POW: 45,
+      EDU: 60,
+      Luck: 55
+    },
+    skills: {
+      侦查: skillValue
+    }
+  };
+}
+
 test('creates rooms, joins players, and enforces the five-player limit', () => {
   const { database, cleanup } = withDb();
   try {
@@ -92,6 +112,24 @@ test('enforces room lifecycle transitions and owner permissions', () => {
       (error) => error instanceof HttpError && error.statusCode === 403
     );
 
+    assert.throws(
+      () => database.setRoomStatus({ code: room.code, playerId: 'keeper', status: 'ACTIVE' }),
+      (error) => error instanceof HttpError && error.statusCode === 409
+    );
+    database.updateCharacterSheet({
+      code: room.code,
+      playerId: 'keeper',
+      displayName: 'Keeper',
+      characterSheet: characterSheet('守秘人代理')
+    });
+    database.updateCharacterSheet({
+      code: room.code,
+      playerId: 'player',
+      displayName: 'Player',
+      characterSheet: characterSheet('玩家角色')
+    });
+    database.setParticipantReady({ code: room.code, playerId: 'keeper', isReady: true });
+    database.setParticipantReady({ code: room.code, playerId: 'player', isReady: true });
     assert.equal(database.setRoomStatus({ code: room.code, playerId: 'keeper', status: 'ACTIVE' }).status, 'ACTIVE');
     assert.throws(
       () => database.joinRoom({ code: room.code, playerId: 'late', displayName: 'Late Player' }),
@@ -153,6 +191,46 @@ test('persists chat, character profile, state, and story summary', () => {
     assert.equal(state.messages[0].messageType, 'ACTION');
     assert.equal(state.room.summary, 'The party reached the ruined gate.');
     assert.equal(state.participants[0].characterName, 'Lina');
+  } finally {
+    cleanup();
+  }
+});
+
+test('saves structured character sheets, derived state, ready flag, and field history', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const module = createModule(database, 'p1');
+    const { room } = database.createRoom({
+      name: 'Characters',
+      playerId: 'p1',
+      displayName: 'Keeper',
+      moduleId: module.id
+    });
+
+    const saved = database.updateCharacterSheet({
+      code: room.code,
+      playerId: 'p1',
+      displayName: 'Keeper',
+      characterSheet: characterSheet('林娜', 72)
+    });
+    assert.equal(saved.characterName, '林娜');
+    assert.equal(saved.characterSheet.skills.侦查, 72);
+    assert.match(saved.state, /HP 11\/11/);
+    assert.equal(saved.isReady, false);
+
+    const ready = database.setParticipantReady({ code: room.code, playerId: 'p1', isReady: true });
+    assert.equal(ready.isReady, true);
+
+    const updated = database.updateCharacterSheet({
+      code: room.code,
+      playerId: 'p1',
+      displayName: 'Keeper',
+      characterSheet: characterSheet('林娜', 80)
+    });
+    assert.equal(updated.isReady, false);
+
+    const history = database.getCharacterHistory({ code: room.code, playerId: 'p1' });
+    assert.ok(history.some((entry) => entry.fieldPath === 'skills.侦查' && entry.newValue === 80));
   } finally {
     cleanup();
   }

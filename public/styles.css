@@ -61,6 +61,12 @@ button:active {
   transform: translateY(0);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
@@ -237,6 +243,125 @@ label,
 .form {
   display: grid;
   gap: 12px;
+}
+
+.character-form,
+.sheet-section,
+.notes-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.character-grid,
+.stat-grid,
+.resource-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sheet-section {
+  padding: 10px;
+  border: 1px solid rgba(58, 65, 75, 0.9);
+  border-radius: 6px;
+  background: rgba(19, 22, 26, 0.62);
+}
+
+.sheet-section h3 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.section-head span,
+#readyState {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.stat-input,
+.resource-input {
+  gap: 4px;
+}
+
+.stat-input input,
+.resource-input input {
+  padding: 8px;
+}
+
+.derived-grid,
+.status-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.derived-card,
+.status-card {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(215, 173, 95, 0.24);
+  border-radius: 6px;
+  background: rgba(215, 173, 95, 0.07);
+}
+
+.derived-card span,
+.status-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.derived-card strong,
+.status-card strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.skills-table {
+  max-height: 360px;
+  overflow-y: auto;
+  display: grid;
+  gap: 6px;
+}
+
+.skill-row {
+  display: grid;
+  grid-template-columns: minmax(88px, 1fr) 68px 58px;
+  gap: 6px;
+  align-items: center;
+}
+
+.skill-name {
+  min-width: 0;
+  color: var(--text);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.skill-row input {
+  padding: 7px 8px;
+}
+
+.skill-roll {
+  min-height: 34px;
+  padding: 0 8px;
+  font-size: 0.78rem;
+}
+
+.form-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
 .compact {
@@ -461,13 +586,31 @@ select:focus {
   grid-row: 2;
 }
 
+.play-area {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 16px;
+  padding: 22px;
+}
+
 .chat-log {
   min-height: 0;
   overflow-y: auto;
-  padding: 22px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.status-panel {
+  align-self: start;
+  position: sticky;
+  top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(28, 32, 38, 0.94);
+  padding: 14px;
+  box-shadow: 0 14px 34px var(--shadow);
 }
 
 .empty {
@@ -636,8 +779,23 @@ select:focus {
     margin: 12px 16px 0;
   }
 
-  .chat-log {
+  .play-area {
+    grid-template-columns: 1fr;
     padding: 16px;
+  }
+
+  .status-panel {
+    position: static;
+  }
+
+  .chat-log {
+    min-height: 52vh;
+  }
+
+  .character-grid,
+  .stat-grid,
+  .resource-grid {
+    grid-template-columns: 1fr;
   }
 
   #summaryForm,

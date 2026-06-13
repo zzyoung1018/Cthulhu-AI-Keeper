@@ -1,4 +1,5 @@
 import { isAiConfigured } from './config.js';
+import { formatCharacterState, summarizeCharacterSheet } from './character.js';
 
 const FALLBACK_TEXT = [
   '外部大模型还没有完成配置，因此这里先用本地流式占位回复保证房间流程可测试。',
@@ -99,8 +100,12 @@ export function buildDmMessages({ room, participants, messages, diceRolls = [], 
   const roster = participants
     .map((participant, index) => {
       const character = participant.characterName || '未命名角色';
-      const card = participant.characterCard || '暂无角色卡';
-      const state = participant.state || '暂无状态';
+      const card = participant.characterSheet
+        ? summarizeCharacterSheet(participant.characterSheet)
+        : participant.characterCard || '暂无角色卡';
+      const state = participant.characterSheet
+        ? formatCharacterState(participant.characterSheet)
+        : participant.state || '暂无状态';
       return `${index + 1}. 玩家 ${participant.displayName} / 角色 ${character}\n角色卡：${card}\n人物状态：${state}`;
     })
     .join('\n\n');

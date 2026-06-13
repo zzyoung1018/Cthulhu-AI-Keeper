@@ -1,6 +1,13 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import {
+  diffCharacterSheets,
+  formatCharacterState,
+  hasReadyCharacter,
+  normalizeCharacterSheet,
+  summarizeCharacterSheet
+} from './character.js';
 import { HttpError } from './errors.js';
 
 const MAX_ROOM_PLAYERS = 5;
@@ -79,6 +86,10 @@ function rowToModuleSegment(row) {
 
 function rowToParticipant(row, room = null) {
   if (!row) return null;
+  const characterSheet = normalizeCharacterSheet(row.character_sheet_json, {
+    displayName: row.display_name,
+    characterName: row.character_name
+  });
   return {
     id: row.id,
     roomId: row.room_id,
@@ -86,11 +97,27 @@ function rowToParticipant(row, room = null) {
     displayName: row.display_name,
     isOwner: Boolean(room && row.player_id === room.ownerPlayerId),
     isReady: Boolean(row.is_ready),
-    characterName: row.character_name || '',
+    characterName: row.character_name || characterSheet.investigator.name || '',
     characterCard: row.character_card || '',
+    characterSheet,
+    characterRevision: Number(row.character_revision || 0),
     state: row.state || '',
     joinedAt: row.joined_at,
     updatedAt: row.updated_at
+  };
+}
+
+function rowToCharacterHistory(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    participantId: row.participant_id,
+    roomId: row.room_id,
+    playerId: row.player_id,
+    fieldPath: row.field_path,
+    oldValue: JSON.parse(row.old_value_json),
+    newValue: JSON.parse(row.new_value_json),
+    createdAt: row.created_at
   };
 }
 
@@ -204,6 +231,8 @@ export function createDatabase(dbPath) {
       is_ready INTEGER NOT NULL DEFAULT 0,
       character_name TEXT NOT NULL DEFAULT '',
       character_card TEXT NOT NULL DEFAULT '',
+      character_sheet_json TEXT NOT NULL DEFAULT '{}',
+      character_revision INTEGER NOT NULL DEFAULT 0,
       state TEXT NOT NULL DEFAULT '',
       joined_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -245,10 +274,22 @@ export function createDatabase(dbPath) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS character_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+      player_id TEXT NOT NULL,
+      field_path TEXT NOT NULL,
+      old_value_json TEXT NOT NULL,
+      new_value_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_participants_room ON participants(room_id);
     CREATE INDEX IF NOT EXISTS idx_messages_room_created ON messages(room_id, created_at, id);
     CREATE INDEX IF NOT EXISTS idx_story_summaries_room ON story_summaries(room_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_dice_rolls_room_created ON dice_rolls(room_id, created_at, id);
+    CREATE INDEX IF NOT EXISTS idx_character_history_participant ON character_history(participant_id, created_at, id);
     CREATE INDEX IF NOT EXISTS idx_modules_owner ON modules(owner_player_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_module_segments_module ON module_segments(module_id, sort_order);
   `);
@@ -279,6 +320,12 @@ export function createDatabase(dbPath) {
   }
   if (!hasColumn('participants', 'is_ready')) {
     db.exec('ALTER TABLE participants ADD COLUMN is_ready INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!hasColumn('participants', 'character_sheet_json')) {
+    db.exec("ALTER TABLE participants ADD COLUMN character_sheet_json TEXT NOT NULL DEFAULT '{}'");
+  }
+  if (!hasColumn('participants', 'character_revision')) {
+    db.exec('ALTER TABLE participants ADD COLUMN character_revision INTEGER NOT NULL DEFAULT 0');
   }
   if (!hasColumn('messages', 'message_type')) {
     db.exec("ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'IC'");
@@ -343,6 +390,33 @@ export function createDatabase(dbPath) {
       UPDATE participants
       SET display_name = ?, character_name = ?, character_card = ?, state = ?, updated_at = ?
       WHERE room_id = ? AND player_id = ?
+    `),
+    updateParticipantCharacter: db.prepare(`
+      UPDATE participants
+      SET display_name = ?,
+          character_name = ?,
+          character_card = ?,
+          character_sheet_json = ?,
+          character_revision = character_revision + ?,
+          state = ?,
+          is_ready = ?,
+          updated_at = ?
+      WHERE room_id = ? AND player_id = ?
+    `),
+    updateParticipantReady: db.prepare(`
+      UPDATE participants SET is_ready = ?, updated_at = ? WHERE room_id = ? AND player_id = ?
+    `),
+    createCharacterHistory: db.prepare(`
+      INSERT INTO character_history (
+        room_id, participant_id, player_id, field_path, old_value_json, new_value_json, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `),
+    listCharacterHistory: db.prepare(`
+      SELECT * FROM character_history
+      WHERE participant_id = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
     `),
     listParticipants: db.prepare('SELECT * FROM participants WHERE room_id = ? ORDER BY joined_at ASC, id ASC'),
     createMessage: db.prepare(`
@@ -409,6 +483,29 @@ export function createDatabase(dbPath) {
     const allowed = ROOM_STATUS_TRANSITIONS[room.status] || [];
     if (!allowed.includes(nextStatus)) {
       throw new HttpError(409, `Cannot move room from ${room.status} to ${nextStatus}`);
+    }
+  }
+
+  function writeCharacterHistory(room, participant, changes, created) {
+    for (const change of changes.slice(0, 300)) {
+      statements.createCharacterHistory.run(
+        room.id,
+        participant.id,
+        participant.playerId,
+        change.fieldPath,
+        JSON.stringify(change.oldValue),
+        JSON.stringify(change.newValue),
+        created
+      );
+    }
+  }
+
+  function assertAllPlayersReady(room) {
+    const participants = statements.listParticipants.all(room.id).map((row) => rowToParticipant(row, room));
+    const waiting = participants.filter((participant) => !participant.isReady || !hasReadyCharacter(participant.characterSheet));
+    if (waiting.length > 0) {
+      const names = waiting.map((participant) => participant.displayName).join(', ');
+      throw new HttpError(409, `Players are not ready: ${names}`);
     }
   }
 
@@ -552,22 +649,85 @@ export function createDatabase(dbPath) {
       const { room } = this.getParticipant(code, playerId);
       assertOwner(room, playerId);
       assertTransition(room, nextStatus);
+      if (room.status === 'PREPARING' && nextStatus === 'ACTIVE') {
+        assertAllPlayersReady(room);
+      }
       statements.updateRoomStatus.run(nextStatus, now(), room.id);
       return rowToRoom(statements.getRoomById.get(room.id));
     },
 
     updateProfile({ code, playerId, displayName, characterName, characterCard, state }) {
-      const { room } = this.getParticipant(code, playerId);
-      statements.updateParticipantProfile.run(
+      const { room, participant } = this.getParticipant(code, playerId);
+      const characterSheet = normalizeCharacterSheet(participant.characterSheet, {
+        displayName,
+        characterName
+      });
+      characterSheet.investigator.name = characterName || characterSheet.investigator.name;
+      characterSheet.investigator.playerName = displayName || characterSheet.investigator.playerName;
+      const changes = diffCharacterSheets(participant.characterSheet, characterSheet);
+      const updated = now();
+      const nextReady = changes.length > 0 ? 0 : participant.isReady ? 1 : 0;
+      statements.updateParticipantCharacter.run(
         displayName,
         characterName,
         characterCard,
+        JSON.stringify(characterSheet),
+        changes.length > 0 ? 1 : 0,
         state,
-        now(),
+        nextReady,
+        updated,
         room.id,
         playerId
       );
-      return rowToParticipant(statements.getParticipant.get(room.id, playerId));
+      writeCharacterHistory(room, participant, changes, updated);
+      return rowToParticipant(statements.getParticipant.get(room.id, playerId), room);
+    },
+
+    updateCharacterSheet({ code, playerId, displayName, characterSheet }) {
+      const { room, participant } = this.getParticipant(code, playerId);
+      const nextSheet = normalizeCharacterSheet(characterSheet, {
+        displayName: displayName || participant.displayName,
+        characterName: participant.characterName
+      });
+      const changes = diffCharacterSheets(participant.characterSheet, nextSheet);
+      const updated = now();
+      const nextName = nextSheet.investigator.name;
+      const nextDisplayName = displayName || participant.displayName;
+      const nextReady = changes.length > 0 ? 0 : participant.isReady ? 1 : 0;
+      statements.updateParticipantCharacter.run(
+        nextDisplayName,
+        nextName,
+        summarizeCharacterSheet(nextSheet),
+        JSON.stringify(nextSheet),
+        changes.length > 0 ? 1 : 0,
+        formatCharacterState(nextSheet),
+        nextReady,
+        updated,
+        room.id,
+        playerId
+      );
+      writeCharacterHistory(room, participant, changes, updated);
+      return rowToParticipant(statements.getParticipant.get(room.id, playerId), room);
+    },
+
+    setParticipantReady({ code, playerId, isReady }) {
+      const { room, participant } = this.getParticipant(code, playerId);
+      if (isReady && !hasReadyCharacter(participant.characterSheet)) {
+        throw new HttpError(409, 'Create a character before marking ready');
+      }
+      statements.updateParticipantReady.run(isReady ? 1 : 0, now(), room.id, playerId);
+      return rowToParticipant(statements.getParticipant.get(room.id, playerId), room);
+    },
+
+    getCharacterHistory({ code, playerId, targetPlayerId = playerId, limit = 80 }) {
+      const { room } = this.getParticipant(code, playerId);
+      if (targetPlayerId !== playerId) assertOwner(room, playerId);
+      const participant = rowToParticipant(statements.getParticipant.get(room.id, targetPlayerId), room);
+      if (!participant) throw new HttpError(404, 'Participant not found');
+      return statements.listCharacterHistory
+        .all(participant.id, Math.max(1, Math.min(Number(limit) || 80, 200)))
+        .map(rowToCharacterHistory)
+        .reverse();
     },
 
     updateSummary({ code, playerId, summary }) {

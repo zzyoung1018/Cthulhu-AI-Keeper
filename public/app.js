@@ -62,6 +62,15 @@ const els = {
   roomPanel: document.querySelector('#roomPanel'),
   editorPanel: document.querySelector('#editorPanel'),
   profileForm: document.querySelector('#profileForm'),
+  characteristicsGrid: document.querySelector('#characteristicsGrid'),
+  derivedGrid: document.querySelector('#derivedGrid'),
+  resourceGrid: document.querySelector('#resourceGrid'),
+  skillsTable: document.querySelector('#skillsTable'),
+  readyCharacter: document.querySelector('#readyCharacter'),
+  readyState: document.querySelector('#readyState'),
+  statusPanel: document.querySelector('#statusPanel'),
+  statusName: document.querySelector('#statusName'),
+  statusCards: document.querySelector('#statusCards'),
   summaryForm: document.querySelector('#summaryForm'),
   summaryPanel: document.querySelector('#summaryPanel'),
   summaryInput: document.querySelector('#summaryInput'),
@@ -105,6 +114,153 @@ const messageTypeLabels = {
   AI_DM: 'AI DM',
   PRIVATE: 'PRIVATE'
 };
+
+const characteristicKeys = ['STR', 'CON', 'SIZ', 'DEX', 'APP', 'INT', 'POW', 'EDU', 'Luck'];
+
+const defaultCharacteristics = {
+  STR: 50,
+  CON: 50,
+  SIZ: 50,
+  DEX: 50,
+  APP: 50,
+  INT: 50,
+  POW: 50,
+  EDU: 50,
+  Luck: 50
+};
+
+const defaultSkills = {
+  会计: 5,
+  人类学: 1,
+  估价: 5,
+  考古学: 1,
+  魅惑: 15,
+  攀爬: 20,
+  信用评级: 0,
+  克苏鲁神话: 0,
+  乔装: 5,
+  闪避: 25,
+  驾驶汽车: 20,
+  电气维修: 10,
+  话术: 5,
+  急救: 30,
+  历史: 5,
+  恐吓: 15,
+  跳跃: 20,
+  母语: 50,
+  法律: 5,
+  图书馆使用: 20,
+  聆听: 20,
+  锁匠: 1,
+  机械维修: 10,
+  医学: 1,
+  博物学: 10,
+  导航: 10,
+  神秘学: 5,
+  说服: 10,
+  精神分析: 1,
+  心理学: 10,
+  骑术: 5,
+  妙手: 10,
+  侦查: 25,
+  潜行: 20,
+  游泳: 20,
+  投掷: 20,
+  追踪: 10
+};
+
+const textSectionFields = [
+  'equipment',
+  'relationships',
+  'beliefs',
+  'locations',
+  'scarsTraumas',
+  'encounteredMonsters',
+  'clues',
+  'privateNotes'
+];
+
+function numberInRange(value, fallback, min = 0, max = 100) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(number)));
+}
+
+function currentSheet() {
+  return state.participant?.characterSheet || {
+    investigator: {
+      name: state.participant?.characterName || '',
+      playerName: state.displayName,
+      occupation: '',
+      age: '',
+      residence: '',
+      birthplace: ''
+    },
+    characteristics: { ...defaultCharacteristics },
+    status: {},
+    skills: { ...defaultSkills },
+    weapons: [],
+    equipment: '',
+    relationships: '',
+    beliefs: '',
+    locations: '',
+    scarsTraumas: '',
+    encounteredMonsters: '',
+    clues: '',
+    privateNotes: ''
+  };
+}
+
+function calculateDerived(characteristics, status = {}) {
+  const values = Object.fromEntries(characteristicKeys.map((key) => [
+    key,
+    numberInRange(characteristics?.[key], defaultCharacteristics[key], 0, 100)
+  ]));
+  const hp = Math.max(1, Math.floor((values.CON + values.SIZ) / 10));
+  const mp = Math.max(0, Math.floor(values.POW / 5));
+  const san = Math.max(0, values.POW);
+  const mov = values.STR < values.SIZ && values.DEX < values.SIZ
+    ? 7
+    : values.STR > values.SIZ && values.DEX > values.SIZ
+      ? 9
+      : 8;
+  const sum = values.STR + values.SIZ;
+  let damageBonus = '0';
+  let build = 0;
+  if (sum <= 64) {
+    damageBonus = '-2';
+    build = -2;
+  } else if (sum <= 84) {
+    damageBonus = '-1';
+    build = -1;
+  } else if (sum <= 124) {
+    damageBonus = '0';
+    build = 0;
+  } else if (sum <= 164) {
+    damageBonus = '+1d4';
+    build = 1;
+  } else if (sum <= 204) {
+    damageBonus = '+1d6';
+    build = 2;
+  } else {
+    build = Math.floor((sum - 205) / 80) + 3;
+    damageBonus = `+${build - 1}d6`;
+  }
+
+  return {
+    hp,
+    mp,
+    san,
+    luck: values.Luck,
+    mov,
+    damageBonus,
+    build,
+    currentHp: numberInRange(status.hp, hp, 0, hp),
+    currentMp: numberInRange(status.mp, mp, 0, mp),
+    currentSan: numberInRange(status.san, san, 0, 99),
+    currentLuck: numberInRange(status.luck, values.Luck, 0, 100)
+  };
+}
 
 function toast(message) {
   els.toast.textContent = message;
@@ -156,6 +312,8 @@ function setMode(mode) {
   els.roomNameField.hidden = mode !== 'create';
   els.moduleField.hidden = mode !== 'create';
   els.roomCodeField.hidden = mode !== 'join';
+  els.moduleSelect.required = mode === 'create';
+  els.roomForm.roomCode.required = mode === 'join';
 }
 
 function setAiBusy(isBusy) {
@@ -265,9 +423,10 @@ function renderPlayers() {
       <div class="player-meta"></div>
     `;
     node.querySelector('.player-name').textContent = participant.characterName || participant.displayName;
-    node.querySelector('.player-meta').textContent = participant.characterName
-      ? `${participant.displayName} · 已填写角色`
-      : '未填写角色名';
+    node.querySelector('.player-meta').textContent = [
+      participant.characterName ? `${participant.displayName} · 已填写角色` : '未填写角色名',
+      participant.isReady ? '已准备' : '未准备'
+    ].join(' · ');
     els.players.append(node);
   }
 }
@@ -341,11 +500,205 @@ function updateMessageNode(message) {
   els.chatLog.scrollTop = els.chatLog.scrollHeight;
 }
 
+function weaponLines(weapons = []) {
+  return weapons
+    .map((weapon) => [weapon.name, weapon.damage, weapon.range].filter(Boolean).join(' | '))
+    .join('\n');
+}
+
+function parseWeaponLines(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 12)
+    .map((line) => {
+      const [name = '', damage = '', range = ''] = line.split('|').map((part) => part.trim());
+      return { name, damage, range, attacks: '', ammo: '', malfunction: '' };
+    });
+}
+
+function renderDerived(derived) {
+  const cards = [
+    ['MOV', derived.mov],
+    ['DB', derived.damageBonus],
+    ['Build', derived.build]
+  ];
+  els.derivedGrid.innerHTML = cards.map(([label, value]) => `
+    <div class="derived-card">
+      <span>${label}</span>
+      <strong>${value}</strong>
+    </div>
+  `).join('');
+}
+
+function renderResourceInputs(sheet, derived) {
+  const resources = [
+    ['hp', 'HP', derived.hp],
+    ['mp', 'MP', derived.mp],
+    ['san', 'SAN', 99],
+    ['luck', 'Luck', 100]
+  ];
+  els.resourceGrid.innerHTML = '';
+  for (const [key, labelText, max] of resources) {
+    const label = document.createElement('label');
+    label.className = 'resource-input';
+    label.innerHTML = `
+      <span>${labelText}</span>
+      <input type="number" min="0" max="${max}" step="1" name="status.${key}">
+    `;
+    label.querySelector('input').value = sheet.status?.[key] ?? derived[labelText === 'Luck' ? 'luck' : key];
+    els.resourceGrid.append(label);
+  }
+}
+
+function renderCharacteristicInputs(sheet) {
+  els.characteristicsGrid.innerHTML = '';
+  const derived = calculateDerived(sheet.characteristics, sheet.status);
+  for (const key of characteristicKeys) {
+    const label = document.createElement('label');
+    label.className = 'stat-input';
+    label.innerHTML = `
+      <span>${key}</span>
+      <input type="number" min="0" max="100" step="1" name="characteristics.${key}">
+    `;
+    label.querySelector('input').value = sheet.characteristics?.[key] ?? defaultCharacteristics[key];
+    label.querySelector('input').addEventListener('input', () => {
+      const nextDerived = calculateDerived(readCharacteristics(), readStatus());
+      renderDerived(nextDerived);
+      renderResourceInputs({ status: readStatus() }, nextDerived);
+    });
+    els.characteristicsGrid.append(label);
+  }
+  renderDerived(derived);
+  renderResourceInputs(sheet, derived);
+}
+
+function renderSkills(sheet) {
+  els.skillsTable.innerHTML = '';
+  const skills = Object.entries({ ...defaultSkills, ...(sheet.skills || {}) })
+    .sort(([left], [right]) => left.localeCompare(right, 'zh-Hans-CN'));
+  for (const [name, score] of skills) {
+    const row = document.createElement('div');
+    row.className = 'skill-row';
+    row.innerHTML = `
+      <span class="skill-name"></span>
+      <input type="number" min="0" max="100" step="1" data-skill-name="">
+      <button class="ghost skill-roll" type="button" title="技能检定">检定</button>
+    `;
+    row.querySelector('.skill-name').textContent = name;
+    const input = row.querySelector('input');
+    input.dataset.skillName = name;
+    input.value = score;
+    row.querySelector('button').addEventListener('click', () => rollSkill(name));
+    els.skillsTable.append(row);
+  }
+}
+
+function renderStatusPanel() {
+  if (!state.participant) {
+    els.statusPanel.hidden = true;
+    return;
+  }
+
+  const sheet = currentSheet();
+  const derived = calculateDerived(sheet.characteristics, sheet.status);
+  els.statusPanel.hidden = false;
+  els.statusName.textContent = sheet.investigator?.name || state.participant.characterName || '未命名调查员';
+  const cards = [
+    ['HP', `${derived.currentHp}/${derived.hp}`],
+    ['MP', `${derived.currentMp}/${derived.mp}`],
+    ['SAN', `${derived.currentSan}/${derived.san}`],
+    ['Luck', derived.currentLuck],
+    ['MOV', derived.mov],
+    ['DB', derived.damageBonus],
+    ['Build', derived.build],
+    ['准备', state.participant.isReady ? '是' : '否']
+  ];
+  els.statusCards.innerHTML = cards.map(([label, value]) => `
+    <div class="status-card">
+      <span>${label}</span>
+      <strong>${value}</strong>
+    </div>
+  `).join('');
+}
+
+function setTextField(name, value) {
+  const field = els.profileForm.elements[name];
+  if (field) field.value = value || '';
+}
+
+function readCharacteristics() {
+  return Object.fromEntries(characteristicKeys.map((key) => [
+    key,
+    numberInRange(els.profileForm.elements[`characteristics.${key}`]?.value, defaultCharacteristics[key], 0, 100)
+  ]));
+}
+
+function readStatus() {
+  const derived = calculateDerived(readCharacteristics(), {});
+  return {
+    hp: numberInRange(els.profileForm.elements['status.hp']?.value, derived.hp, 0, derived.hp),
+    mp: numberInRange(els.profileForm.elements['status.mp']?.value, derived.mp, 0, derived.mp),
+    san: numberInRange(els.profileForm.elements['status.san']?.value, derived.san, 0, 99),
+    luck: numberInRange(els.profileForm.elements['status.luck']?.value, derived.luck, 0, 100)
+  };
+}
+
+function collectCharacterSheet() {
+  const existing = currentSheet();
+  const characteristics = readCharacteristics();
+  const status = readStatus();
+  const derived = calculateDerived(characteristics, status);
+  const skills = {};
+  els.skillsTable.querySelectorAll('[data-skill-name]').forEach((input) => {
+    skills[input.dataset.skillName] = numberInRange(input.value, 0, 0, 100);
+  });
+
+  const sheet = {
+    version: 1,
+    ruleset: 'coc7e',
+    investigator: {
+      name: String(els.profileForm.elements['investigator.name']?.value || '').trim(),
+      playerName: state.displayName,
+      occupation: String(els.profileForm.elements['investigator.occupation']?.value || '').trim(),
+      age: String(els.profileForm.elements['investigator.age']?.value || '').trim(),
+      residence: String(els.profileForm.elements['investigator.residence']?.value || '').trim(),
+      birthplace: ''
+    },
+    characteristics,
+    status: {
+      hp: derived.currentHp,
+      mp: derived.currentMp,
+      san: derived.currentSan,
+      luck: derived.currentLuck
+    },
+    skills,
+    weapons: parseWeaponLines(els.profileForm.elements.weaponsText?.value),
+    assets: existing.assets || ''
+  };
+
+  for (const field of textSectionFields) {
+    sheet[field] = String(els.profileForm.elements[field]?.value || '');
+  }
+
+  return sheet;
+}
+
 function renderProfile() {
   if (!state.participant) return;
-  els.profileForm.characterName.value = state.participant.characterName || '';
-  els.profileForm.characterCard.value = state.participant.characterCard || '';
-  els.profileForm.state.value = state.participant.state || '';
+  const sheet = currentSheet();
+  setTextField('investigator.name', sheet.investigator?.name || state.participant.characterName || '');
+  setTextField('investigator.occupation', sheet.investigator?.occupation || '');
+  setTextField('investigator.age', sheet.investigator?.age || '');
+  setTextField('investigator.residence', sheet.investigator?.residence || '');
+  setTextField('weaponsText', weaponLines(sheet.weapons));
+  for (const field of textSectionFields) setTextField(field, sheet[field] || '');
+  renderCharacteristicInputs(sheet);
+  renderSkills(sheet);
+  els.readyState.textContent = state.participant.isReady ? '已准备' : '未准备';
+  els.readyCharacter.textContent = state.participant.isReady ? '取消准备' : '准备';
+  renderStatusPanel();
 }
 
 function renderLifecycleActions() {
@@ -355,8 +708,11 @@ function renderLifecycleActions() {
   const canPause = owner && status === 'ACTIVE';
   const canResume = owner && status === 'PAUSED';
   const canEnd = owner && ['PREPARING', 'ACTIVE', 'PAUSED'].includes(status);
+  const allReady = state.participants.length > 0 && state.participants.every((participant) => participant.isReady);
 
   els.startGame.hidden = !canStart;
+  els.startGame.disabled = canStart && !allReady;
+  els.startGame.title = canStart && !allReady ? '所有玩家保存角色并准备后才能开始' : '';
   els.pauseGame.hidden = !canPause;
   els.resumeGame.hidden = !canResume;
   els.endGame.hidden = !canEnd;
@@ -386,6 +742,7 @@ function render() {
   } else {
     els.tableTitle.textContent = '等待开局';
     els.tableSubtitle.textContent = '创建或加入房间后开始记录冒险。';
+    els.statusPanel.hidden = true;
     setConnection('', '未进入房间');
   }
 
@@ -557,25 +914,62 @@ els.roomForm.addEventListener('submit', async (event) => {
 els.profileForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (!state.room) return;
-  const form = new FormData(els.profileForm);
 
   try {
-    const payload = await api(`/api/rooms/${state.room.code}/profile`, {
+    const payload = await api(`/api/rooms/${state.room.code}/character`, {
       method: 'PATCH',
       body: JSON.stringify({
         playerId: state.playerId,
         displayName: state.displayName,
-        characterName: String(form.get('characterName') || ''),
-        characterCard: String(form.get('characterCard') || ''),
-        state: String(form.get('state') || '')
+        characterSheet: collectCharacterSheet()
       })
     });
     state.participant = payload.participant;
+    const index = state.participants.findIndex((participant) => participant.playerId === state.playerId);
+    if (index >= 0) state.participants[index] = payload.participant;
+    render();
     toast('角色已保存');
   } catch (error) {
     toast(error.message);
   }
 });
+
+els.readyCharacter.addEventListener('click', async () => {
+  if (!state.room || !state.participant) return;
+  try {
+    const payload = await api(`/api/rooms/${state.room.code}/ready`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        playerId: state.playerId,
+        isReady: !state.participant.isReady
+      })
+    });
+    state.participant = payload.participant;
+    const index = state.participants.findIndex((participant) => participant.playerId === state.playerId);
+    if (index >= 0) state.participants[index] = payload.participant;
+    render();
+    toast(state.participant.isReady ? '已准备' : '已取消准备');
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+async function rollSkill(skillName) {
+  if (!state.room) return;
+  try {
+    await api(`/api/rooms/${state.room.code}/rolls`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: state.playerId,
+        rollType: 'skill',
+        skillName,
+        label: skillName
+      })
+    });
+  } catch (error) {
+    toast(error.message);
+  }
+}
 
 els.summaryForm.addEventListener('submit', async (event) => {
   event.preventDefault();

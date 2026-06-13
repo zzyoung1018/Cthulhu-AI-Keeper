@@ -105,6 +105,32 @@ function parseSseChunk(buffer, onEvent) {
   return rest;
 }
 
+function auditCharacterSheet(name, skill = 55) {
+  return {
+    investigator: {
+      name,
+      occupation: '部署审计员'
+    },
+    characteristics: {
+      STR: 50,
+      CON: 50,
+      SIZ: 50,
+      DEX: 50,
+      APP: 50,
+      INT: 50,
+      POW: 50,
+      EDU: 50,
+      Luck: 50
+    },
+    skills: {
+      侦查: skill,
+      聆听: 45,
+      图书馆使用: 50
+    },
+    equipment: '提灯、铅笔、审计记录本'
+  };
+}
+
 async function waitForStreamedDm(code, playerId, sendMessage) {
   const timeout = timeoutSignal(aiStreamTimeoutMs);
   const events = [];
@@ -207,11 +233,14 @@ async function main() {
   assert.equal(created.room.moduleId, uploadedModule.module.id);
   assert.equal(created.participants.length, 1);
 
+  const participantIds = [ownerId];
   for (let index = 2; index <= 5; index += 1) {
+    const playerId = randomUUID();
+    participantIds.push(playerId);
     await jsonRequest(`/api/rooms/${created.room.code}/join`, {
       method: 'POST',
       body: JSON.stringify({
-        playerId: randomUUID(),
+        playerId,
         displayName: `Audit Player ${index}`
       })
     });
@@ -228,16 +257,23 @@ async function main() {
     })
   });
 
-  await jsonRequest(`/api/rooms/${created.room.code}/profile`, {
-    method: 'PATCH',
-    body: JSON.stringify({
-      playerId: ownerId,
-      displayName: 'Audit Owner',
-      characterName: '审计员',
-      characterCard: '用于验证部署的临时角色。',
-      state: '状态良好。'
-    })
-  });
+  for (const [index, playerId] of participantIds.entries()) {
+    await jsonRequest(`/api/rooms/${created.room.code}/character`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        playerId,
+        displayName: index === 0 ? 'Audit Owner' : `Audit Player ${index + 1}`,
+        characterSheet: auditCharacterSheet(index === 0 ? '审计员' : `审计员${index + 1}`, 55 + index)
+      })
+    });
+    await jsonRequest(`/api/rooms/${created.room.code}/ready`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        playerId,
+        isReady: true
+      })
+    });
+  }
 
   await jsonRequest(`/api/rooms/${created.room.code}/summary`, {
     method: 'PATCH',

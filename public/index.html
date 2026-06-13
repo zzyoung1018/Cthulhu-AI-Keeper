@@ -89,21 +89,92 @@
         </section>
 
         <section class="panel editor-panel" id="editorPanel" hidden>
-          <h2>角色</h2>
-          <form id="profileForm" class="form compact">
-            <label>
-              角色名
-              <input name="characterName" maxlength="80">
-            </label>
-            <label>
-              角色卡
-              <textarea name="characterCard" rows="6" maxlength="4000"></textarea>
-            </label>
-            <label>
-              状态
-              <textarea name="state" rows="4" maxlength="2000"></textarea>
-            </label>
-            <button class="secondary" type="submit">保存角色</button>
+          <div class="panel-title">
+            <span class="kicker">调查员</span>
+            <h2>CoC 7版角色卡</h2>
+          </div>
+          <form id="profileForm" class="character-form">
+            <div class="character-grid">
+              <label>
+                姓名
+                <input name="investigator.name" maxlength="80">
+              </label>
+              <label>
+                职业
+                <input name="investigator.occupation" maxlength="80">
+              </label>
+              <label>
+                年龄
+                <input name="investigator.age" maxlength="20">
+              </label>
+              <label>
+                居住地
+                <input name="investigator.residence" maxlength="120">
+              </label>
+            </div>
+
+            <div class="sheet-section">
+              <div class="section-head">
+                <h3>属性</h3>
+                <span id="readyState">未准备</span>
+              </div>
+              <div class="stat-grid" id="characteristicsGrid"></div>
+              <div class="derived-grid" id="derivedGrid"></div>
+              <div class="resource-grid" id="resourceGrid"></div>
+            </div>
+
+            <div class="sheet-section">
+              <div class="section-head">
+                <h3>技能</h3>
+                <span>服务器检定</span>
+              </div>
+              <div class="skills-table" id="skillsTable"></div>
+            </div>
+
+            <div class="sheet-section">
+              <h3>武器和伤害</h3>
+              <textarea name="weaponsText" rows="3" maxlength="1200" placeholder="左轮手枪 | 1d10 | 15码&#10;拳击 | 1d3+DB"></textarea>
+            </div>
+
+            <div class="sheet-section notes-grid">
+              <label>
+                装备和财产
+                <textarea name="equipment" rows="3" maxlength="4000"></textarea>
+              </label>
+              <label>
+                人际关系
+                <textarea name="relationships" rows="3" maxlength="4000"></textarea>
+              </label>
+              <label>
+                思想与信念
+                <textarea name="beliefs" rows="3" maxlength="4000"></textarea>
+              </label>
+              <label>
+                重要地点
+                <textarea name="locations" rows="3" maxlength="4000"></textarea>
+              </label>
+              <label>
+                伤疤和创伤
+                <textarea name="scarsTraumas" rows="3" maxlength="4000"></textarea>
+              </label>
+              <label>
+                遭遇的怪物
+                <textarea name="encounteredMonsters" rows="3" maxlength="4000"></textarea>
+              </label>
+              <label>
+                获取的线索
+                <textarea name="clues" rows="3" maxlength="4000"></textarea>
+              </label>
+              <label>
+                私人笔记
+                <textarea name="privateNotes" rows="3" maxlength="8000"></textarea>
+              </label>
+            </div>
+
+            <div class="form-actions">
+              <button class="secondary" type="submit">保存角色</button>
+              <button class="ghost" id="readyCharacter" type="button">准备</button>
+            </div>
           </form>
         </section>
       </aside>
@@ -126,7 +197,16 @@
           </form>
         </section>
 
-        <section class="chat-log" id="chatLog" aria-live="polite"></section>
+        <section class="play-area">
+          <section class="chat-log" id="chatLog" aria-live="polite"></section>
+          <aside class="status-panel" id="statusPanel" hidden>
+            <div class="panel-title">
+              <span class="kicker">状态</span>
+              <h2 id="statusName">未选择角色</h2>
+            </div>
+            <div class="status-cards" id="statusCards"></div>
+          </aside>
+        </section>
 
         <form class="composer" id="messageForm" hidden>
           <div class="message-type-toggle" role="radiogroup" aria-label="消息类型">
@@ -140,6 +220,6 @@
       </section>
     </main>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/app.js?v=20260613-modules"></script>
+    <script type="module" src="/app.js?v=20260613-character"></script>
   </body>
 </html>
