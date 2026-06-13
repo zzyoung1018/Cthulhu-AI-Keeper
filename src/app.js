@@ -367,7 +367,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
     try {
       parsedText = extractModuleText({ extension: metadata.extension, buffer: file.buffer });
-      segments = segmentModuleText(parsedText);
+      segments = segmentModuleText(parsedText, metadata.extension);
       if (segments.length === 0) throw new Error('No text segments were extracted');
     } catch (error) {
       parseStatus = 'FAILED';
