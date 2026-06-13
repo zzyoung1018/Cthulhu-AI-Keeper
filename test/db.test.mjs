@@ -53,7 +53,7 @@ function characterSheet(name, skillValue = 60) {
   };
 }
 
-test('creates rooms, joins players, and enforces the five-player limit', () => {
+test('creates rooms with configurable player limit and enforces it', () => {
   const { database, cleanup } = withDb();
   try {
     const module = createModule(database, 'p1');
@@ -90,6 +90,18 @@ test('creates rooms, joins players, and enforces the five-player limit', () => {
       displayName: 'Renamed'
     });
     assert.equal(returning.participant.displayName, 'Renamed');
+
+    // Create a 2-player room and verify limit
+    const mod2 = createModule(database, 'p1');
+    const small = database.createRoom({
+      name: '2p room', playerId: 'p1', displayName: 'Host', moduleId: mod2.id, maxPlayers: 2
+    });
+    assert.equal(small.room.maxPlayers, 2);
+    database.joinRoom({ code: small.room.code, playerId: 'guest', displayName: 'Guest' });
+    assert.throws(
+      () => database.joinRoom({ code: small.room.code, playerId: 'extra', displayName: 'Extra' }),
+      (error) => error instanceof HttpError && error.statusCode === 409
+    );
   } finally {
     cleanup();
   }

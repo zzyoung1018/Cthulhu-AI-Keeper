@@ -12,7 +12,8 @@ import {
 import { normalizeAiSettings, publicAiSettings } from './aiSettings.js';
 import { HttpError } from './errors.js';
 
-const MAX_ROOM_PLAYERS = 5;
+const MAX_ROOM_PLAYERS = 6;
+const DEFAULT_MAX_PLAYERS = 5;
 const ROOM_STATUSES = ['PREPARING', 'ACTIVE', 'PAUSED', 'ENDED', 'ARCHIVED'];
 const MESSAGE_TYPES = ['IC', 'OOC', 'ACTION', 'SYSTEM', 'AI_DM', 'PRIVATE'];
 const AI_TASK_STATUSES = [
@@ -57,8 +58,10 @@ function rowToRoom(row) {
     moduleParseStatus: row.module_parse_status || '',
     status: row.status || 'PREPARING',
     ownerPlayerId: row.owner_player_id || '',
+    maxPlayers: Number(row.max_players || DEFAULT_MAX_PLAYERS),
     summary: row.summary || '',
     aiConfig: publicAiSettings(row.ai_config_json),
+    sceneState: row.scene_state || '{}',
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -426,6 +429,9 @@ export function createDatabase(dbPath) {
   if (!hasColumn('rooms', 'scene_state')) {
     db.exec("ALTER TABLE rooms ADD COLUMN scene_state TEXT NOT NULL DEFAULT '{}'");
   }
+  if (!hasColumn('rooms', 'max_players')) {
+    db.exec(`ALTER TABLE rooms ADD COLUMN max_players INTEGER NOT NULL DEFAULT ${DEFAULT_MAX_PLAYERS}`);
+  }
 
   const statements = {
     getRoomByCode: db.prepare(`
@@ -441,8 +447,8 @@ export function createDatabase(dbPath) {
       WHERE rooms.id = ?
     `),
     createRoom: db.prepare(`
-      INSERT INTO rooms (code, name, module_id, status, owner_player_id, summary, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO rooms (code, name, module_id, status, owner_player_id, max_players, summary, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     updateRoomStatus: db.prepare('UPDATE rooms SET status = ?, updated_at = ? WHERE id = ?'),
     updateRoomAiConfig: db.prepare('UPDATE rooms SET ai_config_json = ?, updated_at = ? WHERE id = ?'),
@@ -744,11 +750,13 @@ export function createDatabase(dbPath) {
       return statements.listModuleSegments.all(room.moduleId, limit).map(rowToModuleSegment);
     },
 
-    createRoom({ name, playerId, displayName, moduleId }) {
+    createRoom({ name, playerId, displayName, moduleId, maxPlayers = DEFAULT_MAX_PLAYERS }) {
       const module = rowToModule(statements.getModuleById.get(moduleId));
       if (!module) throw new HttpError(404, 'Module not found');
       if (module.ownerPlayerId !== playerId) throw new HttpError(403, 'Module is private');
       if (module.parseStatus !== 'PARSED') throw new HttpError(409, 'Module is not parsed');
+
+      const maxP = Math.max(1, Math.min(MAX_ROOM_PLAYERS, Number(maxPlayers) || DEFAULT_MAX_PLAYERS));
 
       let code = roomCode();
       while (statements.getRoomByCode.get(code)) {
@@ -757,7 +765,7 @@ export function createDatabase(dbPath) {
 
       const created = now();
       return transaction(() => {
-        const result = statements.createRoom.run(code, name, module.id, 'PREPARING', playerId, '', created, created);
+        const result = statements.createRoom.run(code, name, module.id, 'PREPARING', playerId, maxP, '', created, created);
         const room = rowToRoom(statements.getRoomById.get(Number(result.lastInsertRowid)));
         const participant = rowToParticipant(createParticipant(Number(result.lastInsertRowid), playerId, displayName), room);
         return { room, participant };
@@ -777,7 +785,7 @@ export function createDatabase(dbPath) {
           throw new HttpError(409, 'Room is not accepting new players');
         }
         const count = Number(statements.participantCount.get(room.id).total);
-        if (count >= MAX_ROOM_PLAYERS) {
+        if (count >= room.maxPlayers) {
           throw new HttpError(409, 'Room is full');
         }
         return rowToParticipant(createParticipant(room.id, playerId, displayName), room);

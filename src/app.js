@@ -474,7 +474,8 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       const displayName = assertString(body.displayName, 'displayName', 40);
       const moduleId = Number(body.moduleId);
       if (!Number.isInteger(moduleId)) throw new HttpError(400, 'moduleId is required');
-      const result = database.createRoom({ name, playerId, displayName, moduleId });
+      const maxPlayers = Number(body.maxPlayers) || 5;
+      const result = database.createRoom({ name, playerId, displayName, moduleId, maxPlayers });
       sendJson(response, 201, {
         ...result,
         participants: [result.participant],

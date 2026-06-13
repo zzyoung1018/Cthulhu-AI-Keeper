@@ -894,10 +894,10 @@ function render() {
     els.roomStatus.textContent = roomStatusLabels[state.room.status] || state.room.status || '准备阶段';
     els.tableTitle.textContent = state.room.name;
     els.roomCode.textContent = state.room.code;
-    els.playerCount.textContent = `${state.participants.length}/5`;
+    els.playerCount.textContent = `${state.participants.length}/${state.room.maxPlayers || 5}`;
     setConnection('online', `房间 ${state.room.code}`);
     els.tableSubtitle.textContent = [
-      `${state.participants.length}/5 名玩家`,
+      `${state.participants.length}/${state.room.maxPlayers || 5} 名玩家`,
       `房间码 ${state.room.code}`,
       state.room.moduleTitle ? `模组 ${state.room.moduleTitle}` : ''
     ].filter(Boolean).join(' · ');
@@ -1098,7 +1098,8 @@ els.createRoomForm.addEventListener('submit', async (event) => {
         playerId: state.playerId,
         displayName,
         roomName: String(form.get('roomName') || '').trim(),
-        moduleId
+        moduleId,
+        maxPlayers: Number(form.get('maxPlayers') || 5)
       })
     });
     closeCreateDialog();

@@ -173,6 +173,13 @@
         <form id="createRoomForm" class="form">
           <label>玩家名 <input name="displayName" maxlength="40" autocomplete="nickname" required></label>
           <label>房间名 <input name="roomName" maxlength="80" value="暮色边境"></label>
+          <label>游玩人数 <select name="maxPlayers" id="maxPlayersSelect">
+            <option value="2">2 人</option>
+            <option value="3">3 人</option>
+            <option value="4">4 人</option>
+            <option value="5" selected>5 人</option>
+            <option value="6">6 人</option>
+          </select></label>
           <div class="module-picker">
             <label>模组 <select name="moduleId" id="moduleSelect" required><option value="">先上传或选择模组</option></select></label>
             <label>上传模组 <input type="file" id="moduleFile" accept=".txt,.pdf,.docx,.json,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/json"></label>
