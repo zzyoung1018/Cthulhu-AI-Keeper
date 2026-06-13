@@ -146,6 +146,8 @@ function rowToMessage(row) {
     displayName: row.display_name,
     content: row.content || '',
     status: row.status,
+    privateTarget: row.private_target || '',
+    isRolledBack: Boolean(row.is_rolled_back),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -345,6 +347,18 @@ export function createDatabase(dbPath) {
       UNIQUE(room_id, idempotency_key)
     );
 
+    CREATE TABLE IF NOT EXISTS round_states (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      ai_task_uid TEXT NOT NULL,
+      dm_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+      snapshot_json TEXT NOT NULL,
+      is_rolled_back INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_round_states_room ON round_states(room_id, created_at, id);
+
     CREATE INDEX IF NOT EXISTS idx_participants_room ON participants(room_id);
     CREATE INDEX IF NOT EXISTS idx_messages_room_created ON messages(room_id, created_at, id);
     CREATE INDEX IF NOT EXISTS idx_story_summaries_room ON story_summaries(room_id, created_at);
@@ -402,6 +416,15 @@ export function createDatabase(dbPath) {
         ELSE 'IC'
       END
     `);
+  }
+  if (!hasColumn('messages', 'private_target')) {
+    db.exec("ALTER TABLE messages ADD COLUMN private_target TEXT NOT NULL DEFAULT ''");
+  }
+  if (!hasColumn('messages', 'is_rolled_back')) {
+    db.exec('ALTER TABLE messages ADD COLUMN is_rolled_back INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!hasColumn('rooms', 'scene_state')) {
+    db.exec("ALTER TABLE rooms ADD COLUMN scene_state TEXT NOT NULL DEFAULT '{}'");
   }
 
   const statements = {
@@ -486,20 +509,38 @@ export function createDatabase(dbPath) {
     `),
     listParticipants: db.prepare('SELECT * FROM participants WHERE room_id = ? ORDER BY joined_at ASC, id ASC'),
     createMessage: db.prepare(`
-      INSERT INTO messages (room_id, author_type, message_type, participant_id, player_id, display_name, content, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (room_id, author_type, message_type, participant_id, player_id, display_name, content, status, private_target, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     updateMessage: db.prepare('UPDATE messages SET content = ?, status = ?, updated_at = ? WHERE id = ?'),
     getMessageById: db.prepare('SELECT * FROM messages WHERE id = ?'),
     listMessages: db.prepare(`
       SELECT * FROM messages
-      WHERE room_id = ?
+      WHERE room_id = ? AND is_rolled_back = 0 AND (message_type != 'PRIVATE' OR message_type IS NULL)
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `),
+    listMessagesForPlayer: db.prepare(`
+      SELECT * FROM messages
+      WHERE room_id = ? AND is_rolled_back = 0 AND (message_type != 'PRIVATE' OR private_target = ? OR player_id = ?)
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `),
+    listAllMessages: db.prepare(`
+      SELECT * FROM messages
+      WHERE room_id = ? AND is_rolled_back = 0
       ORDER BY created_at DESC, id DESC
       LIMIT ?
     `),
     listDiceRolls: db.prepare(`
       SELECT * FROM dice_rolls
       WHERE room_id = ? AND is_private = 0
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `),
+    listDiceRollsForPlayer: db.prepare(`
+      SELECT * FROM dice_rolls
+      WHERE room_id = ? AND (is_private = 0 OR player_id = ?)
       ORDER BY created_at DESC, id DESC
       LIMIT ?
     `),
@@ -535,9 +576,39 @@ export function createDatabase(dbPath) {
     attachAiTaskMessage: db.prepare('UPDATE ai_tasks SET dm_message_id = ?, updated_at = ? WHERE task_uid = ?'),
     requestAiTaskCancel: db.prepare('UPDATE ai_tasks SET cancel_requested = 1, updated_at = ? WHERE task_uid = ?'),
     updateSummary: db.prepare('UPDATE rooms SET summary = ?, updated_at = ? WHERE id = ?'),
+    updateSceneState: db.prepare('UPDATE rooms SET scene_state = ?, updated_at = ? WHERE id = ?'),
     createSummaryVersion: db.prepare(`
       INSERT INTO story_summaries (room_id, participant_id, summary, created_at)
       VALUES (?, ?, ?, ?)
+    `),
+    createRoundState: db.prepare(`
+      INSERT INTO round_states (room_id, ai_task_uid, dm_message_id, snapshot_json, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `),
+    getRoundState: db.prepare('SELECT * FROM round_states WHERE id = ?'),
+    listRoundStates: db.prepare(`
+      SELECT * FROM round_states
+      WHERE room_id = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `),
+    markRoundRolledBack: db.prepare('UPDATE round_states SET is_rolled_back = 1 WHERE id = ?'),
+    markMessageRolledBack: db.prepare('UPDATE messages SET is_rolled_back = 1 WHERE id = ?'),
+    getParticipantByPlayerId: db.prepare('SELECT * FROM participants WHERE room_id = ? AND player_id = ?'),
+    restoreCharacterSnapshot: db.prepare(`
+      UPDATE participants
+      SET character_sheet_json = ?,
+          character_revision = ?,
+          is_ready = 1,
+          updated_at = ?
+      WHERE id = ?
+    `),
+    forceUpdateSummary: db.prepare('UPDATE rooms SET summary = ?, updated_at = ? WHERE id = ?'),
+    listAllDiceRolls: db.prepare(`
+      SELECT * FROM dice_rolls
+      WHERE room_id = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
     `)
   };
 
@@ -715,15 +786,23 @@ export function createDatabase(dbPath) {
       return { room, participant };
     },
 
-    getRoomState(code, messageLimit = 80) {
+    getRoomState(code, options = {}) {
+      // Backward-compatible: if called as getRoomState(code, number) treat as messageLimit
+      const opts = typeof options === 'number'
+        ? { messageLimit: options }
+        : (options || {});
+      const { messageLimit = 80, diceLimit = 40, playerId = '' } = opts;
+
       const room = ensureRoom(code);
       const participants = statements.listParticipants.all(room.id).map((row) => rowToParticipant(row, room));
-      const messages = statements.listMessages
-        .all(room.id, messageLimit)
+      const messages = (playerId
+        ? statements.listMessagesForPlayer.all(room.id, playerId, playerId, messageLimit)
+        : statements.listMessages.all(room.id, messageLimit))
         .map(rowToMessage)
         .reverse();
-      const diceRolls = statements.listDiceRolls
-        .all(room.id, 40)
+      const diceRolls = (playerId
+        ? statements.listDiceRollsForPlayer.all(room.id, playerId, diceLimit)
+        : statements.listDiceRolls.all(room.id, diceLimit))
         .map(rowToDiceRoll)
         .reverse();
       const aiTasks = statements.listAiTasks
@@ -858,7 +937,8 @@ export function createDatabase(dbPath) {
       participantId = null,
       displayName,
       content,
-      status = 'complete'
+      status = 'complete',
+      privateTarget = ''
     }) {
       const room = ensureRoom(code);
       const type = normalizeMessageType(messageType || legacyMessageType(authorType));
@@ -872,6 +952,7 @@ export function createDatabase(dbPath) {
         displayName,
         content,
         status,
+        privateTarget,
         created,
         created
       );
@@ -895,6 +976,10 @@ export function createDatabase(dbPath) {
 
     updateMessage({ id, content, status }) {
       statements.updateMessage.run(content, status, now(), id);
+      return rowToMessage(statements.getMessageById.get(id));
+    },
+
+    getMessageById(id) {
       return rowToMessage(statements.getMessageById.get(id));
     },
 
@@ -984,6 +1069,103 @@ export function createDatabase(dbPath) {
         triggerMessageId: source.triggerMessageId,
         idempotencyKey: `regenerate:${sourceTaskUid}:${randomUUID()}`
       });
+    },
+
+    createRoundState({ roomId, aiTaskUid, dmMessageId, snapshotJson }) {
+      const created = now();
+      const result = statements.createRoundState.run(roomId, aiTaskUid, dmMessageId, snapshotJson, created);
+      return {
+        id: Number(result.lastInsertRowid),
+        roomId,
+        aiTaskUid,
+        dmMessageId,
+        snapshotJson,
+        isRolledBack: false,
+        createdAt: created
+      };
+    },
+
+    getRoundState(roundId) {
+      const row = statements.getRoundState.get(roundId);
+      if (!row) return null;
+      return {
+        id: row.id,
+        roomId: row.room_id,
+        aiTaskUid: row.ai_task_uid,
+        dmMessageId: row.dm_message_id,
+        snapshotJson: row.snapshot_json,
+        isRolledBack: Boolean(row.is_rolled_back),
+        createdAt: row.created_at
+      };
+    },
+
+    listRoundStates(roomId, limit = 20) {
+      return statements.listRoundStates.all(roomId, limit).map((row) => ({
+        id: row.id,
+        roomId: row.room_id,
+        aiTaskUid: row.ai_task_uid,
+        dmMessageId: row.dm_message_id,
+        snapshotJson: row.snapshot_json,
+        isRolledBack: Boolean(row.is_rolled_back),
+        createdAt: row.created_at
+      }));
+    },
+
+    markRoundRolledBack(roundId) {
+      statements.markRoundRolledBack.run(roundId);
+    },
+
+    markMessageRolledBack(messageId) {
+      statements.markMessageRolledBack.run(messageId);
+    },
+
+    getParticipantByPlayerId(roomId, playerId) {
+      return rowToParticipant(statements.getParticipantByPlayerId.get(roomId, playerId));
+    },
+
+    restoreCharacterSnapshot({ participantId, characterSheet, characterRevision }) {
+      statements.restoreCharacterSnapshot.run(
+        JSON.stringify(characterSheet),
+        characterRevision,
+        now(),
+        participantId
+      );
+    },
+
+    forceUpdateSummary(roomId, summary) {
+      statements.forceUpdateSummary.run(summary, now(), roomId);
+    },
+
+    updateSceneState({ code, playerId, sceneState }) {
+      const { room } = this.getParticipant(code, playerId);
+      assertOwner(room, playerId);
+      const updated = now();
+      statements.updateSceneState.run(JSON.stringify(sceneState || {}), updated, room.id);
+      return rowToRoom(statements.getRoomById.get(room.id));
+    },
+
+    getExportState(code, playerId) {
+      const room = ensureRoom(code);
+      const { participant } = this.getParticipant(code, playerId);
+      const participants = statements.listParticipants.all(room.id).map((row) => rowToParticipant(row, room));
+      const messages = statements.listAllMessages
+        .all(room.id, 2000)
+        .map(rowToMessage)
+        .reverse();
+      const diceRolls = statements.listAllDiceRolls
+        .all(room.id, 2000)
+        .map(rowToDiceRoll)
+        .reverse();
+      const aiTasks = statements.listAiTasks
+        .all(room.id, 50)
+        .map(rowToAiTask)
+        .reverse();
+      const rounds = this.listRoundStates(room.id, 50);
+      return { room, participants, messages, diceRolls, aiTasks, rounds };
+    },
+
+    getRoomByCode(code) {
+      return rowToRoom(statements.getRoomByCode.get(code.toUpperCase()));
     }
   };
 }

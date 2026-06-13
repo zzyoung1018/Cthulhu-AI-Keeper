@@ -141,3 +141,210 @@ export function rollSanityLoss(expression, passed, rng = Math.random) {
     total: selected.total
   };
 }
+
+export function rollOpposedCheck({
+  activeTarget,
+  passiveTarget,
+  activeBonusDice = 0,
+  activePenaltyDice = 0,
+  passiveBonusDice = 0,
+  passivePenaltyDice = 0,
+  rng = Math.random
+}) {
+  assertInteger(activeTarget, 'Active target', 0, 100);
+  assertInteger(passiveTarget, 'Passive target', 0, 100);
+
+  const activeRoll = rollD100({ bonusDice: activeBonusDice, penaltyDice: activePenaltyDice, rng });
+  const passiveRoll = rollD100({ bonusDice: passiveBonusDice, penaltyDice: passivePenaltyDice, rng });
+
+  const activeLevel = cocSuccessLevel(activeRoll.total, activeTarget);
+  const passiveLevel = cocSuccessLevel(passiveRoll.total, passiveTarget);
+
+  const rank = { FUMBLE: -1, FAIL: 0, REGULAR: 1, HARD: 2, EXTREME: 3, CRITICAL: 4 };
+
+  let winner = 'tie';
+  if (rank[activeLevel] > rank[passiveLevel]) winner = 'active';
+  if (rank[passiveLevel] > rank[activeLevel]) winner = 'passive';
+  if (winner === 'tie' && activeLevel !== 'FUMBLE' && activeLevel !== 'FAIL') {
+    winner = activeRoll.total > passiveRoll.total ? 'active' : activeRoll.total === passiveRoll.total ? 'tie' : 'passive';
+  }
+
+  return {
+    type: 'opposed_check',
+    expression: '1d100',
+    active: {
+      target: activeTarget,
+      roll: activeRoll.total,
+      successLevel: activeLevel,
+      bonusDice: activeBonusDice,
+      penaltyDice: activePenaltyDice
+    },
+    passive: {
+      target: passiveTarget,
+      roll: passiveRoll.total,
+      successLevel: passiveLevel,
+      bonusDice: passiveBonusDice,
+      penaltyDice: passivePenaltyDice
+    },
+    winner
+  };
+}
+
+export function rollPushedCheck({
+  target,
+  difficulty = 'REGULAR',
+  bonusDice = 0,
+  penaltyDice = 0,
+  rng = Math.random
+}) {
+  assertInteger(target, 'Target', 0, 100);
+  const roll = rollD100({ bonusDice, penaltyDice, rng });
+  const successLevel = cocSuccessLevel(roll.total, target);
+  const passed = cocCheckPasses(successLevel, difficulty);
+  const fumbled = roll.total === 100 || (target < 50 && roll.total >= 96);
+  return {
+    ...roll,
+    type: 'pushed_check',
+    target,
+    difficulty: String(difficulty || 'REGULAR').trim().toUpperCase(),
+    successLevel,
+    passed,
+    pushed: true,
+    fumbled,
+    consequence: fumbled ? 'fumble' : (!passed ? 'fail' : 'success')
+  };
+}
+
+export function spendLuck({
+  currentLuck,
+  rollTotal,
+  target,
+  amount
+}) {
+  assertInteger(currentLuck, 'Current luck', 0, 100);
+  assertInteger(rollTotal, 'Roll total', 1, 100);
+  assertInteger(target, 'Target', 0, 100);
+  const spend = Number(amount);
+  if (!Number.isInteger(spend) || spend <= 0) throw new Error('Luck spend amount must be a positive integer');
+  if (spend > currentLuck) throw new Error('Not enough luck points');
+  const needed = Math.max(0, rollTotal - target);
+  const effectiveSpend = Math.min(spend, needed);
+  const newTotal = rollTotal - effectiveSpend;
+  return {
+    type: 'luck_spend',
+    expression: `luck:${effectiveSpend}`,
+    previousLuck: currentLuck,
+    spent: effectiveSpend,
+    requestedSpend: spend,
+    rollBefore: rollTotal,
+    rollAfter: newTotal,
+    target,
+    passed: newTotal <= target,
+    newLuck: currentLuck - effectiveSpend
+  };
+}
+
+export function dispatchDiceRoll({ rollType, expression, target, skillName, skillTarget, difficulty, bonusDice, penaltyDice, passed, participant, currentLuck, spendLuckAmount, passiveTarget }) {
+  const type = String(rollType || 'expression').toLowerCase();
+
+  if (type === 'skill' || type === 'skill_check') {
+    if (!Number.isInteger(skillTarget)) throw new Error('Unknown skill or missing target');
+    const check = rollCocCheck({
+      target: skillTarget,
+      difficulty: difficulty || 'REGULAR',
+      bonusDice: Number(bonusDice || 0),
+      penaltyDice: Number(penaltyDice || 0)
+    });
+    return { result: { ...check, type: 'skill_check', skillName }, label: skillName };
+  }
+
+  if (type === 'check' || type === 'coc_check') {
+    if (!Number.isInteger(target)) throw new Error('target is required');
+    const check = rollCocCheck({
+      target,
+      difficulty: difficulty || 'REGULAR',
+      bonusDice: Number(bonusDice || 0),
+      penaltyDice: Number(penaltyDice || 0)
+    });
+    return { result: check, label: '' };
+  }
+
+  if (type === 'sanity' || type === 'sanity_loss') {
+    if (!expression) throw new Error('expression is required');
+    return { result: rollSanityLoss(expression, Boolean(passed)), label: '' };
+  }
+
+  if (type === 'opposed' || type === 'opposed_check') {
+    if (!Number.isInteger(target)) throw new Error('active target is required');
+    if (!Number.isInteger(passiveTarget)) throw new Error('passive target is required');
+    const opposed = rollOpposedCheck({
+      activeTarget: target,
+      passiveTarget,
+      activeBonusDice: Number(bonusDice || 0),
+      activePenaltyDice: Number(penaltyDice || 0)
+    });
+    return { result: opposed, label: '' };
+  }
+
+  if (type === 'pushed' || type === 'pushed_check') {
+    if (!Number.isInteger(target)) throw new Error('target is required');
+    return { result: rollPushedCheck({
+      target,
+      difficulty: difficulty || 'REGULAR',
+      bonusDice: Number(bonusDice || 0),
+      penaltyDice: Number(penaltyDice || 0)
+    }), label: '' };
+  }
+
+  if (type === 'luck' || type === 'luck_spend') {
+    if (!Number.isInteger(target)) throw new Error('target is required');
+    if (!Number.isInteger(currentLuck)) throw new Error('currentLuck is required');
+    const spend = spendLuckAmount || Number(String(expression || '0').replace(/^luck:/i, ''));
+    const check = rollCocCheck({ target, difficulty: difficulty || 'REGULAR' });
+    const luckResult = spendLuck({ currentLuck, rollTotal: check.total, target, amount: spend });
+    return { result: { ...check, ...luckResult, type: 'luck_spend' }, label: '' };
+  }
+
+  if (!expression) throw new Error('expression is required');
+  return { result: rollDiceExpression(expression), label: '' };
+}
+
+export function formatRollSummary({ participantName, label, result }) {
+  const prefix = `${participantName} · ${label || '骰子'}`;
+
+  if (result.type === 'coc_check' || result.type === 'skill_check') {
+    const skill = result.skillName ? `${result.skillName} ` : '';
+    const lines = [`${prefix}：${skill}1d100 = ${result.total} / ${result.target}，${result.successLevel}，${result.passed ? '通过' : '未通过'}`];
+    if (result.bonusDice) lines.push(`（${result.bonusDice} 奖励骰）`);
+    if (result.penaltyDice) lines.push(`（${result.penaltyDice} 惩罚骰）`);
+    if (result.luckSpend) lines.push(`消耗 ${result.luckSpend.spent} 点幸运值，${result.luckSpend.passed ? '通过' : '仍失败'}`);
+    return lines.join(' ');
+  }
+
+  if (result.type === 'opposed_check') {
+    return [
+      `${prefix}：对抗检定`,
+      `主动方 1d100 = ${result.active.roll} / ${result.active.target}，${result.active.successLevel}`,
+      `被动方 1d100 = ${result.passive.roll} / ${result.passive.target}，${result.passive.successLevel}`,
+      `结果：${result.winner === 'active' ? '主动方胜' : result.winner === 'passive' ? '被动方胜' : '平局'}`
+    ].join(' · ');
+  }
+
+  if (result.type === 'pushed_check') {
+    return [
+      `${prefix}：推骰 1d100 = ${result.total} / ${result.target}，${result.successLevel}`,
+      result.consequence === 'fumble' ? '大失败！' : result.passed ? '推骰成功' : '推骰失败'
+    ].join(' · ');
+  }
+
+  if (result.type === 'luck_spend') {
+    return `${prefix}：消耗 ${result.spent} 点幸运值，${result.rollBefore}→${result.rollAfter} / ${result.target}，${result.passed ? '通过' : '未通过'}，剩余 ${result.newLuck}`;
+  }
+
+  if (result.type === 'sanity_loss') {
+    return `${prefix}：理智损失 ${result.expression}，结果 ${result.total}`;
+  }
+
+  const modifier = result.modifier ? ` ${result.modifier > 0 ? '+' : '-'} ${Math.abs(result.modifier)}` : '';
+  return `${prefix}：${result.expression} = [${result.rolls.join(', ')}]${modifier}，合计 ${result.total}`;
+}

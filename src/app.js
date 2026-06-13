@@ -3,16 +3,19 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { buildDmMessages, streamChatCompletion } from './aiClient.js';
+import { extractStructuredEvents, formatEventsForPrompt, validateStructuredEvents } from './aiOutput.js';
 import { RoomAiQueue } from './aiQueue.js';
 import { assertAiSettingsInput, roomRuntimeAiConfig } from './aiSettings.js';
 import { getSkillTarget } from './character.js';
 import { isAiConfigured } from './config.js';
 import { createDatabase } from './db.js';
-import { rollCocCheck, rollDiceExpression, rollSanityLoss } from './dice.js';
+import { dispatchDiceRoll, formatRollSummary } from './dice.js';
 import { assertString, optionalString, HttpError } from './errors.js';
+import { exportGameJson, exportGameMarkdown } from './export.js';
 import { readJson, sendError, sendJson, serveStatic } from './http.js';
 import { extractModuleText, scoreModuleSegment, segmentModuleText, validateModuleFile } from './moduleParser.js';
 import { readMultipartForm } from './multipart.js';
+import { capturePreRoundState, computeRollback, createRoundRecord } from './rounds.js';
 import { RoomEventHub } from './sse.js';
 
 function route(pathname) {
@@ -87,6 +90,10 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     setAiTaskStatus(code, taskUid, 'RETRIEVING');
     const state = database.getRoomState(code, 80);
     const moduleSegments = database.getRoomModuleSegments(code, 120);
+
+    // Capture pre-round state for rollback
+    const preState = capturePreRoundState(state);
+
     const query = [
       state.room.summary,
       ...state.messages.slice(-12).map((message) => message.content),
@@ -117,6 +124,8 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
     try {
       const aiMessages = buildDmMessages(state);
+      // Append structured output instruction
+      aiMessages.push({ role: 'user', content: formatEventsForPrompt() });
       const taskAiConfig = roomRuntimeAiConfig(config.ai, database.getRoomAiSettings(code));
       for await (const chunk of streamChatCompletion(taskAiConfig, aiMessages)) {
         assertTaskNotCancelled(taskUid);
@@ -130,11 +139,40 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       }
 
       setAiTaskStatus(code, taskUid, 'VALIDATING');
+
+      // Parse and validate structured events
+      const { narrative, events } = extractStructuredEvents(content);
+      const { valid, rejected, issues } = validateStructuredEvents(events);
+
+      const narrationContent = narrative || content.trim() || '（DM 沉默片刻，等待玩家继续行动。）';
       const completed = database.updateMessage({
         id: dmMessage.id,
-        content: content.trim() || '（DM 沉默片刻，等待玩家继续行动。）',
+        content: narrationContent,
         status: 'complete'
       });
+
+      // Apply valid structured events
+      if (Object.keys(valid).length > 0) {
+        applyStructuredEvents(code, taskUid, valid, dmMessage.id);
+      }
+
+      if (rejected.length > 0) {
+        console.error('[ai-output] rejected events:', rejected, issues);
+      }
+
+      // Save round record for rollback
+      try {
+        createRoundRecord({
+          database,
+          roomId: state.room.id,
+          aiTaskUid: taskUid,
+          dmMessageId: dmMessage.id,
+          preState
+        });
+      } catch (roundError) {
+        console.error('[ai-output] round record failed:', roundError.message);
+      }
+
       setAiTaskStatus(code, taskUid, 'COMPLETED');
       hub.broadcast(code, 'message_completed', { message: completed });
     } catch (error) {
@@ -147,6 +185,146 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       setAiTaskStatus(code, taskUid, cancelled ? 'CANCELLED' : 'FAILED', cancelled ? '' : publicError(error));
       hub.broadcast(code, 'message_error', { message: failed });
     }
+  }
+
+  function applyStructuredEvents(code, taskUid, events, dmMessageId) {
+    const state = database.getRoomState(code, 80);
+
+    // Apply state changes
+    if (Array.isArray(events.proposed_state_changes)) {
+      for (const change of events.proposed_state_changes) {
+        try {
+          applyStateChange(code, change);
+        } catch (stateError) {
+          console.error('[ai-output] state change failed:', change.fieldPath, stateError.message);
+        }
+      }
+    }
+
+    // Reveal clues as system messages
+    if (Array.isArray(events.clues_revealed)) {
+      for (const clue of events.clues_revealed) {
+        const clueMsg = database.createMessage({
+          code,
+          authorType: 'system',
+          messageType: 'SYSTEM',
+          displayName: '线索',
+          content: `🔍 ${clue.source ? `[${clue.source}] ` : ''}${clue.content}`,
+          status: 'complete',
+          privateTarget: clue.privateTo || ''
+        });
+        if (clue.privateTo) {
+          hub.sendTo(code, clue.privateTo, 'message_created', { message: clueMsg });
+        } else {
+          hub.broadcast(code, 'message_created', { message: clueMsg });
+        }
+      }
+    }
+
+    // Update summary
+    if (events.summary_update && typeof events.summary_update === 'string') {
+      try {
+        database.forceUpdateSummary(state.room.id, events.summary_update);
+      } catch (summaryError) {
+        console.error('[ai-output] summary update failed:', summaryError.message);
+      }
+    }
+
+    // Handle scene change
+    if (events.scene_change && events.scene_change.newScene) {
+      const sceneMsg = database.createMessage({
+        code,
+        authorType: 'system',
+        messageType: 'SYSTEM',
+        displayName: '场景',
+        content: [
+          `📍 场景：${events.scene_change.newScene}`,
+          events.scene_change.newLocation ? `地点：${events.scene_change.newLocation}` : '',
+          events.scene_change.timeElapsed ? `时间：${events.scene_change.timeElapsed}` : '',
+          events.scene_change.description || ''
+        ].filter(Boolean).join('\n'),
+        status: 'complete'
+      });
+      hub.broadcast(code, 'message_created', { message: sceneMsg });
+
+      // Update scene state in room
+      try {
+        database.forceUpdateSummary(state.room.id,
+          (state.room.summary || '') + '\n' + (events.summary_update || events.scene_change.description || ''));
+      } catch { /* non-critical */ }
+    }
+
+    // NPC state changes
+    if (Array.isArray(events.npc_state_changes) && events.npc_state_changes.length > 0) {
+      for (const npc of events.npc_state_changes) {
+        const npcMsg = database.createMessage({
+          code,
+          authorType: 'system',
+          messageType: 'SYSTEM',
+          displayName: 'NPC',
+          content: [
+            `👤 ${npc.npcName}`,
+            npc.disposition ? `态度：${npc.disposition}` : '',
+            npc.location ? `位置：${npc.location}` : '',
+            npc.isPresent === false ? '（已离场）' : '',
+            npc.notes || ''
+          ].filter(Boolean).join(' · '),
+          status: 'complete'
+        });
+        hub.broadcast(code, 'message_created', { message: npcMsg });
+      }
+    }
+
+    // Broadcast updated room state
+    const updatedState = database.getRoomState(code, 80);
+    hub.broadcast(code, 'room_state', updatedState);
+  }
+
+  function applyStateChange(code, change) {
+    if (!change.targetPlayerId || !change.fieldPath) return;
+
+    const { participant } = database.getParticipant(code, change.targetPlayerId);
+    if (!participant) return;
+
+    const sheet = structuredClone(participant.characterSheet || {});
+    const parts = change.fieldPath.split('.');
+
+    if (parts[0] === 'status' && parts[1]) {
+      sheet.status = sheet.status || {};
+      const resource = parts[1];
+      const newValue = Number(change.newValue);
+      if (!Number.isFinite(newValue)) return;
+
+      const limits = { hp: 100, mp: 100, san: 99, luck: 100 };
+      const max = limits[resource] || 100;
+      sheet.status[resource] = Math.max(0, Math.min(max, Math.round(newValue)));
+    } else if (parts[0] === 'characteristics' && parts[1]) {
+      sheet.characteristics = sheet.characteristics || {};
+      const newValue = Number(change.newValue);
+      if (!Number.isFinite(newValue)) return;
+      sheet.characteristics[parts[1]] = Math.max(0, Math.min(100, Math.round(newValue)));
+    } else {
+      return;
+    }
+
+    database.updateCharacterSheet({
+      code,
+      playerId: change.targetPlayerId,
+      displayName: participant.displayName,
+      characterSheet: sheet
+    });
+
+    // Notify the affected player
+    const msg = database.createMessage({
+      code,
+      authorType: 'system',
+      messageType: 'SYSTEM',
+      displayName: '状态变更',
+      content: `${change.reason || 'AI DM 提议的状态变更'}：${change.fieldPath} → ${change.newValue}`,
+      status: 'complete',
+      privateTarget: change.targetPlayerId
+    });
+    hub.sendTo(code, change.targetPlayerId, 'message_created', { message: msg });
   }
 
   function enqueueDm(code, taskUid) {
@@ -213,58 +391,37 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
   function buildRollResult(body, participant = null) {
     try {
-      const rollType = String(body.rollType || body.type || (body.target === undefined ? 'expression' : 'check')).toLowerCase();
+      const skillTarget = (body.rollType === 'skill' || body.rollType === 'skill_check')
+        ? getSkillTarget(participant?.characterSheet, body.skillName || body.label)
+        : null;
 
-      if (rollType === 'skill' || rollType === 'skill_check') {
-        if (!participant) throw new Error('participant is required');
-        const skillName = assertString(body.skillName || body.label, 'skillName', 80);
-        const target = getSkillTarget(participant.characterSheet, skillName);
-        if (!Number.isInteger(target)) throw new Error('Unknown skill');
-        const check = rollCocCheck({
-          target,
-          difficulty: body.difficulty || 'REGULAR',
-          bonusDice: Number(body.bonusDice || 0),
-          penaltyDice: Number(body.penaltyDice || 0)
-        });
-        return { ...check, type: 'skill_check', skillName };
-      }
-
-      if (rollType === 'check' || rollType === 'coc_check') {
-        const target = Number(body.target);
-        if (!Number.isInteger(target)) throw new Error('target is required');
-        return rollCocCheck({
-          target,
-          difficulty: body.difficulty || 'REGULAR',
-          bonusDice: Number(body.bonusDice || 0),
-          penaltyDice: Number(body.penaltyDice || 0)
-        });
-      }
-
-      if (rollType === 'sanity' || rollType === 'sanity_loss') {
-        return rollSanityLoss(assertString(body.expression, 'expression', 40), Boolean(body.passed));
-      }
-
-      return rollDiceExpression(assertString(body.expression || '1d100', 'expression', 40));
+      const { result, label: autoLabel } = dispatchDiceRoll({
+        rollType: body.rollType || body.type || (body.target === undefined ? 'expression' : 'check'),
+        expression: body.expression,
+        target: Number(body.target) || 0,
+        skillName: body.skillName || body.label,
+        skillTarget,
+        difficulty: body.difficulty,
+        bonusDice: Number(body.bonusDice || 0),
+        penaltyDice: Number(body.penaltyDice || 0),
+        passed: body.passed,
+        currentLuck: body.currentLuck,
+        spendLuckAmount: body.spendLuckAmount,
+        passiveTarget: Number(body.passiveTarget || 0)
+      });
+      return { ...result, label: autoLabel || body.label || result.skillName || '' };
     } catch (error) {
       if (error instanceof HttpError) throw error;
       throw new HttpError(400, error.message || 'Invalid roll');
     }
   }
 
-  function rollSummary({ participant, label, result }) {
-    const prefix = `${participant.characterName || participant.displayName} · ${label || '骰子'}`;
-
-    if (result.type === 'coc_check' || result.type === 'skill_check') {
-      const skill = result.skillName ? `${result.skillName} ` : '';
-      return `${prefix}：${skill}1d100 = ${result.total} / ${result.target}，${result.successLevel}，${result.passed ? '通过' : '未通过'}`;
-    }
-
-    if (result.type === 'sanity_loss') {
-      return `${prefix}：理智损失 ${result.expression}，结果 ${result.total}`;
-    }
-
-    const modifier = result.modifier ? ` ${result.modifier > 0 ? '+' : '-'} ${Math.abs(result.modifier)}` : '';
-    return `${prefix}：${result.expression} = [${result.rolls.join(', ')}]${modifier}，合计 ${result.total}`;
+  function rollSummaryText({ participant, label, result }) {
+    return formatRollSummary({
+      participantName: participant.characterName || participant.displayName,
+      label,
+      result
+    });
   }
 
   async function handleApi(request, response, parts, url) {
@@ -332,7 +489,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       if (request.method === 'GET' && parts.length === 3) {
         const playerId = url.searchParams.get('playerId');
         if (playerId) database.getParticipant(code, playerId);
-        sendJson(response, 200, database.getRoomState(code));
+        sendJson(response, 200, database.getRoomState(code, { playerId: playerId || '' }));
         return;
       }
 
@@ -451,10 +608,33 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         const content = assertString(body.content, 'content', 4000);
         const submitToDm = Boolean(body.submitToDm);
         const messageType = String(body.messageType || (submitToDm ? 'ACTION' : 'IC')).trim().toUpperCase();
+        const privateTarget = optionalString(body.privateTarget, 80);
         const { room } = database.getParticipant(code, playerId);
         const triggersAi = messageType === 'ACTION' || submitToDm;
         if (triggersAi && room.status !== 'ACTIVE') {
           throw new HttpError(409, 'Game is not active');
+        }
+
+        // Private messages: only deliver to intended recipient (and sender sees their own)
+        if (messageType === 'PRIVATE') {
+          const { participant } = database.getParticipant(code, playerId);
+          const message = database.createMessage({
+            code,
+            authorType: 'player',
+            messageType: 'PRIVATE',
+            playerId,
+            participantId: participant.id,
+            displayName: participant.characterName || participant.displayName,
+            content,
+            status: 'complete',
+            privateTarget
+          });
+          if (privateTarget) {
+            hub.sendTo(code, privateTarget, 'message_created', { message });
+            hub.sendTo(code, playerId, 'message_created', { message });
+          }
+          sendJson(response, 201, { message, aiQueued: false });
+          return;
         }
 
         const message = database.createPlayerMessage({ code, playerId, content, messageType });
@@ -524,8 +704,12 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         });
 
         let message = null;
-        if (!isPrivate) {
-          message = createSystemMessage(code, rollSummary({ participant, label, result }));
+        if (isPrivate) {
+          message = createSystemMessage(code, rollSummaryText({ participant, label, result }));
+          hub.sendTo(code, playerId, 'message_created', { message });
+          hub.sendTo(code, playerId, 'dice_rolled', { roll });
+        } else {
+          message = createSystemMessage(code, rollSummaryText({ participant, label, result }));
           hub.broadcast(code, 'message_created', { message });
           hub.broadcast(code, 'dice_rolled', { roll });
         }
@@ -547,12 +731,99 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         });
         response.write('\n');
         hub.subscribe(code, response);
+        hub.subscribePlayer(code, playerId, response);
         hub.send(response, 'connected', { ok: true });
 
         const heartbeat = setInterval(() => {
           if (!response.destroyed) hub.send(response, 'heartbeat', { time: Date.now() });
         }, 25_000);
         response.on('close', () => clearInterval(heartbeat));
+        return;
+      }
+
+      if (request.method === 'POST' && parts[3] === 'messages' && parts[4] === 'review') {
+        const body = await readJson(request);
+        const playerId = assertString(body.playerId, 'playerId', 80);
+        const messageId = Number(body.messageId);
+        if (!Number.isInteger(messageId)) throw new HttpError(400, 'messageId is required');
+        const approved = Boolean(body.approved);
+
+        const { room } = database.getParticipant(code, playerId);
+        if (room.ownerPlayerId !== playerId) throw new HttpError(403, 'Only the room owner can review AI replies');
+
+        const message = database.updateMessage({
+          id: messageId,
+          content: approved
+            ? (body.content || database.getMessageById(messageId)?.content || '')
+            : `[审核未通过] ${database.getMessageById(messageId)?.content || ''}`,
+          status: approved ? 'complete' : 'error'
+        });
+
+        hub.broadcast(code, approved ? 'message_completed' : 'message_error', { message });
+        sendJson(response, 200, { message, approved });
+        return;
+      }
+
+      if (request.method === 'POST' && parts[3] === 'rollback' && parts[4]) {
+        const body = await readJson(request);
+        const roundId = Number(parts[4]);
+        if (!Number.isInteger(roundId)) throw new HttpError(400, 'Invalid round id');
+
+        const result = computeRollback({
+          database,
+          roomCode: code,
+          playerId: assertString(body.playerId, 'playerId', 80),
+          roundId
+        });
+
+        const state = database.getRoomState(code, { playerId: body.playerId || '' });
+        hub.broadcast(code, 'room_state', state);
+        hub.broadcast(code, 'round_rolled_back', { roundId });
+        sendJson(response, 200, { ...result, ...state });
+        return;
+      }
+
+      if (request.method === 'GET' && parts[3] === 'rounds') {
+        const playerId = assertString(url.searchParams.get('playerId'), 'playerId', 80);
+        const { room } = database.getParticipant(code, playerId);
+        const rounds = database.listRoundStates(room.id, Number(url.searchParams.get('limit') || 20));
+        sendJson(response, 200, { rounds: rounds.map((r) => ({ ...r, snapshotJson: undefined })) });
+        return;
+      }
+
+      if (request.method === 'GET' && parts[3] === 'export') {
+        const playerId = assertString(url.searchParams.get('playerId'), 'playerId', 80);
+        const format = String(url.searchParams.get('format') || 'json').toLowerCase();
+        if (!['json', 'markdown'].includes(format)) throw new HttpError(400, 'Format must be json or markdown');
+
+        const state = database.getExportState(code, playerId);
+
+        if (format === 'json') {
+          const jsonOutput = exportGameJson(state);
+          response.writeHead(200, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Content-Disposition': `attachment; filename="dm-online-${code}.json"` });
+          response.end(jsonOutput);
+        } else {
+          const mdOutput = exportGameMarkdown(state);
+          response.writeHead(200, {
+            'Content-Type': 'text/markdown; charset=utf-8',
+            'Content-Disposition': `attachment; filename="dm-online-${code}.md"` });
+          response.end(mdOutput);
+        }
+        return;
+      }
+
+      if (request.method === 'PATCH' && parts[3] === 'scene-state') {
+        const body = await readJson(request);
+        const room = database.updateSceneState({
+          code,
+          playerId: assertString(body.playerId, 'playerId', 80),
+          sceneState: body.sceneState || {}
+        });
+        const state = database.getRoomState(code);
+        hub.broadcast(code, 'room_state', state);
+        sendJson(response, 200, { room });
         return;
       }
     }
