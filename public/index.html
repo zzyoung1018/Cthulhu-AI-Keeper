@@ -20,47 +20,20 @@
           </div>
         </div>
 
+        <!-- 大厅：两个大按钮 -->
         <section class="panel" id="entryPanel">
           <div class="panel-title">
-            <span class="kicker">开桌</span>
-            <h2 id="entryTitle">准备冒险</h2>
+            <span class="kicker">大厅</span>
+            <h2>准备冒险</h2>
           </div>
-          <div class="tabs" role="tablist" aria-label="房间操作">
-            <button class="tab active" id="createTab" type="button">创建</button>
-            <button class="tab" id="joinTab" type="button">加入</button>
+          <div class="lobby-buttons">
+            <button class="primary large" id="btnCreateRoom" type="button">创建房间</button>
+            <button class="secondary large" id="btnJoinRoom" type="button">加入房间</button>
           </div>
-
-          <form id="roomForm" class="form">
-            <label>
-              玩家名
-              <input name="displayName" maxlength="40" autocomplete="nickname" required>
-            </label>
-            <label id="roomNameField">
-              房间名
-              <input name="roomName" maxlength="80" value="暮色边境">
-            </label>
-            <div class="module-picker" id="moduleField">
-              <label>
-                模组
-                <select name="moduleId" id="moduleSelect" required>
-                  <option value="">先上传或选择模组</option>
-                </select>
-              </label>
-              <label>
-                上传模组
-                <input type="file" id="moduleFile" accept=".txt,.pdf,.docx,.json,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/json">
-              </label>
-              <button class="secondary" id="uploadModule" type="button">上传并解析</button>
-              <div class="module-preview" id="modulePreview">模组内容仅房主和 AI DM 可见。</div>
-            </div>
-            <label id="roomCodeField" hidden>
-              房间码
-              <input name="roomCode" maxlength="8" autocapitalize="characters">
-            </label>
-            <button class="primary" type="submit">进入房间</button>
-          </form>
+          <div class="lobby-hint">选择创建新冒险或加入已有房间</div>
         </section>
 
+        <!-- 房间面板（进入后显示） -->
         <section class="panel room-panel" id="roomPanel" hidden>
           <div class="room-head">
             <div>
@@ -68,11 +41,10 @@
               <h2 id="roomTitle">-</h2>
             </div>
             <div class="room-actions">
-              <button class="ghost" id="copyRoomCode" type="button" title="复制房间码">复制码</button>
               <button class="ghost" id="leaveRoom" type="button">离开</button>
             </div>
           </div>
-          <div class="code-row">
+          <div class="code-row" id="codeRow" title="点击复制房间码">
             <span id="roomCode">------</span>
             <span id="playerCount">0/5</span>
           </div>
@@ -88,70 +60,7 @@
           <div class="players" id="players"></div>
         </section>
 
-        <section class="panel ai-config-panel" id="aiConfigPanel" hidden>
-          <div class="panel-title">
-            <span class="kicker">AI DM</span>
-            <h2>房主配置</h2>
-          </div>
-          <form id="aiConfigForm" class="form compact">
-            <label>
-              API Base URL
-              <input name="baseUrl" maxlength="240" placeholder="https://api.openai.com/v1">
-            </label>
-            <label>
-              API Key
-              <input name="apiKey" type="password" maxlength="400" autocomplete="off" placeholder="留空保持不变">
-            </label>
-            <label>
-              模型
-              <input name="model" maxlength="120" placeholder="gpt-4.1-mini">
-            </label>
-            <label>
-              DM 风格
-              <textarea name="dmStyle" rows="3" maxlength="1000"></textarea>
-            </label>
-            <div class="config-grid">
-              <label>
-                叙事
-                <select name="narrativeDetail">
-                  <option value="BRIEF">简洁</option>
-                  <option value="BALANCED">均衡</option>
-                  <option value="RICH">详细</option>
-                </select>
-              </label>
-              <label>
-                规则
-                <select name="rulesStrictness">
-                  <option value="LOOSE">宽松</option>
-                  <option value="STANDARD">标准</option>
-                  <option value="STRICT">严格</option>
-                </select>
-              </label>
-            </div>
-            <label>
-              触发
-              <select name="triggerMode">
-                <option value="ACTION">行动自动触发</option>
-                <option value="MANUAL">手动提交</option>
-                <option value="ROUND">回合聚合</option>
-              </select>
-            </label>
-            <label class="inline-toggle">
-              <input type="checkbox" name="allowModuleExpansion">
-              允许临时扩展模组
-            </label>
-            <label class="inline-toggle">
-              <input type="checkbox" name="keeperReviewRequired">
-              房主审核
-            </label>
-            <label>
-              内容边界
-              <textarea name="contentBoundaries" rows="3" maxlength="1600"></textarea>
-            </label>
-            <button class="secondary" type="submit">保存 AI 配置</button>
-          </form>
-        </section>
-
+        <!-- 角色卡编辑器 -->
         <section class="panel editor-panel" id="editorPanel" hidden>
           <div class="panel-title">
             <span class="kicker">调查员</span>
@@ -159,82 +68,35 @@
           </div>
           <form id="profileForm" class="character-form">
             <div class="character-grid">
-              <label>
-                姓名
-                <input name="investigator.name" maxlength="80">
-              </label>
-              <label>
-                职业
-                <input name="investigator.occupation" maxlength="80">
-              </label>
-              <label>
-                年龄
-                <input name="investigator.age" maxlength="20">
-              </label>
-              <label>
-                居住地
-                <input name="investigator.residence" maxlength="120">
-              </label>
+              <label>姓名 <input name="investigator.name" maxlength="80"></label>
+              <label>职业 <input name="investigator.occupation" maxlength="80"></label>
+              <label>年龄 <input name="investigator.age" maxlength="20"></label>
+              <label>居住地 <input name="investigator.residence" maxlength="120"></label>
             </div>
-
             <div class="sheet-section">
-              <div class="section-head">
-                <h3>属性</h3>
-                <span id="readyState">未准备</span>
-              </div>
+              <div class="section-head"><h3>属性</h3><span id="readyState">未准备</span></div>
               <div class="stat-grid" id="characteristicsGrid"></div>
               <div class="derived-grid" id="derivedGrid"></div>
               <div class="resource-grid" id="resourceGrid"></div>
             </div>
-
             <div class="sheet-section">
-              <div class="section-head">
-                <h3>技能</h3>
-                <span>服务器检定</span>
-              </div>
+              <div class="section-head"><h3>技能</h3><span>服务器检定</span></div>
               <div class="skills-table" id="skillsTable"></div>
             </div>
-
             <div class="sheet-section">
               <h3>武器和伤害</h3>
               <textarea name="weaponsText" rows="3" maxlength="1200" placeholder="左轮手枪 | 1d10 | 15码&#10;拳击 | 1d3+DB"></textarea>
             </div>
-
             <div class="sheet-section notes-grid">
-              <label>
-                装备和财产
-                <textarea name="equipment" rows="3" maxlength="4000"></textarea>
-              </label>
-              <label>
-                人际关系
-                <textarea name="relationships" rows="3" maxlength="4000"></textarea>
-              </label>
-              <label>
-                思想与信念
-                <textarea name="beliefs" rows="3" maxlength="4000"></textarea>
-              </label>
-              <label>
-                重要地点
-                <textarea name="locations" rows="3" maxlength="4000"></textarea>
-              </label>
-              <label>
-                伤疤和创伤
-                <textarea name="scarsTraumas" rows="3" maxlength="4000"></textarea>
-              </label>
-              <label>
-                遭遇的怪物
-                <textarea name="encounteredMonsters" rows="3" maxlength="4000"></textarea>
-              </label>
-              <label>
-                获取的线索
-                <textarea name="clues" rows="3" maxlength="4000"></textarea>
-              </label>
-              <label>
-                私人笔记
-                <textarea name="privateNotes" rows="3" maxlength="8000"></textarea>
-              </label>
+              <label>装备和财产 <textarea name="equipment" rows="2" maxlength="4000"></textarea></label>
+              <label>人际关系 <textarea name="relationships" rows="2" maxlength="4000"></textarea></label>
+              <label>思想与信念 <textarea name="beliefs" rows="2" maxlength="4000"></textarea></label>
+              <label>重要地点 <textarea name="locations" rows="2" maxlength="4000"></textarea></label>
+              <label>伤疤和创伤 <textarea name="scarsTraumas" rows="2" maxlength="4000"></textarea></label>
+              <label>遭遇的怪物 <textarea name="encounteredMonsters" rows="2" maxlength="4000"></textarea></label>
+              <label>获取的线索 <textarea name="clues" rows="2" maxlength="4000"></textarea></label>
+              <label>私人笔记 <textarea name="privateNotes" rows="2" maxlength="8000"></textarea></label>
             </div>
-
             <div class="form-actions">
               <button class="secondary" type="submit">保存角色</button>
               <button class="ghost" id="readyCharacter" type="button">准备</button>
@@ -243,6 +105,7 @@
         </section>
       </aside>
 
+      <!-- 右侧跑团桌 -->
       <section class="table">
         <header class="table-header">
           <div>
@@ -258,6 +121,7 @@
               <button class="ghost" id="rollbackRound" type="button" hidden>撤回</button>
               <button class="ghost" id="submitRound" type="button" hidden>提交回合</button>
               <button class="ghost" id="exportGame" type="button">导出</button>
+              <button class="ghost" id="btnSettings" type="button" title="设置">⚙</button>
             </div>
           </div>
         </header>
@@ -289,16 +153,86 @@
             <button class="type-option" type="button" data-message-type="PRIVATE">私聊</button>
           </div>
           <div class="private-target-row" id="privateTargetRow" hidden>
-            <select id="privateTargetSelect">
-              <option value="">选择私聊对象</option>
-            </select>
+            <select id="privateTargetSelect"><option value="">选择私聊对象</option></select>
           </div>
           <textarea name="content" rows="2" maxlength="4000" placeholder="描述你的行动..." required></textarea>
           <button class="primary send" type="submit">发送</button>
         </form>
       </section>
     </main>
+
+    <!-- 创建房间弹窗 -->
+    <dialog id="createRoomDialog">
+      <div class="dialog-content">
+        <div class="dialog-header">
+          <h2>创建房间</h2>
+          <button class="ghost dialog-close" id="closeCreateDialog" type="button">✕</button>
+        </div>
+        <form id="createRoomForm" class="form">
+          <label>玩家名 <input name="displayName" maxlength="40" autocomplete="nickname" required></label>
+          <label>房间名 <input name="roomName" maxlength="80" value="暮色边境"></label>
+          <div class="module-picker">
+            <label>模组 <select name="moduleId" id="moduleSelect" required><option value="">先上传或选择模组</option></select></label>
+            <label>上传模组 <input type="file" id="moduleFile" accept=".txt,.pdf,.docx,.json,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/json"></label>
+            <button class="secondary" id="uploadModule" type="button">上传并解析</button>
+            <div class="module-preview" id="modulePreview">模组内容仅房主和 AI DM 可见。</div>
+          </div>
+          <button class="primary" type="submit">创建房间</button>
+        </form>
+      </div>
+    </dialog>
+
+    <!-- 加入房间弹窗 -->
+    <dialog id="joinRoomDialog">
+      <div class="dialog-content">
+        <div class="dialog-header">
+          <h2>加入房间</h2>
+          <button class="ghost dialog-close" id="closeJoinDialog" type="button">✕</button>
+        </div>
+        <form id="joinRoomForm" class="form">
+          <label>玩家名 <input name="displayName" maxlength="40" autocomplete="nickname" required></label>
+          <label>房间码 <input name="roomCode" maxlength="8" autocapitalize="characters" required></label>
+          <button class="primary" type="submit">加入房间</button>
+        </form>
+      </div>
+    </dialog>
+
+    <!-- AI 设置弹窗 -->
+    <dialog id="settingsDialog">
+      <div class="dialog-content">
+        <div class="dialog-header">
+          <h2>AI DM 设置</h2>
+          <button class="ghost dialog-close" id="closeSettingsDialog" type="button">✕</button>
+        </div>
+        <form id="aiConfigForm" class="form compact">
+          <label>DM 风格 <textarea name="dmStyle" rows="3" maxlength="1000"></textarea></label>
+          <div class="config-grid">
+            <label>叙事 <select name="narrativeDetail">
+              <option value="BRIEF">简洁</option>
+              <option value="BALANCED" selected>均衡</option>
+              <option value="RICH">详细</option>
+            </select></label>
+            <label>规则 <select name="rulesStrictness">
+              <option value="LOOSE">宽松</option>
+              <option value="STANDARD" selected>标准</option>
+              <option value="STRICT">严格</option>
+            </select></label>
+          </div>
+          <label>触发模式 <select name="triggerMode">
+            <option value="ACTION">行动自动触发</option>
+            <option value="MANUAL">手动提交</option>
+            <option value="ROUND">回合聚合</option>
+          </select></label>
+          <label class="inline-toggle"><input type="checkbox" name="allowModuleExpansion"> 允许临时扩展模组</label>
+          <label class="inline-toggle"><input type="checkbox" name="keeperReviewRequired"> 房主审核</label>
+          <label>内容边界 <textarea name="contentBoundaries" rows="3" maxlength="1600"></textarea></label>
+          <p class="hint">API 地址和密钥在服务器环境变量中配置，此处无需填写。</p>
+          <button class="secondary" type="submit">保存设置</button>
+        </form>
+      </div>
+    </dialog>
+
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/app.js?v=20260613-ai-controls"></script>
+    <script type="module" src="/app.js?v=20260614-lobby"></script>
   </body>
 </html>

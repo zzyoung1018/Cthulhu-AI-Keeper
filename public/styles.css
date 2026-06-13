@@ -848,3 +848,120 @@ select:focus {
     grid-row: auto;
   }
 }
+
+/* === 大厅按钮 === */
+.lobby-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.lobby-buttons button {
+  padding: 14px 20px;
+  font-size: 1.05rem;
+  border-radius: 10px;
+}
+
+.lobby-buttons .large {
+  width: 100%;
+}
+
+.lobby-hint {
+  margin-top: 10px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* === 弹窗 === */
+dialog {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0;
+  color: var(--text);
+  max-width: 420px;
+  width: 90vw;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+}
+
+dialog::backdrop {
+  background: rgba(0,0,0,0.55);
+}
+
+.dialog-content {
+  padding: 20px 22px;
+}
+
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.dialog-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.dialog-close {
+  font-size: 1.2rem;
+  padding: 2px 8px;
+  line-height: 1;
+}
+
+/* === 设置图标 === */
+#btnSettings {
+  font-size: 1.25rem;
+  padding: 2px 6px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+#btnSettings:hover {
+  border-color: var(--line);
+  background: var(--panel-2);
+}
+
+/* === 房间码可点击 === */
+.code-row {
+  cursor: pointer;
+  user-select: all;
+  transition: background 140ms ease;
+  border-radius: 6px;
+  padding: 2px 6px;
+  margin: -2px -6px;
+}
+
+.code-row:hover {
+  background: var(--gold-soft);
+}
+
+/* === 提示文字 === */
+.hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+/* === 弹窗内表单样式 === */
+dialog .form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+dialog .module-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+dialog .module-preview {
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.4;
+}

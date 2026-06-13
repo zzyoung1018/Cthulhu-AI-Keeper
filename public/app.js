@@ -50,20 +50,38 @@ const state = {
 localStorage.setItem(storageKeys.playerId, state.playerId);
 
 const els = {
-  createTab: document.querySelector('#createTab'),
-  joinTab: document.querySelector('#joinTab'),
-  roomForm: document.querySelector('#roomForm'),
-  roomNameField: document.querySelector('#roomNameField'),
-  moduleField: document.querySelector('#moduleField'),
+  // 大厅
+  entryPanel: document.querySelector('#entryPanel'),
+  btnCreateRoom: document.querySelector('#btnCreateRoom'),
+  btnJoinRoom: document.querySelector('#btnJoinRoom'),
+  // 弹窗
+  createRoomDialog: document.querySelector('#createRoomDialog'),
+  createRoomForm: document.querySelector('#createRoomForm'),
+  joinRoomDialog: document.querySelector('#joinRoomDialog'),
+  joinRoomForm: document.querySelector('#joinRoomForm'),
+  settingsDialog: document.querySelector('#settingsDialog'),
+  // 模组
   moduleSelect: document.querySelector('#moduleSelect'),
   moduleFile: document.querySelector('#moduleFile'),
   uploadModule: document.querySelector('#uploadModule'),
   modulePreview: document.querySelector('#modulePreview'),
-  roomCodeField: document.querySelector('#roomCodeField'),
-  entryPanel: document.querySelector('#entryPanel'),
+  // 房间面板
   roomPanel: document.querySelector('#roomPanel'),
-  aiConfigPanel: document.querySelector('#aiConfigPanel'),
+  roomTitle: document.querySelector('#roomTitle'),
+  roomStatus: document.querySelector('#roomStatus'),
+  roomCode: document.querySelector('#roomCode'),
+  codeRow: document.querySelector('#codeRow'),
+  playerCount: document.querySelector('#playerCount'),
+  players: document.querySelector('#players'),
+  leaveRoom: document.querySelector('#leaveRoom'),
+  startGame: document.querySelector('#startGame'),
+  pauseGame: document.querySelector('#pauseGame'),
+  resumeGame: document.querySelector('#resumeGame'),
+  endGame: document.querySelector('#endGame'),
+  // AI 设置
+  btnSettings: document.querySelector('#btnSettings'),
   aiConfigForm: document.querySelector('#aiConfigForm'),
+  // 角色卡
   editorPanel: document.querySelector('#editorPanel'),
   profileForm: document.querySelector('#profileForm'),
   characteristicsGrid: document.querySelector('#characteristicsGrid'),
@@ -72,42 +90,39 @@ const els = {
   skillsTable: document.querySelector('#skillsTable'),
   readyCharacter: document.querySelector('#readyCharacter'),
   readyState: document.querySelector('#readyState'),
+  // 状态面板
   statusPanel: document.querySelector('#statusPanel'),
   statusName: document.querySelector('#statusName'),
   statusCards: document.querySelector('#statusCards'),
+  // 摘要
   summaryForm: document.querySelector('#summaryForm'),
   summaryPanel: document.querySelector('#summaryPanel'),
   summaryInput: document.querySelector('#summaryInput'),
-  roomTitle: document.querySelector('#roomTitle'),
-  roomStatus: document.querySelector('#roomStatus'),
+  // 桌面
   tableTitle: document.querySelector('#tableTitle'),
-  roomCode: document.querySelector('#roomCode'),
-  playerCount: document.querySelector('#playerCount'),
-  players: document.querySelector('#players'),
+  tableSubtitle: document.querySelector('#tableSubtitle'),
   chatLog: document.querySelector('#chatLog'),
   messageForm: document.querySelector('#messageForm'),
   connectionStatus: document.querySelector('#connectionStatus'),
   connectionDot: document.querySelector('#connectionDot'),
-  tableSubtitle: document.querySelector('#tableSubtitle'),
+  // AI 控制
   aiPill: document.querySelector('#aiPill'),
   cancelAiTask: document.querySelector('#cancelAiTask'),
   regenerateAiTask: document.querySelector('#regenerateAiTask'),
   rollbackRound: document.querySelector('#rollbackRound'),
   submitRound: document.querySelector('#submitRound'),
   exportGame: document.querySelector('#exportGame'),
+  // 私聊
   privateTargetRow: document.querySelector('#privateTargetRow'),
   privateTargetSelect: document.querySelector('#privateTargetSelect'),
-  copyRoomCode: document.querySelector('#copyRoomCode'),
-  leaveRoom: document.querySelector('#leaveRoom'),
-  startGame: document.querySelector('#startGame'),
-  pauseGame: document.querySelector('#pauseGame'),
-  resumeGame: document.querySelector('#resumeGame'),
-  endGame: document.querySelector('#endGame'),
+  // 消息类型
   typeOptions: [...document.querySelectorAll('[data-message-type]')],
   toast: document.querySelector('#toast')
 };
 
-els.roomForm.displayName.value = state.displayName;
+// 设置初始显示名
+els.createRoomForm.displayName.value = state.displayName;
+els.joinRoomForm.displayName.value = state.displayName;
 
 const roomStatusLabels = {
   PREPARING: '准备阶段',
@@ -329,16 +344,23 @@ async function uploadModuleFile(file) {
   return payload;
 }
 
-function setMode(mode) {
-  state.mode = mode;
-  els.createTab.classList.toggle('active', mode === 'create');
-  els.joinTab.classList.toggle('active', mode === 'join');
-  els.roomNameField.hidden = mode !== 'create';
-  els.moduleField.hidden = mode !== 'create';
-  els.roomCodeField.hidden = mode !== 'join';
-  els.moduleSelect.required = mode === 'create';
-  els.roomForm.roomCode.required = mode === 'join';
+// 弹窗控制
+function openCreateDialog() {
+  els.createRoomForm.displayName.value = state.displayName;
+  els.createRoomDialog.showModal();
 }
+function closeCreateDialog() { els.createRoomDialog.close(); }
+function openJoinDialog() {
+  els.joinRoomForm.displayName.value = state.displayName;
+  els.joinRoomDialog.showModal();
+}
+function closeJoinDialog() { els.joinRoomDialog.close(); }
+function openSettingsDialog() {
+  if (!state.room || !isOwner()) { toast('只有房主可以修改 AI 设置'); return; }
+  renderAiConfigForm();
+  els.settingsDialog.showModal();
+}
+function closeSettingsDialog() { els.settingsDialog.close(); }
 
 function setAiBusy(isBusy) {
   els.aiPill.classList.toggle('busy', isBusy);
@@ -408,7 +430,8 @@ function syncDisplayNameFromParticipant(participant) {
   if (!participant?.displayName) return;
   state.displayName = participant.displayName;
   localStorage.setItem(storageKeys.displayName, participant.displayName);
-  els.roomForm.displayName.value = participant.displayName;
+  els.createRoomForm.displayName.value = participant.displayName;
+  els.joinRoomForm.displayName.value = participant.displayName;
 }
 
 function applyRoomPayload(payload) {
@@ -789,16 +812,8 @@ function setFormValue(form, name, value) {
   }
 }
 
-function renderAiConfig() {
-  const owner = isOwner();
-  els.aiConfigPanel.hidden = !state.room || !owner;
-  if (!state.room || !owner) return;
-
-  const config = state.room.aiConfig || {};
-  setFormValue(els.aiConfigForm, 'baseUrl', config.baseUrl || '');
-  setFormValue(els.aiConfigForm, 'apiKey', '');
-  els.aiConfigForm.apiKey.placeholder = config.apiKeyConfigured ? '已配置，留空保持不变' : '留空使用服务器默认';
-  setFormValue(els.aiConfigForm, 'model', config.model || '');
+function renderAiConfigForm() {
+  const config = state.room?.aiConfig || {};
   setFormValue(els.aiConfigForm, 'dmStyle', config.dmStyle || '');
   setFormValue(els.aiConfigForm, 'narrativeDetail', config.narrativeDetail || 'BALANCED');
   setFormValue(els.aiConfigForm, 'rulesStrictness', config.rulesStrictness || 'STANDARD');
@@ -812,10 +827,10 @@ function render() {
   const inRoom = Boolean(state.room);
   els.entryPanel.hidden = inRoom;
   els.roomPanel.hidden = !inRoom;
-  els.aiConfigPanel.hidden = true;
   els.editorPanel.hidden = !inRoom;
   els.summaryPanel.hidden = !inRoom;
   els.messageForm.hidden = !inRoom;
+  els.btnSettings.hidden = !inRoom || !isOwner();
 
   if (inRoom) {
     els.roomTitle.textContent = state.room.name;
@@ -834,12 +849,12 @@ function render() {
     els.tableTitle.textContent = '等待开局';
     els.tableSubtitle.textContent = '创建或加入房间后开始记录冒险。';
     els.statusPanel.hidden = true;
+    els.btnSettings.hidden = true;
     setConnection('', '未进入房间');
   }
 
   renderPlayers();
   renderLifecycleActions();
-  renderAiConfig();
   renderAiTaskControls();
   renderMessages();
   renderProfile();
@@ -962,8 +977,21 @@ async function restoreLastRoom() {
   }
 }
 
-els.createTab.addEventListener('click', () => setMode('create'));
-els.joinTab.addEventListener('click', () => setMode('join'));
+// 大厅按钮 → 弹窗
+els.btnCreateRoom.addEventListener('click', openCreateDialog);
+els.btnJoinRoom.addEventListener('click', openJoinDialog);
+els.btnSettings.addEventListener('click', openSettingsDialog);
+document.querySelector('#closeCreateDialog').addEventListener('click', closeCreateDialog);
+document.querySelector('#closeJoinDialog').addEventListener('click', closeJoinDialog);
+document.querySelector('#closeSettingsDialog').addEventListener('click', closeSettingsDialog);
+
+// 房间码点击复制
+els.codeRow.addEventListener('click', async () => {
+  if (!state.room?.code) return;
+  await navigator.clipboard.writeText(state.room.code).catch(() => undefined);
+  toast(`房间码 ${state.room.code} 已复制`);
+});
+
 els.moduleSelect.addEventListener('change', async () => {
   state.selectedModuleId = els.moduleSelect.value;
   await previewModule(state.selectedModuleId);
@@ -971,10 +999,9 @@ els.moduleSelect.addEventListener('change', async () => {
 els.uploadModule.addEventListener('click', async () => {
   const file = els.moduleFile.files?.[0];
   if (!file) {
-    toast('请选择 TXT、PDF 或 DOCX 模组');
+    toast('请选择模组文件（TXT/PDF/DOCX/JSON）');
     return;
   }
-
   els.uploadModule.disabled = true;
   els.modulePreview.textContent = '正在上传并解析...';
   try {
@@ -994,40 +1021,54 @@ els.typeOptions.forEach((option) => {
   option.addEventListener('click', () => setMessageType(option.dataset.messageType));
 });
 
-els.roomForm.addEventListener('submit', async (event) => {
+// 创建房间表单
+els.createRoomForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const form = new FormData(els.roomForm);
+  const form = new FormData(els.createRoomForm);
   const displayName = String(form.get('displayName') || '').trim();
   state.displayName = displayName;
   localStorage.setItem(storageKeys.displayName, displayName);
 
+  const moduleId = Number(form.get('moduleId') || state.selectedModuleId);
+  if (!Number.isInteger(moduleId) || moduleId <= 0) {
+    toast('请先选择已解析的模组');
+    return;
+  }
   try {
-    if (state.mode === 'create') {
-      const moduleId = Number(form.get('moduleId') || state.selectedModuleId);
-      if (!Number.isInteger(moduleId) || moduleId <= 0) {
-        toast('请先选择已解析的模组');
-        return;
-      }
-      const payload = await api('/api/rooms', {
-        method: 'POST',
-        body: JSON.stringify({
-          playerId: state.playerId,
-          displayName,
-          roomName: String(form.get('roomName') || '').trim(),
-          moduleId
-        })
-      });
-      applyRoomPayload(payload);
-      toast('房间已创建');
-    } else {
-      const roomCode = String(form.get('roomCode') || '').trim().toUpperCase();
-      const payload = await api(`/api/rooms/${encodeURIComponent(roomCode)}/join`, {
-        method: 'POST',
-        body: JSON.stringify({ playerId: state.playerId, displayName })
-      });
-      applyRoomPayload(payload);
-      toast('已加入房间');
-    }
+    const payload = await api('/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: state.playerId,
+        displayName,
+        roomName: String(form.get('roomName') || '').trim(),
+        moduleId
+      })
+    });
+    closeCreateDialog();
+    applyRoomPayload(payload);
+    toast('房间已创建');
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+// 加入房间表单
+els.joinRoomForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = new FormData(els.joinRoomForm);
+  const displayName = String(form.get('displayName') || '').trim();
+  state.displayName = displayName;
+  localStorage.setItem(storageKeys.displayName, displayName);
+
+  const roomCode = String(form.get('roomCode') || '').trim().toUpperCase();
+  try {
+    const payload = await api(`/api/rooms/${encodeURIComponent(roomCode)}/join`, {
+      method: 'POST',
+      body: JSON.stringify({ playerId: state.playerId, displayName })
+    });
+    closeJoinDialog();
+    applyRoomPayload(payload);
+    toast('已加入房间');
   } catch (error) {
     toast(error.message);
   }
@@ -1122,9 +1163,6 @@ els.aiConfigForm.addEventListener('submit', async (event) => {
       body: JSON.stringify({
         playerId: state.playerId,
         aiConfig: {
-          baseUrl: String(form.get('baseUrl') || ''),
-          apiKey: String(form.get('apiKey') || ''),
-          model: String(form.get('model') || ''),
           dmStyle: String(form.get('dmStyle') || ''),
           narrativeDetail: String(form.get('narrativeDetail') || 'BALANCED'),
           rulesStrictness: String(form.get('rulesStrictness') || 'STANDARD'),
@@ -1136,8 +1174,8 @@ els.aiConfigForm.addEventListener('submit', async (event) => {
       })
     });
     state.room = payload.room;
-    renderAiConfig();
-    toast('AI 配置已保存');
+    closeSettingsDialog();
+    toast('AI 设置已保存');
   } catch (error) {
     toast(error.message);
   }
@@ -1263,12 +1301,6 @@ els.exportGame.addEventListener('click', async () => {
   }
 });
 
-els.copyRoomCode.addEventListener('click', async () => {
-  if (!state.room) return;
-  await navigator.clipboard.writeText(state.room.code).catch(() => undefined);
-  toast('房间码已复制');
-});
-
 els.leaveRoom.addEventListener('click', () => {
   disconnectEvents();
   state.room = null;
@@ -1312,3 +1344,8 @@ render();
 setMessageType('IC');
 loadModules();
 restoreLastRoom();
+
+// 点击弹窗背景关闭
+els.createRoomDialog.addEventListener('click', (e) => { if (e.target === els.createRoomDialog) closeCreateDialog(); });
+els.joinRoomDialog.addEventListener('click', (e) => { if (e.target === els.joinRoomDialog) closeJoinDialog(); });
+els.settingsDialog.addEventListener('click', (e) => { if (e.target === els.settingsDialog) closeSettingsDialog(); });
