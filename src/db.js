@@ -909,6 +909,11 @@ export function createDatabase(dbPath) {
       return rowToParticipant(statements.getParticipant.get(room.id, playerId), room);
     },
 
+    removeParticipant(roomId, playerId) {
+      const stmt = db.prepare('DELETE FROM participants WHERE room_id = ? AND player_id = ?');
+      stmt.run(roomId, playerId);
+    },
+
     setParticipantReady({ code, playerId, isReady }) {
       const { room, participant } = this.getParticipant(code, playerId);
       if (isReady && !hasReadyCharacter(participant.characterSheet)) {

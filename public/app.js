@@ -1359,7 +1359,21 @@ els.exportGame.addEventListener('click', async () => {
   }
 });
 
-els.leaveRoom.addEventListener('click', () => {
+els.leaveRoom.addEventListener('click', async () => {
+  if (!state.room) return;
+  const isOwnerLeaving = isOwner();
+  const confirmed = isOwnerLeaving
+    ? confirm('你是房主，离开后房间将自动结束并解散。确定离开？')
+    : true;
+  if (!confirmed) return;
+
+  try {
+    await api(`/api/rooms/${state.room.code}/leave`, {
+      method: 'POST',
+      body: JSON.stringify({ playerId: state.playerId })
+    });
+  } catch { /* 即使请求失败也清理本地状态 */ }
+
   disconnectEvents();
   state.room = null;
   state.participant = null;
@@ -1370,7 +1384,7 @@ els.leaveRoom.addEventListener('click', () => {
   forgetRoom();
   setAiBusy(false);
   render();
-  toast('已离开房间');
+  toast(isOwnerLeaving ? '房间已解散' : '已离开房间');
 });
 
 async function changeRoomStatus(status) {

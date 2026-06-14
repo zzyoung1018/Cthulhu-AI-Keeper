@@ -505,6 +505,32 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         return;
       }
 
+      if (request.method === 'POST' && parts[3] === 'leave') {
+        const body = await readJson(request);
+        const playerId = assertString(body.playerId, 'playerId', 80);
+        const { room, participant } = database.getParticipant(code, playerId);
+
+        // 房主离开 → 房间结束
+        if (room.ownerPlayerId === playerId) {
+          const ended = database.setRoomStatus({ code, playerId, status: 'ENDED' });
+          const msg = createSystemMessage(code, '房主离开了，房间已结束。');
+          const state = database.getRoomState(code);
+          hub.broadcast(code, 'room_state', state);
+          hub.broadcast(code, 'message_created', { message: msg });
+          sendJson(response, 200, { disbanded: true, room: ended });
+          return;
+        }
+
+        // 普通玩家离开：移除参与者记录（通过删除participant）
+        database.removeParticipant(room.id, playerId);
+        const msg = createSystemMessage(code, `${participant.characterName || participant.displayName} 离开了房间。`);
+        const state = database.getRoomState(code);
+        hub.broadcast(code, 'room_state', state);
+        hub.broadcast(code, 'message_created', { message: msg });
+        sendJson(response, 200, { left: true });
+        return;
+      }
+
       if (request.method === 'PATCH' && parts[3] === 'status') {
         const body = await readJson(request);
         const playerId = assertString(body.playerId, 'playerId', 80);
