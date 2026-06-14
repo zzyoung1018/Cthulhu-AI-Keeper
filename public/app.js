@@ -891,8 +891,9 @@ function render() {
 
   els.entryPanel.hidden = inRoom;
   els.roomPanel.hidden = !inRoom;
-  els.characterCard.hidden = !inRoom;
-  els.readyCharacter.hidden = !inRoom;
+  const isPreparing = state.room?.status === 'PREPARING';
+  els.characterCard.hidden = !isPreparing;
+  els.readyCharacter.hidden = !isPreparing;
   els.tableArea.hidden = !inRoom;
   els.messageForm.hidden = !inRoom;
   els.btnSettings.hidden = !inRoom || !isOwner();

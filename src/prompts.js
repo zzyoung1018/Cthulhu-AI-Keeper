@@ -15,7 +15,14 @@ export function buildDmSystemPrompt(aiConfig = {}) {
     `叙事详细程度：${aiConfig.narrativeDetail || 'BALANCED'}。规则严格程度：${aiConfig.rulesStrictness || 'STANDARD'}。`,
     `是否允许临时扩展模组内容：${aiConfig.allowModuleExpansion ? '允许，但必须标注为合理补完' : '不允许，资料不足时应向玩家询问或保持悬念'}。`,
     aiConfig.contentBoundaries ? `内容限制和游戏边界：${aiConfig.contentBoundaries}` : '',
-    '如果资料不足，优先基于已有剧情摘要、角色卡、人物状态和最近聊天继续。'
+    '如果资料不足，优先基于已有剧情摘要、角色卡、人物状态和最近聊天继续。',
+    '',
+    '重要行为规则：',
+    '- 绝对不要替玩家决定下一步行动。不要使用"你可以…"、"建议你…"、"接下来你应该…"等句式。',
+    '- 只描述环境、NPC反应和行动结果，让玩家自己决定要做什么。',
+    '- 如果玩家行动不明确，追问"你具体想怎么做？"而不是替他们选择。',
+    '- 不要在回复末尾给出行动选项列表。',
+    '- 社交互动中如玩家对NPC撒谎、恐吓或说服，必须在 structured events 中返回 opposed_check，由服务器掷骰判定结果。',
   ].filter(Boolean).join('\n');
 }
 
@@ -112,6 +119,19 @@ export function buildStructuredOutputPrompt() {
       required_checks: [
         { skill: '侦查', difficulty: 'REGULAR', reason: '找到隐藏线索', playerHint: '你注意到地板有些不对劲' }
       ],
+      opposed_checks: [
+        {
+          activePlayerId: '<playerId>',
+          activeSkill: '话术',
+          passiveNpcName: '老管家',
+          passiveSkill: '心理学',
+          difficulty: 'REGULAR',
+          reason: '玩家对NPC撒谎',
+          playerHint: '老管家眯起眼睛，似乎在判断你的话是否可信…',
+          successResult: '老管家相信了你的说法',
+          failureResult: '老管家识破了你的谎言'
+        }
+      ],
       proposed_state_changes: [
         { targetPlayerId: '<playerId>', fieldPath: 'status.san', newValue: 55, reason: '目睹恐怖场景' }
       ],
@@ -136,6 +156,8 @@ export function buildStructuredOutputPrompt() {
     '- proposed_state_changes 只允许修改 status.hp, status.mp, status.san, status.luck, characteristics.*',
     '- 必须经过后端规则验证才会生效',
     '- required_checks 中的 difficulty 必须是 REGULAR、HARD 或 EXTREME',
+    '- opposed_checks 用于社交对抗：玩家对NPC撒谎/恐吓/说服时，必须返回此字段',
+    '- opposed_checks.activeSkill 用玩家技能（话术/恐吓/魅惑/说服），passiveSkill 用NPC的心理学',
     '- clues_revealed 中 privateTo 为空表示所有玩家可见',
     '- 如果没有某个类型的事件，可以省略该字段'
   ].join('\n');

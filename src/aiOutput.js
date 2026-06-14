@@ -13,7 +13,27 @@ const EVENT_SCHEMAS = {
         skill: 'string',
         difficulty: 'string',
         reason: 'string',
-        playerHint: 'string'
+        playerHint: 'string',
+        targetPlayerId: 'string'
+      }
+    }
+  },
+  opposed_checks: {
+    type: 'array',
+    maxItems: 8,
+    itemSchema: {
+      type: 'object',
+      required: ['activePlayerId', 'activeSkill', 'passiveSkill', 'difficulty', 'reason'],
+      properties: {
+        activePlayerId: 'string',
+        activeSkill: 'string',
+        passiveNpcName: 'string',
+        passiveSkill: 'string',
+        difficulty: 'string',
+        reason: 'string',
+        playerHint: 'string',
+        successResult: 'string',
+        failureResult: 'string'
       }
     }
   },
