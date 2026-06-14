@@ -936,8 +936,22 @@ function connectEvents() {
   const source = new EventSource(`/api/rooms/${state.room.code}/events?playerId=${encodeURIComponent(state.playerId)}`);
   state.events = source;
 
-  source.addEventListener('connected', () => {
+  source.addEventListener('connected', async () => {
     setConnection('online', `房间 ${state.room.code}`);
+    // 房主在准备阶段且没有 AI 消息时，请求生成模组介绍
+    if (isOwner() && state.room.status === 'PREPARING' && !state.messages.some(m => m.authorType === 'dm')) {
+      try {
+        const payload = await api(`/api/rooms/${state.room.code}/start-intro`, {
+          method: 'POST',
+          body: JSON.stringify({ playerId: state.playerId })
+        });
+        if (payload.task) {
+          state.aiTasks.push(payload.task);
+          state.activeAiTask = findActiveAiTask(state.aiTasks);
+          renderAiTaskControls();
+        }
+      } catch { /* already triggered */ }
+    }
   });
 
   source.addEventListener('room_state', (event) => {

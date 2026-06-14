@@ -599,16 +599,6 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       if (!Number.isInteger(moduleId)) throw new HttpError(400, 'moduleId is required');
       const maxPlayers = Number(body.maxPlayers) || 5;
       const result = database.createRoom({ name, playerId, displayName, moduleId, maxPlayers });
-
-      // 触发 AI 生成模组介绍和角色要求
-      const introTask = database.createAiTask({
-        code: result.room.code,
-        playerId,
-        idempotencyKey: `intro:${result.room.code}`
-      });
-      broadcastAiTask(result.room.code, introTask.task);
-      if (introTask.created) enqueueModuleIntro(result.room.code, introTask.task.uid);
-
       sendJson(response, 201, {
         ...result,
         participants: [result.participant],
@@ -948,6 +938,23 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         const { room } = database.getParticipant(code, playerId);
         const rounds = database.listRoundStates(room.id, Number(url.searchParams.get('limit') || 20));
         sendJson(response, 200, { rounds: rounds.map((r) => ({ ...r, snapshotJson: undefined })) });
+        return;
+      }
+
+      if (request.method === 'POST' && parts[3] === 'start-intro') {
+        const body = await readJson(request);
+        const playerId = assertString(body.playerId, 'playerId', 80);
+        const { room } = database.getParticipant(code, playerId);
+        if (room.ownerPlayerId !== playerId) throw new HttpError(403, 'Only the room owner can start intro');
+
+        const introTask = database.createAiTask({
+          code,
+          playerId,
+          idempotencyKey: `intro:${code}`
+        });
+        broadcastAiTask(code, introTask.task);
+        if (introTask.created) enqueueModuleIntro(code, introTask.task.uid);
+        sendJson(response, 201, { task: introTask.task, created: introTask.created });
         return;
       }
 
