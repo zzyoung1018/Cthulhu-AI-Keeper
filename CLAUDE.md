@@ -44,7 +44,7 @@ npm run audit:deployment -- http://<host> --require-ai  # Require real AI (no fa
 
 **Dice** (`src/dice.js`): CoC 7e dice mechanics — d100 with bonus/penalty dice, success levels (CRITICAL/EXTREME/HARD/REGULAR/FAIL/FUMBLE), difficulty-based pass/fail, sanity loss rolls. Also supports generic `NdM±X` expressions.
 
-**Module upload** (`src/moduleParser.js`, `src/multipart.js`): TXT, PDF, and DOCX files up to 12 MiB. PDF text extracted by scanning raw PDF operators (`Tj`/`TJ`). DOCX via ZIP entry extraction from `word/document.xml`. Multipart parsing is handwritten (no `busboy`/`multer`). Text is segmented by headings/markdown headers into ≤1800-char chunks (max 400 segments), scored against recent chat for AI context relevance.
+**Module upload** (`src/moduleParser.js`, `src/multipart.js`): Structured JSON module files up to 12 MiB. Uploaded files must use a `.json` extension and include `schema_version`; TXT/PDF/DOCX are intentionally rejected. Multipart parsing is handwritten (no `busboy`/`multer`). JSON modules are normalized, segmented by structured sections (module info, scenes, NPCs, clues, checks, rules, endings), and scored against recent chat for AI context relevance.
 
 **API summary** (`src/app.js` `handleApi`):
 - `GET /api/health` — health check with AI config status

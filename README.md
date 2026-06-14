@@ -13,6 +13,10 @@ npm start
 
 默认监听 `http://127.0.0.1:4173`。
 
+## 模组格式
+
+当前上传链路仅支持结构化 JSON 模组文件（`.json`，需包含 `schema_version`）。TXT/PDF/DOCX 会被拒绝，以保证 AI DM 能稳定读取场景、NPC、线索、检定和全局规则。
+
 ## AI 配置
 
 服务使用 OpenAI-compatible Chat Completions 流式接口：
