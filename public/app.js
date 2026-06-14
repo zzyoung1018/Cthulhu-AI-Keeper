@@ -1099,7 +1099,7 @@ els.moduleSelect.addEventListener('change', async () => {
 els.uploadModule.addEventListener('click', async () => {
   const file = els.moduleFile.files?.[0];
   if (!file) {
-    toast('请选择模组文件（TXT/PDF/DOCX/JSON）');
+    toast('请选择 JSON 模组文件');
     return;
   }
   els.uploadModule.disabled = true;

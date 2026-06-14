@@ -1,12 +1,8 @@
-import { inflateRawSync } from 'node:zlib';
 import { HttpError } from './errors.js';
 
 const MAX_MODULE_SIZE = 12 * 1024 * 1024;
-const ALLOWED_EXTENSIONS = new Set(['txt', 'pdf', 'docx', 'json']);
+const ALLOWED_EXTENSIONS = new Set(['json']);
 const ALLOWED_MIME_TYPES = new Set([
-  'text/plain',
-  'application/pdf',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/json',
   'application/octet-stream'
 ]);
@@ -28,94 +24,9 @@ function normalizeText(text) {
   return String(text || '')
     .replace(/\r\n?/g, '\n')
     .replace(/[\t\f\v]+/g, ' ')
-    .replace(/[ \u00a0]{2,}/g, ' ')
+    .replace(/[  ]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-}
-
-function xmlDecode(text) {
-  return text
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'");
-}
-
-function decodePdfString(value) {
-  return value
-    .replace(/\\([nrtbf()\\])/g, (_, char) => {
-      const map = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '(': '(', ')': ')', '\\': '\\' };
-      return map[char] || char;
-    })
-    .replace(/\\([0-7]{1,3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)));
-}
-
-function extractPdfText(buffer) {
-  const source = buffer.toString('latin1');
-  const pieces = [];
-  const textString = /\((?:\\.|[^\\)])*\)\s*Tj/g;
-  const textArray = /\[((?:.|\n)*?)\]\s*TJ/g;
-
-  for (const match of source.matchAll(textString)) {
-    pieces.push(decodePdfString(match[0].replace(/\s*Tj$/, '').slice(1, -1)));
-  }
-
-  for (const match of source.matchAll(textArray)) {
-    for (const item of match[1].matchAll(/\((?:\\.|[^\\)])*\)/g)) {
-      pieces.push(decodePdfString(item[0].slice(1, -1)));
-    }
-  }
-
-  return normalizeText(pieces.join('\n'));
-}
-
-function findZipEntry(buffer, wantedName) {
-  let offset = 0;
-  while (offset + 30 < buffer.length) {
-    const signature = buffer.readUInt32LE(offset);
-    if (signature !== 0x04034b50) {
-      offset += 1;
-      continue;
-    }
-
-    const method = buffer.readUInt16LE(offset + 8);
-    const compressedSize = buffer.readUInt32LE(offset + 18);
-    const uncompressedSize = buffer.readUInt32LE(offset + 22);
-    const nameLength = buffer.readUInt16LE(offset + 26);
-    const extraLength = buffer.readUInt16LE(offset + 28);
-    const nameStart = offset + 30;
-    const dataStart = nameStart + nameLength + extraLength;
-    const name = buffer.subarray(nameStart, nameStart + nameLength).toString('utf8');
-    const dataEnd = dataStart + compressedSize;
-
-    if (name === wantedName) {
-      const data = buffer.subarray(dataStart, dataEnd);
-      if (method === 0) return data;
-      if (method === 8) return inflateRawSync(data, { finishFlush: 2 });
-      throw new HttpError(415, 'Unsupported DOCX compression method');
-    }
-
-    offset = Math.max(dataEnd, offset + 30);
-    if (uncompressedSize > 50 * 1024 * 1024) throw new HttpError(413, 'DOCX entry too large');
-  }
-
-  return null;
-}
-
-function extractDocxText(buffer) {
-  const documentXml = findZipEntry(buffer, 'word/document.xml');
-  if (!documentXml) throw new HttpError(422, 'DOCX text could not be extracted');
-  const xml = documentXml.toString('utf8');
-  const withBreaks = xml
-    .replace(/<\/w:p>/g, '\n')
-    .replace(/<w:tab\/>/g, '\t')
-    .replace(/<w:br\/>/g, '\n');
-  const pieces = [];
-  for (const match of withBreaks.matchAll(/<w:t(?:\s[^>]*)?>(.*?)<\/w:t>/gs)) {
-    pieces.push(xmlDecode(match[1]));
-  }
-  return normalizeText(pieces.join(' '));
 }
 
 export function validateModuleFile({ fileName, contentType, buffer }) {
@@ -128,17 +39,13 @@ export function validateModuleFile({ fileName, contentType, buffer }) {
 
   const extension = extensionFromName(fileName);
   if (!ALLOWED_EXTENSIONS.has(extension)) {
-    throw new HttpError(415, 'Only TXT, PDF, and DOCX modules are supported');
+    throw new HttpError(415, 'Only JSON modules are supported');
   }
-  if (contentType && !ALLOWED_MIME_TYPES.has(contentType)) {
-    throw new HttpError(415, 'Unsupported module content type');
-  }
-
-  if (extension === 'pdf' && buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
-    throw new HttpError(415, 'Invalid PDF file');
-  }
-  if (extension === 'docx' && buffer.subarray(0, 2).toString('latin1') !== 'PK') {
-    throw new HttpError(415, 'Invalid DOCX file');
+  if (contentType && !ALLOWED_MIME_TYPES.has(contentType) && contentType !== 'application/octet-stream') {
+    // Allow octet-stream as browsers sometimes send it
+    if (!contentType.startsWith('application/')) {
+      throw new HttpError(415, 'Unsupported module content type');
+    }
   }
 
   return {
@@ -147,67 +54,6 @@ export function validateModuleFile({ fileName, contentType, buffer }) {
     contentType: contentType || 'application/octet-stream',
     size: buffer.length
   };
-}
-
-export function extractModuleText({ extension, buffer }) {
-  if (extension === 'txt') return normalizeText(buffer.toString('utf8'));
-  if (extension === 'docx') return extractDocxText(buffer);
-  if (extension === 'pdf') return extractPdfText(buffer);
-  if (extension === 'json') return extractJsonModuleText(buffer);
-  throw new HttpError(415, 'Unsupported module file type');
-}
-
-export function segmentModuleText(text, extension = 'txt') {
-  if (extension === 'json') return segmentJsonModule(text);
-  const normalized = normalizeText(text);
-  if (!normalized) return [];
-
-  const headingPattern = /^(#{1,6}\s+.+|第[一二三四五六七八九十百零0-9]+[章节幕场].*|场景\s*[:：].+|Scene\s+\d+.*|Chapter\s+\d+.*)$/gim;
-  const headings = [...normalized.matchAll(headingPattern)];
-  const sections = [];
-
-  if (headings.length === 0) {
-    sections.push({ title: '正文', content: normalized });
-  } else {
-    for (let index = 0; index < headings.length; index += 1) {
-      const heading = headings[index];
-      const next = headings[index + 1];
-      const title = heading[0].replace(/^#{1,6}\s+/, '').trim();
-      const contentStart = heading.index + heading[0].length;
-      const contentEnd = next ? next.index : normalized.length;
-      sections.push({
-        title,
-        content: normalizeText(normalized.slice(contentStart, contentEnd))
-      });
-    }
-  }
-
-  const segments = [];
-  for (const section of sections) {
-    const paragraphs = section.content.split(/\n{2,}/).filter(Boolean);
-    let chunk = '';
-    let chunkIndex = 1;
-    const flush = () => {
-      const content = normalizeText(chunk);
-      if (content) {
-        segments.push({
-          title: section.title,
-          scene: `${section.title} #${chunkIndex}`,
-          content
-        });
-        chunkIndex += 1;
-      }
-      chunk = '';
-    };
-
-    for (const paragraph of paragraphs) {
-      if ((chunk + '\n\n' + paragraph).length > 1800) flush();
-      chunk = chunk ? `${chunk}\n\n${paragraph}` : paragraph;
-    }
-    flush();
-  }
-
-  return segments.slice(0, 400);
 }
 
 function parseJsonModule(buffer) {
@@ -227,10 +73,16 @@ function parseJsonModule(buffer) {
   return data;
 }
 
-function extractJsonModuleText(buffer) {
-  const data = parseJsonModule(buffer);
-  // Return pretty-printed JSON as the "parsed text" for keeper preview
-  return JSON.stringify(data, null, 2);
+export function extractModuleText({ extension, buffer }) {
+  if (extension === 'json') {
+    const data = parseJsonModule(buffer);
+    return JSON.stringify(data, null, 2);
+  }
+  throw new HttpError(415, 'Only JSON modules are supported');
+}
+
+export function segmentModuleText(text, extension = 'json') {
+  return segmentJsonModule(text);
 }
 
 function segmentJsonModule(jsonText) {
@@ -243,7 +95,7 @@ function segmentJsonModule(jsonText) {
 
   const segments = [];
 
-  // 1. Module info segment
+  // 1. Module info
   if (data.module_info) {
     const mi = data.module_info;
     segments.push({
@@ -274,9 +126,7 @@ function segmentJsonModule(jsonText) {
       ko.investigation_goal ? `调查目标：${ko.investigation_goal}` : '',
       ko.default_opening ? `默认开场：${ko.default_opening}` : ''
     ].filter(Boolean).join('\n');
-    if (content) {
-      segments.push({ title: '守秘人概览', scene: '守秘人信息', content });
-    }
+    if (content) segments.push({ title: '守秘人概览', scene: '守秘人信息', content });
   }
 
   // 3. Player opening
@@ -287,9 +137,7 @@ function segmentJsonModule(jsonText) {
       po.initial_objective ? `初始目标：${po.initial_objective}` : '',
       po.suggested_intro_text || ''
     ].filter(Boolean).join('\n');
-    if (content) {
-      segments.push({ title: '开场信息', scene: '玩家开场', content });
-    }
+    if (content) segments.push({ title: '开场信息', scene: '玩家开场', content });
   }
 
   // 4. Each scene
@@ -378,13 +226,13 @@ function segmentJsonModule(jsonText) {
   // 8. Maps
   if (Array.isArray(data.maps)) {
     for (const map of data.maps) {
-      const areaDescriptions = (map.areas || []).map((a) =>
+      const areaDescs = (map.areas || []).map((a) =>
         `${a.name || a.area_id}: ${a.player_visible_description || ''}`
       ).join('\n');
       const content = [
         map.player_visible_description || '',
         map.ai_dm_instruction || '',
-        areaDescriptions
+        areaDescs
       ].filter(Boolean).join('\n');
       if (content) {
         segments.push({
@@ -396,7 +244,7 @@ function segmentJsonModule(jsonText) {
     }
   }
 
-  // 9. Visual assets (handouts, illustrations, photos)
+  // 9. Visual assets
   if (Array.isArray(data.visual_assets)) {
     for (const asset of data.visual_assets) {
       const content = [
@@ -425,7 +273,6 @@ function segmentJsonModule(jsonText) {
       });
     }
   }
-
   if (Array.isArray(data.danger_events)) {
     for (const ev of data.danger_events) {
       segments.push({
@@ -444,12 +291,10 @@ function segmentJsonModule(jsonText) {
       sp.recommended_scene_order?.length ? `推荐顺序：${sp.recommended_scene_order.join(' → ')}` : '',
       sp.bottleneck_risks?.length ? `瓶颈风险：${sp.bottleneck_risks.join('；')}` : ''
     ].filter(Boolean).join('\n');
-    if (content) {
-      segments.push({ title: '剧情推进指南', scene: 'story', content });
-    }
+    if (content) segments.push({ title: '剧情推进指南', scene: 'story', content });
   }
 
-  // 12. AI DM global rules (always include as a segment)
+  // 12. AI DM global rules
   if (data.ai_dm_global_rules) {
     const rules = data.ai_dm_global_rules;
     const content = [
@@ -459,9 +304,7 @@ function segmentJsonModule(jsonText) {
       rules.style ? `语气：${rules.style.tone || ''}` : '',
       rules.style?.avoid?.length ? `避免：${rules.style.avoid.join('、')}` : ''
     ].filter(Boolean).join('\n');
-    if (content) {
-      segments.push({ title: 'AI DM 全局规则', scene: 'rules', content });
-    }
+    if (content) segments.push({ title: 'AI DM 全局规则', scene: 'rules', content });
   }
 
   // 13. Endings
@@ -475,7 +318,6 @@ function segmentJsonModule(jsonText) {
     }
   }
 
-  // Cap at 400 segments
   return segments.slice(0, 400);
 }
 
