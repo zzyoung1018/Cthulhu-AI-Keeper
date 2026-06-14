@@ -707,6 +707,7 @@ function calculateSkillPoints(chars) {
 }
 
 function renderSkills(sheet) {
+  if (!els.skillsTable) return;
   els.skillsTable.innerHTML = '';
   const occSkills = getOccupationSkills();
   const skills = Object.entries({ ...defaultSkills, ...(sheet.skills || {}) })
@@ -739,6 +740,7 @@ function renderSkills(sheet) {
 }
 
 function updateSkillPointsDisplay() {
+  if (!els.occPtsRemaining || !els.intPtsRemaining) return;
   const occSkills = getOccupationSkills();
   const chars = currentSheet().characteristics || {};
   const pools = calculateSkillPoints(chars);
@@ -913,6 +915,7 @@ function renderProfile() {
 
 function renderProfileForm() {
   if (!state.participant) return;
+  if (!els.occupationSelect || !els.skillsTable) return;
   const sheet = currentSheet();
 
   // 填充职业下拉
@@ -1276,6 +1279,19 @@ els.profileForm.addEventListener('submit', async (event) => {
 // 角色卡弹窗
 els.btnEditCharacter.addEventListener('click', () => {
   try {
+    // 调试：检查关键元素
+    const missing = [];
+    if (!els.characterDialog) missing.push('characterDialog');
+    if (!els.occupationSelect) missing.push('occupationSelect');
+    if (!els.skillsTable) missing.push('skillsTable');
+    if (!els.profileForm) missing.push('profileForm');
+    if (!els.characteristicsGrid) missing.push('characteristicsGrid');
+    if (!els.occPtsRemaining) missing.push('occPtsRemaining');
+    if (!els.intPtsRemaining) missing.push('intPtsRemaining');
+    if (missing.length > 0) {
+      toast('缺失元素: ' + missing.join(', '));
+      return;
+    }
     renderProfileForm();
     els.characterDialog.showModal();
   } catch (e) {
