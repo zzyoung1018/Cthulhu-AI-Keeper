@@ -344,31 +344,94 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     const roomCfg = state.room.aiConfig || {};
     const moduleSegments = database.getRoomModuleSegments(code, 40);
 
-    // Build intro context from module data
-    const title = state.room.moduleTitle || '未知模组';
-    const segments = moduleSegments.slice(0, 8).map((s) => `[${s.scene || s.title}]\n${s.content}`).join('\n\n');
+    // Try to extract structured JSON module data
+    let jsonData = null;
+    try {
+      const preview = database.getModuleForOwner(
+        state.room.moduleId,
+        state.room.ownerPlayerId,
+        { includeText: true, includeSegments: false }
+      );
+      const pt = preview?.module?.parsedText || '';
+      if (pt.trim().startsWith('{')) {
+        jsonData = JSON.parse(pt);
+      }
+    } catch { /* not JSON, use text segments */ }
+
+    // Build context from JSON or text segments
+    let moduleContext = '';
+    if (jsonData) {
+      const mi = jsonData.module_info || {};
+      const po = jsonData.player_opening || {};
+      const ko = jsonData.keeper_overview || {};
+      const rules = jsonData.ai_dm_global_rules || {};
+      const sp = jsonData.story_progression || {};
+
+      moduleContext = [
+        '=== 模组结构化信息 ===',
+        `标题：${mi.title || state.room.moduleTitle}`,
+        mi.time_period ? `时代：${mi.time_period}` : '',
+        mi.location ? `地点：${mi.location}` : '',
+        mi.setting ? `设定：${mi.setting}` : '',
+        mi.themes?.length ? `主题：${mi.themes.join('、')}` : '',
+        mi.tone ? `氛围：${mi.tone}` : '',
+        mi.recommended_players ? `建议人数：${mi.recommended_players}` : '',
+        mi.estimated_duration ? `预计时长：${mi.estimated_duration}` : '',
+        mi.content_warnings?.length ? `内容警告：${mi.content_warnings.join('、')}` : '',
+        '',
+        po.initial_public_information ? `=== 玩家公开信息 ===\n${po.initial_public_information}` : '',
+        po.initial_objective ? `初始目标：${po.initial_objective}` : '',
+        po.suggested_intro_text ? `建议开场文本：${po.suggested_intro_text}` : '',
+        po.known_npcs?.length ? `已知NPC：${po.known_npcs.join('、')}` : '',
+        po.known_locations?.length ? `已知地点：${po.known_locations.join('、')}` : '',
+        '',
+        ko.investigation_goal ? `调查目标：${ko.investigation_goal}` : '',
+        ko.default_opening ? `默认开场方式：${ko.default_opening}` : '',
+        '',
+        rules.style ? `AI风格要求：叙述长度=${rules.style.narration_length || ''}, 语气=${rules.style.tone || ''}` : '',
+        rules.must_follow?.length ? `AI必须遵守：\n${rules.must_follow.map((r, i) => `${i + 1}. ${r}`).join('\n')}` : '',
+      ].filter(Boolean).join('\n');
+    } else {
+      moduleContext = moduleSegments.slice(0, 8)
+        .map((s) => `[${s.scene || s.title}]\n${s.content}`).join('\n\n');
+    }
+
     const systemMsg = [
-      '你是 CoC Online 的 AI 守秘人。当前房间刚创建，处于准备阶段。',
-      '你的任务是：向玩家介绍即将进行的模组，并说明创建角色时需要满足的基本要求。',
+      '你是 CoC Online 的 AI 守秘人（Keeper）。当前房间刚创建，处于准备阶段。',
+      '你的任务是：向即将加入的玩家介绍本次模组，并指导他们创建适合的调查员角色。',
       '',
-      '请按以下结构输出：',
-      '1. 模组简介（时代、地点、氛围）',
-      '2. 调查员要求（建议职业、技能、人数）',
-      '3. 创建角色卡时的注意事项',
+      '请按以下结构输出(使用Markdown格式)：',
+      '## 模组简介',
+      '- 时代背景、地理位置、整体氛围',
+      '- 调查员的公开身份和调查目标',
       '',
-      `叙事风格：${roomCfg.dmStyle || '悬疑、克制'}`,
+      '## 调查员创建指南',
+      '- 建议的职业方向（列出2-4个适合的职业及理由）',
+      '- 推荐的核心技能（列出5-8个，说明为什么重要）',
+      '- 角色关系建议（调查员之间、或与NPC的关系）',
+      '',
+      '## 注意事项',
+      '- 创建角色时必须填写调查员姓名',
+      '- 属性值范围0-100，建议核心属性不低于40',
+      '- 技能默认值已预设，可根据职业调整',
+      '- 所有玩家准备好角色后，房主即可开始游戏',
+      '',
+      '重要规则：',
+      '- 不要泄露守秘人秘密、幕后真相或未发现的线索',
+      '- 不要替玩家决定角色的背景故事，只提供建议方向',
+      '- 回复应友好、专业，适合直接展示给所有玩家',
+      `叙事风格：${roomCfg.dmStyle || '悬疑、克制，不替玩家做决定'}`,
       `规则严格度：${roomCfg.rulesStrictness || 'STANDARD'}`
     ].join('\n');
 
     const userMsg = [
-      `模组名称：${title}`,
+      `模组名称：${state.room.moduleTitle || '未知模组'}`,
       `游玩人数：${state.room.maxPlayers || 5} 人`,
       `系统：Call of Cthulhu 7th Edition`,
       '',
-      '模组内容片段：',
-      segments || '暂无详细内容',
+      moduleContext || '暂无模组内容',
       '',
-      '请生成模组介绍和角色创建指南。回复要友好、清晰，适合直接展示给玩家。'
+      '请生成准备阶段的模组介绍和角色创建指南。'
     ].join('\n');
 
     setAiTaskStatus(code, taskUid, 'GENERATING');
