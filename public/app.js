@@ -669,13 +669,11 @@ function renderSkills(sheet) {
     row.innerHTML = `
       <span class="skill-name"></span>
       <input type="number" min="0" max="100" step="1" data-skill-name="">
-      <button class="ghost skill-roll" type="button" title="技能检定">检定</button>
     `;
     row.querySelector('.skill-name').textContent = name;
     const input = row.querySelector('input');
     input.dataset.skillName = name;
     input.value = score;
-    row.querySelector('button').addEventListener('click', () => rollSkill(name));
     els.skillsTable.append(row);
   }
 }
