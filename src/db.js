@@ -12,7 +12,7 @@ import {
 import { normalizeAiSettings, publicAiSettings } from './aiSettings.js';
 import { HttpError } from './errors.js';
 
-const MAX_ROOM_PLAYERS = 6;
+const MAX_ROOM_PLAYERS = 5;
 const DEFAULT_MAX_PLAYERS = 5;
 const ROOM_STATUSES = ['PREPARING', 'ACTIVE', 'PAUSED', 'ENDED', 'ARCHIVED'];
 const MESSAGE_TYPES = ['IC', 'OOC', 'ACTION', 'SYSTEM', 'AI_DM', 'PRIVATE'];

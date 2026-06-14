@@ -75,7 +75,7 @@ npm run audit:deployment -- http://<host> --require-ai  # Require real AI (no fa
 
 - 左侧边栏显示 logo + 两个按钮："创建房间"（打开 `#createRoomDialog`）、"加入房间"（打开 `#joinRoomDialog`）
 - 右侧桌面区域完全隐藏（`#tableTitle`、`#tableSubtitle`、聊天区、输入框均不显示）
-- 创建房间弹窗：玩家名、房间名、游玩人数（2-6）、模组选择/上传
+- 创建房间弹窗：玩家名、房间名、游玩人数（1-5，1 人用于调试）、模组选择/上传
 - 加入房间弹窗：玩家名、房间码
 
 ### 2. 准备界面（`state.room.status === 'PREPARING'`）

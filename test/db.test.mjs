@@ -102,6 +102,30 @@ test('creates rooms with configurable player limit and enforces it', () => {
       () => database.joinRoom({ code: small.room.code, playerId: 'extra', displayName: 'Extra' }),
       (error) => error instanceof HttpError && error.statusCode === 409
     );
+
+    const mod3 = createModule(database, 'solo');
+    const solo = database.createRoom({
+      name: 'Solo debug room',
+      playerId: 'solo',
+      displayName: 'Solo Keeper',
+      moduleId: mod3.id,
+      maxPlayers: 1
+    });
+    assert.equal(solo.room.maxPlayers, 1);
+    assert.throws(
+      () => database.joinRoom({ code: solo.room.code, playerId: 'guest2', displayName: 'Guest 2' }),
+      (error) => error instanceof HttpError && error.statusCode === 409
+    );
+
+    const mod4 = createModule(database, 'cap');
+    const capped = database.createRoom({
+      name: 'Capped room',
+      playerId: 'cap',
+      displayName: 'Cap Keeper',
+      moduleId: mod4.id,
+      maxPlayers: 99
+    });
+    assert.equal(capped.room.maxPlayers, 5);
   } finally {
     cleanup();
   }

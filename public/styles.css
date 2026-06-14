@@ -302,6 +302,19 @@ label,
   gap: 10px;
 }
 
+.section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.section-actions .ghost {
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 0.76rem;
+}
+
 .section-head span,
 #readyState {
   color: var(--muted);
@@ -313,9 +326,33 @@ label,
   gap: 4px;
 }
 
+.stat-input span {
+  display: grid;
+  gap: 2px;
+}
+
+.stat-input strong {
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.stat-input small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.2;
+}
+
 .stat-input input,
 .resource-input input {
   padding: 8px;
+}
+
+.roll-summary {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .derived-grid,
@@ -354,14 +391,15 @@ label,
   max-height: 360px;
   overflow-y: auto;
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
 .skill-row {
   display: grid;
-  grid-template-columns: minmax(88px, 1fr) 68px 58px;
-  gap: 6px;
+  grid-template-columns: minmax(110px, 1fr) 46px 66px 66px 48px;
+  gap: 5px;
   align-items: center;
+  min-width: 0;
 }
 
 .skill-name {
@@ -372,7 +410,42 @@ label,
 }
 
 .skill-row input {
-  padding: 7px 8px;
+  min-width: 0;
+  padding: 7px 6px;
+  text-align: center;
+}
+
+.skill-row input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.skill-row-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 0;
+  background: #13161a;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.skill-row-header span:not(:first-child),
+.skill-base,
+.skill-total {
+  text-align: center;
+}
+
+.skill-total {
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.skill-over {
+  outline: 1px solid rgba(209, 98, 98, 0.75);
+  outline-offset: 1px;
+  border-radius: 4px;
 }
 
 .skill-roll {
@@ -1022,6 +1095,10 @@ dialog::backdrop {
   color: var(--gold);
 }
 
+.skill-points-display.over-limit strong {
+  color: #f08f8f;
+}
+
 .occupation-select-label {
   margin-bottom: 8px;
 }
@@ -1040,14 +1117,27 @@ dialog::backdrop {
   font-size: 0.7rem;
   color: var(--muted);
   min-width: 28px;
-  text-align: right;
+  text-align: center;
 }
 
-.skill-spent {
-  font-size: 0.7rem;
-  color: var(--muted);
-  min-width: 40px;
-  text-align: right;
+@media (max-width: 560px) {
+  .section-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .section-actions {
+    justify-content: flex-start;
+  }
+
+  .skill-row {
+    grid-template-columns: minmax(88px, 1fr) 38px 54px 54px 42px;
+    gap: 4px;
+  }
+
+  .skill-row input {
+    padding: 7px 4px;
+  }
 }
 
 /* === 角色卡编辑弹窗（全屏大窗口） === */

@@ -124,11 +124,11 @@
           <label>玩家名 <input name="displayName" maxlength="40" autocomplete="nickname" required></label>
           <label>房间名 <input name="roomName" maxlength="80" value="暮色边境"></label>
           <label>游玩人数 <select name="maxPlayers" id="maxPlayersSelect">
+            <option value="1">1 人（调试）</option>
             <option value="2">2 人</option>
             <option value="3">3 人</option>
             <option value="4">4 人</option>
             <option value="5" selected>5 人</option>
-            <option value="6">6 人</option>
           </select></label>
           <div class="module-picker">
             <label>模组 <select name="moduleId" id="moduleSelect" required><option value="">先上传或选择模组</option></select></label>
@@ -174,7 +174,14 @@
             <label>居住地 <input name="investigator.residence" maxlength="120"></label>
           </div>
           <div class="sheet-section">
-            <div class="section-head"><h3>属性</h3></div>
+            <div class="section-head">
+              <h3>属性</h3>
+              <div class="section-actions">
+                <button class="ghost" id="rollCharacteristics" type="button">随机投掷</button>
+                <button class="ghost" id="resetCharacteristics" type="button">重置</button>
+              </div>
+            </div>
+            <div class="roll-summary" id="characteristicRollSummary"></div>
             <div class="stat-grid" id="characteristicsGrid"></div>
             <div class="derived-grid" id="derivedGrid"></div>
             <div class="resource-grid" id="resourceGrid"></div>

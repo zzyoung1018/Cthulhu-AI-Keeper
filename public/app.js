@@ -95,6 +95,9 @@ const els = {
   characterDialog: document.querySelector('#characterDialog'),
   dialogReadyState: document.querySelector('#dialogReadyState'),
   profileForm: document.querySelector('#profileForm'),
+  rollCharacteristics: document.querySelector('#rollCharacteristics'),
+  resetCharacteristics: document.querySelector('#resetCharacteristics'),
+  characteristicRollSummary: document.querySelector('#characteristicRollSummary'),
   characteristicsGrid: document.querySelector('#characteristicsGrid'),
   derivedGrid: document.querySelector('#derivedGrid'),
   resourceGrid: document.querySelector('#resourceGrid'),
@@ -166,6 +169,19 @@ const aiTaskLabels = {
 const activeAiStatuses = ['QUEUED', 'RETRIEVING', 'GENERATING', 'STREAMING', 'VALIDATING'];
 
 const characteristicKeys = ['STR', 'CON', 'SIZ', 'DEX', 'APP', 'INT', 'POW', 'EDU', 'Luck'];
+const skillCreationMax = 100;
+
+const characteristicInfo = {
+  STR: { label: '力量', formula: '3D6×5', dice: '3d6' },
+  CON: { label: '体质', formula: '3D6×5', dice: '3d6' },
+  SIZ: { label: '体型', formula: '(2D6+6)×5', dice: '2d6+6' },
+  DEX: { label: '敏捷', formula: '3D6×5', dice: '3d6' },
+  APP: { label: '外貌', formula: '3D6×5', dice: '3d6' },
+  INT: { label: '智力', formula: '(2D6+6)×5', dice: '2d6+6' },
+  POW: { label: '意志', formula: '3D6×5', dice: '3d6' },
+  EDU: { label: '教育', formula: '(2D6+6)×5', dice: '2d6+6' },
+  Luck: { label: '幸运', formula: '3D6×5', dice: '3d6' }
+};
 
 const defaultCharacteristics = {
   STR: 50,
@@ -194,11 +210,15 @@ const defaultSkills = {
   电气维修: 10,
   话术: 5,
   急救: 30,
+  驾驶: 1,
   历史: 5,
+  化学: 1,
   恐吓: 15,
   跳跃: 20,
   母语: 50,
   法律: 5,
+  格斗: 25,
+  工艺: 5,
   图书馆使用: 20,
   聆听: 20,
   锁匠: 1,
@@ -212,10 +232,15 @@ const defaultSkills = {
   心理学: 10,
   骑术: 5,
   妙手: 10,
+  摄影: 5,
+  射击: 20,
   侦查: 25,
   潜行: 20,
   游泳: 20,
   投掷: 20,
+  外语: 1,
+  物理学: 1,
+  药学: 1,
   追踪: 10
 };
 
@@ -263,6 +288,32 @@ function numberInRange(value, fallback, min = 0, max = 100) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(min, Math.min(max, Math.round(number)));
+}
+
+function rollDie(sides = 6) {
+  return Math.floor(Math.random() * sides) + 1;
+}
+
+function rollCharacteristic(key) {
+  const info = characteristicInfo[key] || { dice: '3d6', formula: '3D6×5' };
+  if (info.dice === '2d6+6') {
+    const rolls = [rollDie(), rollDie()];
+    const total = rolls[0] + rolls[1] + 6;
+    return { key, rolls, bonus: 6, total, value: total * 5, formula: info.formula };
+  }
+  const rolls = [rollDie(), rollDie(), rollDie()];
+  const total = rolls.reduce((sum, roll) => sum + roll, 0);
+  return { key, rolls, bonus: 0, total, value: total * 5, formula: info.formula };
+}
+
+function characteristicDisplayName(key) {
+  const info = characteristicInfo[key];
+  return info ? `${key} ${info.label}` : key;
+}
+
+function characteristicRollText(result) {
+  const dice = result.rolls.join('+') + (result.bonus ? `+${result.bonus}` : '');
+  return `${characteristicDisplayName(result.key)} ${dice}=${result.total} → ${result.value}`;
 }
 
 function currentSheet() {
@@ -676,24 +727,65 @@ function renderResourceInputs(sheet, derived) {
   }
 }
 
+function fullResourceStatus(derived) {
+  return {
+    hp: derived.hp,
+    mp: derived.mp,
+    san: derived.san,
+    luck: derived.luck
+  };
+}
+
+function refreshCharacterDerived({ resetResources = false } = {}) {
+  const characteristics = readCharacteristics();
+  const currentStatus = readStatus();
+  const nextDerived = calculateDerived(characteristics, resetResources ? {} : currentStatus);
+  const status = resetResources ? fullResourceStatus(nextDerived) : currentStatus;
+  renderDerived(nextDerived);
+  renderResourceInputs({ status }, nextDerived);
+  updateSkillPointsDisplay();
+}
+
+function applyCharacteristicValues(values, summary = '', options = {}) {
+  for (const [key, value] of Object.entries(values)) {
+    const input = els.profileForm.elements[`characteristics.${key}`];
+    if (input) input.value = numberInRange(value, defaultCharacteristics[key] || 50, 0, 100);
+  }
+  if (els.characteristicRollSummary) {
+    els.characteristicRollSummary.textContent = summary;
+  }
+  refreshCharacterDerived(options);
+}
+
+function rollAllCharacteristics() {
+  const results = characteristicKeys.map((key) => rollCharacteristic(key));
+  const values = Object.fromEntries(results.map((result) => [result.key, result.value]));
+  applyCharacteristicValues(values, results.map(characteristicRollText).join('；'), { resetResources: true });
+  toast('属性已按 CoC 7版规则随机投掷');
+}
+
+function resetCharacteristics() {
+  applyCharacteristicValues(defaultCharacteristics, '已恢复默认属性 50。', { resetResources: true });
+  toast('属性已重置');
+}
+
 function renderCharacteristicInputs(sheet) {
   els.characteristicsGrid.innerHTML = '';
   const derived = calculateDerived(sheet.characteristics, sheet.status);
   for (const key of characteristicKeys) {
+    const info = characteristicInfo[key] || {};
     const label = document.createElement('label');
     label.className = 'stat-input';
     label.innerHTML = `
-      <span>${key}</span>
+      <span><strong>${key}</strong><small>${info.label || ''} · ${info.formula || ''}</small></span>
       <input type="number" min="0" max="100" step="1" name="characteristics.${key}">
     `;
     label.querySelector('input').value = sheet.characteristics?.[key] ?? defaultCharacteristics[key];
-    label.querySelector('input').addEventListener('input', () => {
-      const nextDerived = calculateDerived(readCharacteristics(), readStatus());
-      renderDerived(nextDerived);
-      renderResourceInputs({ status: readStatus() }, nextDerived);
-      updateSkillPointsDisplay();
-    });
+    label.querySelector('input').addEventListener('input', refreshCharacterDerived);
     els.characteristicsGrid.append(label);
+  }
+  if (els.characteristicRollSummary) {
+    els.characteristicRollSummary.textContent = 'CoC 7版：STR/CON/DEX/APP/POW/Luck 为 3D6×5；SIZ/INT/EDU 为 (2D6+6)×5。';
   }
   renderDerived(derived);
   renderResourceInputs(sheet, derived);
@@ -713,36 +805,145 @@ function calculateSkillPoints(chars) {
   };
 }
 
+function skillInputNumber(input) {
+  return numberInRange(input?.value, 0, 0, skillCreationMax);
+}
+
+function skillRowValues(row) {
+  const base = Number(row.dataset.base || 0);
+  const occupation = skillInputNumber(row.querySelector('[data-skill-kind="occupation"]'));
+  const interest = skillInputNumber(row.querySelector('[data-skill-kind="interest"]'));
+  return { base, occupation, interest, total: Math.min(skillCreationMax, base + occupation + interest) };
+}
+
+function updateSkillRowTotal(row) {
+  if (!row?.dataset.skillName) return;
+  const values = skillRowValues(row);
+  row.dataset.total = String(values.total);
+  const total = row.querySelector('[data-skill-total]');
+  if (total) total.textContent = values.total;
+  const overSkill = values.base + values.occupation + values.interest > skillCreationMax;
+  row.classList.toggle('skill-over', overSkill);
+}
+
+function calculateSkillPointUsage(excludeInput = null) {
+  const usage = { usedOcc: 0, usedInt: 0, overSkill: false };
+  if (!els.skillsTable) return usage;
+  els.skillsTable.querySelectorAll('.skill-row[data-skill-name]').forEach((row) => {
+    const base = Number(row.dataset.base || 0);
+    const occInput = row.querySelector('[data-skill-kind="occupation"]');
+    const intInput = row.querySelector('[data-skill-kind="interest"]');
+    const occ = occInput === excludeInput ? 0 : skillInputNumber(occInput);
+    const interest = intInput === excludeInput ? 0 : skillInputNumber(intInput);
+    usage.usedOcc += occ;
+    usage.usedInt += interest;
+    if (base + occ + interest > skillCreationMax) usage.overSkill = true;
+  });
+  return usage;
+}
+
+function validateSkillPointBudget() {
+  const pools = calculateSkillPoints(readCharacteristics());
+  const usage = calculateSkillPointUsage();
+  return {
+    ...pools,
+    ...usage,
+    overOcc: usage.usedOcc > pools.occupationPoints,
+    overInt: usage.usedInt > pools.interestPoints,
+    valid: usage.usedOcc <= pools.occupationPoints &&
+      usage.usedInt <= pools.interestPoints &&
+      !usage.overSkill
+  };
+}
+
+function clampSkillAllocation(input) {
+  const row = input.closest('.skill-row');
+  if (!row) return;
+
+  const kind = input.dataset.skillKind;
+  let value = skillInputNumber(input);
+  const base = Number(row.dataset.base || 0);
+  const values = skillRowValues(row);
+  const otherSkillPoints = kind === 'occupation' ? values.interest : values.occupation;
+  const usage = calculateSkillPointUsage(input);
+  const pools = calculateSkillPoints(readCharacteristics());
+  const remainingPool = kind === 'occupation'
+    ? pools.occupationPoints - usage.usedOcc
+    : pools.interestPoints - usage.usedInt;
+  const maxBySkill = Math.max(0, skillCreationMax - base - otherSkillPoints);
+  const maxAllowed = Math.max(0, Math.min(maxBySkill, remainingPool));
+
+  if (value > maxAllowed) {
+    value = maxAllowed;
+    toast(kind === 'occupation' ? '职业技能点不足或技能已达上限' : '兴趣技能点不足或技能已达上限');
+  }
+  input.value = value;
+  updateSkillRowTotal(row);
+}
+
+function inferSkillAllocations(sheet, sortedSkills, occSkills) {
+  const pools = calculateSkillPoints(sheet.characteristics || {});
+  let remainingOcc = pools.occupationPoints;
+  const allocations = new Map();
+
+  for (const [name, score] of sortedSkills) {
+    const base = defaultSkills[name] || 0;
+    const spent = Math.max(0, numberInRange(score, base, 0, skillCreationMax) - base);
+    let occupation = 0;
+    let interest = spent;
+    if (occSkills.includes(name) && remainingOcc > 0) {
+      occupation = Math.min(spent, remainingOcc);
+      interest = spent - occupation;
+      remainingOcc -= occupation;
+    }
+    allocations.set(name, { occupation, interest });
+  }
+
+  return allocations;
+}
+
 function renderSkills(sheet) {
   if (!els.skillsTable) return;
   els.skillsTable.innerHTML = '';
   const occSkills = getOccupationSkills();
   const skills = Object.entries({ ...defaultSkills, ...(sheet.skills || {}) })
     .sort(([left], [right]) => left.localeCompare(right, 'zh-Hans-CN'));
+  const allocations = inferSkillAllocations(sheet, skills, occSkills);
+
+  const header = document.createElement('div');
+  header.className = 'skill-row skill-row-header';
+  header.innerHTML = '<span>技能</span><span>初始</span><span>职业+</span><span>兴趣+</span><span>合计</span>';
+  els.skillsTable.append(header);
 
   for (const [name, score] of skills) {
     const isOccSkill = occSkills.includes(name);
     const row = document.createElement('div');
     row.className = 'skill-row' + (isOccSkill ? ' occ-skill' : '');
     const base = defaultSkills[name] || 0;
+    const allocation = allocations.get(name) || { occupation: 0, interest: Math.max(0, score - base) };
+    row.dataset.skillName = name;
+    row.dataset.base = String(base);
     row.innerHTML = `
       <span class="skill-name">${isOccSkill ? '★ ' : ''}</span>
       <span class="skill-base">${base}</span>
-      <input type="number" min="${base}" max="100" step="1" data-skill-name="">
-      <span class="skill-spent"></span>
+      <input class="skill-add" type="number" min="0" max="${skillCreationMax}" step="1" data-skill-kind="occupation" ${isOccSkill ? '' : 'disabled'}>
+      <input class="skill-add" type="number" min="0" max="${skillCreationMax}" step="1" data-skill-kind="interest">
+      <strong class="skill-total" data-skill-total></strong>
     `;
     row.querySelector('.skill-name').textContent = (isOccSkill ? '★ ' : '') + name;
-    const input = row.querySelector('input');
-    input.dataset.skillName = name;
-    input.dataset.base = base;
-    input.value = score;
-    input.addEventListener('input', () => {
-      updateSkillPointsDisplay();
+    row.querySelector('[data-skill-kind="occupation"]').value = isOccSkill ? allocation.occupation : 0;
+    row.querySelector('[data-skill-kind="interest"]').value = allocation.interest;
+    row.querySelectorAll('[data-skill-kind]').forEach((input) => {
+      input.addEventListener('input', () => {
+        clampSkillAllocation(input);
+        updateSkillPointsDisplay();
+      });
+      input.addEventListener('change', () => {
+        clampSkillAllocation(input);
+        updateSkillPointsDisplay();
+      });
     });
-    input.addEventListener('change', () => {
-      const val = numberInRange(input.value, base, 0, 100);
-      if (val < base) input.value = base;
-    });
+    updateSkillRowTotal(row);
     els.skillsTable.append(row);
   }
   updateSkillPointsDisplay();
@@ -751,27 +952,23 @@ function renderSkills(sheet) {
 function updateSkillPointsDisplay() {
   if (!els.occPtsRemaining || !els.intPtsRemaining) return;
   const occSkills = getOccupationSkills();
-  const chars = readCharacteristics();
-  const pools = calculateSkillPoints(chars);
-  const current = collectSkillsFromTable();
-  let usedOcc = 0, usedInt = 0;
-  for (const [name, val] of Object.entries(current)) {
-    const base = defaultSkills[name] || 0;
-    const spent = Math.max(0, val - base);
-    if (occSkills.includes(name)) usedOcc += spent;
-    else usedInt += spent;
-  }
+  els.skillsTable?.querySelectorAll('.skill-row[data-skill-name]').forEach(updateSkillRowTotal);
+  const status = validateSkillPointBudget();
   els.occPtsRemaining.textContent = occSkills.length > 0
-    ? `${Math.max(0, pools.occupationPoints - usedOcc)}/${pools.occupationPoints}`
+    ? `${status.occupationPoints - status.usedOcc}/${status.occupationPoints}`
     : '--';
-  els.intPtsRemaining.textContent = `${Math.max(0, pools.interestPoints - usedInt)}/${pools.interestPoints}`;
+  els.intPtsRemaining.textContent = `${status.interestPoints - status.usedInt}/${status.interestPoints}`;
+  els.skillPointsDisplay?.classList.toggle('over-limit', !status.valid);
+  const saveButton = els.profileForm?.querySelector('button[type="submit"]');
+  if (saveButton) saveButton.disabled = !status.valid;
 }
 
 function collectSkillsFromTable() {
   const skills = {};
   if (!els.skillsTable) return skills;
-  els.skillsTable.querySelectorAll('[data-skill-name]').forEach((input) => {
-    skills[input.dataset.skillName] = numberInRange(input.value, 0, 0, 100);
+  els.skillsTable.querySelectorAll('.skill-row[data-skill-name]').forEach((row) => {
+    const values = skillRowValues(row);
+    skills[row.dataset.skillName] = numberInRange(values.total, values.base, 0, skillCreationMax);
   });
   return skills;
 }
@@ -827,7 +1024,7 @@ function renderCharSheetOverlay() {
     '</div>',
     '<div class="char-stats-grid">',
     ...['STR','CON','SIZ','DEX','APP','INT','POW','EDU','Luck'].map(k =>
-      `<div class="char-stat"><span>${k}</span><strong>${chars[k] ?? '-'}</strong></div>`
+      `<div class="char-stat"><span>${characteristicDisplayName(k)}</span><strong>${chars[k] ?? '-'}</strong></div>`
     ),
     '</div>',
     '<div class="char-resources">',
@@ -842,8 +1039,9 @@ function renderCharSheetOverlay() {
     '<h3>技能</h3>',
     '<div class="char-skills-grid">',
     ...skills.map(([name, val]) => {
-      const half = Math.floor((chars[name] || derived[name] || 50) / 2);
-      const fifth = Math.floor((chars[name] || derived[name] || 50) / 5);
+      const score = numberInRange(val, 0, 0, 100);
+      const half = Math.floor(score / 2);
+      const fifth = Math.floor(score / 5);
       return `<div class="char-skill-row"><span>${name}</span><strong>${val}</strong><span class="skill-levels">/ ${half} / ${fifth}</span></div>`;
     }),
     '</div>',
@@ -879,6 +1077,13 @@ function readStatus() {
 }
 
 function collectCharacterSheet() {
+  const skillBudget = validateSkillPointBudget();
+  if (!skillBudget.valid) {
+    if (skillBudget.overOcc) throw new Error('职业技能点超过上限，请减少职业加点');
+    if (skillBudget.overInt) throw new Error('兴趣技能点超过上限，请减少兴趣加点');
+    throw new Error('技能加点超过单项技能上限');
+  }
+
   const existing = currentSheet();
   const characteristics = readCharacteristics();
   const status = readStatus();
@@ -966,7 +1171,11 @@ if (els.occupationSelect) {
         const field = els.profileForm?.elements?.['investigator.occupation'];
         if (field) field.value = occ;
       }
-      renderSkills(currentSheet());
+      renderSkills({
+        ...currentSheet(),
+        characteristics: readCharacteristics(),
+        skills: collectSkillsFromTable()
+      });
     } catch (e) {
       console.error('occupation change error:', e);
     }
@@ -1302,6 +1511,8 @@ els.btnEditCharacter.addEventListener('click', () => {
 });
 document.querySelector('#closeCharacterDialog').addEventListener('click', () => els.characterDialog.close());
 els.characterDialog.addEventListener('click', (e) => { if (e.target === els.characterDialog) els.characterDialog.close(); });
+els.rollCharacteristics?.addEventListener('click', rollAllCharacteristics);
+els.resetCharacteristics?.addEventListener('click', resetCharacteristics);
 
 els.readyCharacter.addEventListener('click', async () => {
   if (!state.room || !state.participant) return;
