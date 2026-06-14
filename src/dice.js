@@ -309,58 +309,91 @@ export function dispatchDiceRoll({ rollType, expression, target, skillName, skil
   return { result: rollDiceExpression(expression), label: '' };
 }
 
-// 将 NPC 技能值转化为玩家检定的难度等级
-// CoC 7e 对抗规则：NPC 越强，玩家需要越高的成功等级
-export function npcSkillToDifficulty(npcSkill) {
-  const s = Number(npcSkill);
-  if (!Number.isFinite(s) || s < 1) return 'REGULAR';
-  if (s < 30) return 'REGULAR';
-  if (s < 60) return 'HARD';
-  if (s < 90) return 'EXTREME';
-  return 'EXTREME'; // 90+ NPC needs EXTREME success; CRITICAL always wins
-}
-
-// 对抗检定：玩家单方面掷骰，NPC 技能转化为难度
-// 返回详细的成功/大成功/大失败信息
+// CoC 7e 官方对抗规则（Keeper Rulebook pp. 90-91）：
+// 双方各自掷 d100，比较成功等级。等级高者胜。
+// 同等级：技能值高者胜。同技能值：d100 出目低者胜。
+// 闪避 vs 近战：同等级时闪避方胜。
 export function rollContestedCheck({
-  playerSkill,
-  npcSkill,
-  npcName = 'NPC',
-  playerName = '玩家',
-  bonusDice = 0,
-  penaltyDice = 0,
+  playerSkill, playerName = '调查员',
+  npcSkill, npcName = 'NPC',
+  playerBonusDice = 0, playerPenaltyDice = 0,
+  npcBonusDice = 0, npcPenaltyDice = 0,
+  defenderIsNpc = true, // true = NPC是被攻击/被欺骗方，同等级时NPC胜
   rng = Math.random
 }) {
   assertInteger(playerSkill, 'Player skill', 0, 100);
   const npcVal = Number(npcSkill);
-  const difficulty = npcSkillToDifficulty(npcVal);
-  const roll = rollCocCheck({ target: playerSkill, difficulty, bonusDice, penaltyDice, rng });
+  if (!Number.isFinite(npcVal) || npcVal < 1) {
+    throw new Error('NPC skill must be a positive number');
+  }
 
-  const isCritical = roll.successLevel === 'CRITICAL';
-  const isFumble = roll.successLevel === 'FUMBLE';
+  const playerRoll = rollD100({ bonusDice: playerBonusDice, penaltyDice: playerPenaltyDice, rng });
+  const npcRoll = rollD100({ bonusDice: npcBonusDice, penaltyDice: npcPenaltyDice, rng });
 
-  // CRITICAL always wins, FUMBLE always loses, otherwise difficulty determines
-  const playerWins = isCritical ? true : (isFumble ? false : roll.passed);
+  const playerLevel = cocSuccessLevel(playerRoll.total, playerSkill);
+  const npcLevel = cocSuccessLevel(npcRoll.total, npcVal);
+
+  const rank = { FUMBLE: -1, FAIL: 0, REGULAR: 1, HARD: 2, EXTREME: 3, CRITICAL: 4 };
+  const pr = rank[playerLevel];
+  const nr = rank[npcLevel];
+
+  let winner = 'tie';
+  let reason = '';
+
+  if (pr > nr) {
+    winner = 'player';
+    reason = `调查员 ${playerLevel} > NPC ${npcLevel}`;
+  } else if (nr > pr) {
+    winner = 'npc';
+    reason = `NPC ${npcLevel} > 调查员 ${playerLevel}`;
+  } else if (pr >= rank.REGULAR) {
+    // 同成功等级：比技能值，再比出目
+    if (playerSkill > npcVal) {
+      winner = 'player';
+      reason = `同${playerLevel}，调查员技能 ${playerSkill} > NPC ${npcVal}`;
+    } else if (npcVal > playerSkill) {
+      winner = 'npc';
+      reason = `同${playerLevel}，NPC技能 ${npcVal} > 调查员 ${playerSkill}`;
+    } else if (playerRoll.total < npcRoll.total) {
+      winner = 'player';
+      reason = `同${playerLevel}同技能，调查员出目 ${playerRoll.total} < NPC ${npcRoll.total}`;
+    } else if (npcRoll.total < playerRoll.total) {
+      winner = 'npc';
+      reason = `同${playerLevel}同技能，NPC出目 ${npcRoll.total} < 调查员 ${playerRoll.total}`;
+    } else {
+      // 完全相同 → 防守方胜
+      winner = defenderIsNpc ? 'npc' : 'player';
+      reason = `完全平局，防守方胜`;
+    }
+  } else {
+    // 双方都失败或大失败
+    winner = 'tie';
+    reason = '双方均未成功';
+  }
 
   return {
     type: 'contested_check',
     expression: '1d100',
-    playerName,
-    npcName,
-    playerSkill,
-    npcSkill: npcVal,
-    difficulty,
-    roll: roll.total,
-    successLevel: roll.successLevel,
-    isCritical,
-    isFumble,
-    passed: roll.passed,
-    playerWins,
-    bonusDice,
-    penaltyDice,
-    description: playerWins
-      ? (isCritical ? '🎯 大成功！完美通过' : `${roll.successLevel} 成功，对抗通过`)
-      : (isFumble ? '💀 大失败！严重失误' : `${roll.successLevel}，对抗失败`)
+    player: {
+      name: playerName,
+      skill: playerSkill,
+      roll: playerRoll.total,
+      successLevel: playerLevel,
+      isCritical: playerLevel === 'CRITICAL',
+      isFumble: playerLevel === 'FUMBLE',
+      bonusDice: playerBonusDice,
+      penaltyDice: playerPenaltyDice
+    },
+    npc: {
+      name: npcName,
+      skill: npcVal,
+      roll: npcRoll.total,
+      successLevel: npcLevel,
+      isCritical: npcLevel === 'CRITICAL',
+      isFumble: npcLevel === 'FUMBLE'
+    },
+    winner,
+    reason
   };
 }
 

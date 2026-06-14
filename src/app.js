@@ -247,8 +247,9 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
           const check = rollContestedCheck({
             playerSkill,
             npcSkill,
+            playerName,
             npcName: opp.passiveNpcName || 'NPC',
-            playerName
+            defenderIsNpc: opp.contestType !== 'combat' // 社交/潜行中 NPC 是防守方
           });
 
           const contestTypeLabel = {
@@ -256,16 +257,18 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
             combat: '⚔️ 战斗对抗', item: '🔧 技术对抗'
           }[opp.contestType] || '⚡ 对抗检定';
 
+          const playerWon = check.winner === 'player';
           const detailLines = [
             `${contestTypeLabel}：${playerName} 的 ${opp.activeSkill}(${playerSkill}) vs ${opp.passiveNpcName} 的 ${opp.passiveSkill}(${npcSkill})`,
-            `NPC 技能 ${npcSkill} → 玩家需要 ${check.difficulty} 成功`,
-            `玩家 1d100 = ${check.roll}，${check.successLevel}${check.isCritical ? ' 🎯大成功！' : ''}${check.isFumble ? ' 💀大失败！' : ''}`,
-            `结果：${check.description}`
+            `调查员 1d100 = ${check.player.roll} → ${check.player.successLevel}${check.player.isCritical ? ' 🎯大成功！' : ''}${check.player.isFumble ? ' 💀大失败！' : ''}`,
+            `${opp.passiveNpcName} 1d100 = ${check.npc.roll} → ${check.npc.successLevel}${check.npc.isCritical ? ' 🎯大成功！' : ''}${check.npc.isFumble ? ' 💀大失败！' : ''}`,
+            `判定：${check.reason}`,
+            `结果：${playerWon ? '调查员胜' : (check.winner === 'npc' ? 'NPC胜' : '平局')}`
           ];
 
-          if (check.playerWins && opp.successResult) {
+          if (playerWon && opp.successResult) {
             detailLines.push('', opp.successResult);
-          } else if (!check.playerWins && opp.failureResult) {
+          } else if (!playerWon && opp.failureResult) {
             detailLines.push('', opp.failureResult);
           }
 

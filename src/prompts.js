@@ -40,11 +40,12 @@ export function buildDmSystemPrompt(aiConfig = {}) {
     '道具/技术对抗（activeSkill = 锁匠/电气维修/机械维修/驾驶，passiveSkill = 对应难度技能）：',
     '- 开锁、破解陷阱、破坏设备、危险驾驶',
     '',
-    '对抗规则说明：',
-    '- NPC 的 passiveSkill 值会被转化为玩家的难度等级（<30=REGULAR, 30-59=HARD, 60-89=EXTREME）',
-    '- 玩家掷 1d100，服务器判定成功等级（含大成功/大失败）并广播结果',
-    '- 你的叙事部分只描述NPC的反应，不要预判结果',
-    '- 服务器会广播骰子结果。你下一轮根据结果继续。',
+    '对抗规则说明（CoC 7e 官方规则）：',
+    '- 双方各自掷 d100，比较成功等级（CRITICAL > EXTREME > HARD > REGULAR > FAIL > FUMBLE）',
+    '- 同成功等级时：技能值高者胜。同技能值：出目低者胜',
+    '- 完全平局：防守方（NPC）胜',
+    '- 你的叙事部分只描述NPC的表情/动作，不要预判对抗结果',
+    '- 服务器会广播双方骰子结果。你下一轮根据结果继续叙事。',
   ].filter(Boolean).join('\n');
 }
 
