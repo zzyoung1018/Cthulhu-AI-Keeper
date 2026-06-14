@@ -999,7 +999,77 @@ dialog::backdrop {
   background: var(--gold-soft);
 }
 
-/* === 提示文字 === */
+/* === 角色卡片（侧边栏） === */
+.character-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.char-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.char-card-name {
+  display: block;
+  font-weight: 700;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.char-card-status {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.character-card .secondary {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  padding: 6px 12px;
+}
+
+/* === 角色卡编辑弹窗（全屏大窗口） === */
+#characterDialog {
+  max-width: 780px;
+  width: 85vw;
+  max-height: 90vh;
+}
+
+.char-edit-overlay {
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 24px 28px;
+}
+
+.char-edit-overlay .character-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.char-edit-overlay .notes-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 860px) {
+  #characterDialog {
+    width: 95vw;
+    max-width: 95vw;
+  }
+
+  .char-edit-overlay .notes-grid {
+    grid-template-columns: 1fr;
+  }
+}
 .hint {
   font-size: 0.78rem;
   color: var(--muted);

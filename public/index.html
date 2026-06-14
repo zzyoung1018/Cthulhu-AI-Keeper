@@ -58,50 +58,14 @@
             </div>
           </div>
           <div class="players" id="players"></div>
-        </section>
-
-        <!-- 角色卡编辑器 -->
-        <section class="panel editor-panel" id="editorPanel" hidden>
-          <div class="panel-title">
-            <span class="kicker">调查员</span>
-            <h2>CoC 7版角色卡</h2>
+          <div class="character-card" id="characterCard">
+            <div class="char-card-info">
+              <span class="char-card-name" id="charCardName">未创建角色</span>
+              <span class="char-card-status" id="charCardStatus"></span>
+            </div>
+            <button class="secondary" id="btnEditCharacter" type="button">编辑角色卡</button>
           </div>
-          <form id="profileForm" class="character-form">
-            <div class="character-grid">
-              <label>姓名 <input name="investigator.name" maxlength="80"></label>
-              <label>职业 <input name="investigator.occupation" maxlength="80"></label>
-              <label>年龄 <input name="investigator.age" maxlength="20"></label>
-              <label>居住地 <input name="investigator.residence" maxlength="120"></label>
-            </div>
-            <div class="sheet-section">
-              <div class="section-head"><h3>属性</h3><span id="readyState">未准备</span></div>
-              <div class="stat-grid" id="characteristicsGrid"></div>
-              <div class="derived-grid" id="derivedGrid"></div>
-              <div class="resource-grid" id="resourceGrid"></div>
-            </div>
-            <div class="sheet-section">
-              <div class="section-head"><h3>技能</h3><span>服务器检定</span></div>
-              <div class="skills-table" id="skillsTable"></div>
-            </div>
-            <div class="sheet-section">
-              <h3>武器和伤害</h3>
-              <textarea name="weaponsText" rows="3" maxlength="1200" placeholder="左轮手枪 | 1d10 | 15码&#10;拳击 | 1d3+DB"></textarea>
-            </div>
-            <div class="sheet-section notes-grid">
-              <label>装备和财产 <textarea name="equipment" rows="2" maxlength="4000"></textarea></label>
-              <label>人际关系 <textarea name="relationships" rows="2" maxlength="4000"></textarea></label>
-              <label>思想与信念 <textarea name="beliefs" rows="2" maxlength="4000"></textarea></label>
-              <label>重要地点 <textarea name="locations" rows="2" maxlength="4000"></textarea></label>
-              <label>伤疤和创伤 <textarea name="scarsTraumas" rows="2" maxlength="4000"></textarea></label>
-              <label>遭遇的怪物 <textarea name="encounteredMonsters" rows="2" maxlength="4000"></textarea></label>
-              <label>获取的线索 <textarea name="clues" rows="2" maxlength="4000"></textarea></label>
-              <label>私人笔记 <textarea name="privateNotes" rows="2" maxlength="8000"></textarea></label>
-            </div>
-            <div class="form-actions">
-              <button class="secondary" type="submit">保存角色</button>
-              <button class="primary" id="readyCharacter" type="button">准备</button>
-            </div>
-          </form>
+          <button class="primary" id="readyCharacter" type="button" hidden>准备</button>
         </section>
       </aside>
 
@@ -202,6 +166,54 @@
           <label>玩家名 <input name="displayName" maxlength="40" autocomplete="nickname" required></label>
           <label>房间码 <input name="roomCode" maxlength="8" autocapitalize="characters" required></label>
           <button class="primary" type="submit">加入房间</button>
+        </form>
+      </div>
+    </dialog>
+
+    <!-- 角色卡编辑弹窗 -->
+    <dialog id="characterDialog">
+      <div class="dialog-content char-edit-overlay">
+        <div class="dialog-header">
+          <h2>CoC 7版角色卡</h2>
+          <div>
+            <span id="dialogReadyState">未准备</span>
+            <button class="ghost dialog-close" id="closeCharacterDialog" type="button">✕</button>
+          </div>
+        </div>
+        <form id="profileForm" class="character-form">
+          <div class="character-grid">
+            <label>姓名 <input name="investigator.name" maxlength="80"></label>
+            <label>职业 <input name="investigator.occupation" maxlength="80"></label>
+            <label>年龄 <input name="investigator.age" maxlength="20"></label>
+            <label>居住地 <input name="investigator.residence" maxlength="120"></label>
+          </div>
+          <div class="sheet-section">
+            <div class="section-head"><h3>属性</h3></div>
+            <div class="stat-grid" id="characteristicsGrid"></div>
+            <div class="derived-grid" id="derivedGrid"></div>
+            <div class="resource-grid" id="resourceGrid"></div>
+          </div>
+          <div class="sheet-section">
+            <div class="section-head"><h3>技能</h3><span>服务器检定</span></div>
+            <div class="skills-table" id="skillsTable"></div>
+          </div>
+          <div class="sheet-section">
+            <h3>武器和伤害</h3>
+            <textarea name="weaponsText" rows="3" maxlength="1200" placeholder="左轮手枪 | 1d10 | 15码&#10;拳击 | 1d3+DB"></textarea>
+          </div>
+          <div class="sheet-section notes-grid">
+            <label>装备和财产 <textarea name="equipment" rows="2" maxlength="4000"></textarea></label>
+            <label>人际关系 <textarea name="relationships" rows="2" maxlength="4000"></textarea></label>
+            <label>思想与信念 <textarea name="beliefs" rows="2" maxlength="4000"></textarea></label>
+            <label>重要地点 <textarea name="locations" rows="2" maxlength="4000"></textarea></label>
+            <label>伤疤和创伤 <textarea name="scarsTraumas" rows="2" maxlength="4000"></textarea></label>
+            <label>遭遇的怪物 <textarea name="encounteredMonsters" rows="2" maxlength="4000"></textarea></label>
+            <label>获取的线索 <textarea name="clues" rows="2" maxlength="4000"></textarea></label>
+            <label>私人笔记 <textarea name="privateNotes" rows="2" maxlength="8000"></textarea></label>
+          </div>
+          <div class="form-actions">
+            <button class="secondary" type="submit">保存角色</button>
+          </div>
         </form>
       </div>
     </dialog>

@@ -82,14 +82,18 @@ const els = {
   btnSettings: document.querySelector('#btnSettings'),
   aiConfigForm: document.querySelector('#aiConfigForm'),
   // 角色卡
-  editorPanel: document.querySelector('#editorPanel'),
+  characterCard: document.querySelector('#characterCard'),
+  charCardName: document.querySelector('#charCardName'),
+  charCardStatus: document.querySelector('#charCardStatus'),
+  btnEditCharacter: document.querySelector('#btnEditCharacter'),
+  characterDialog: document.querySelector('#characterDialog'),
+  dialogReadyState: document.querySelector('#dialogReadyState'),
   profileForm: document.querySelector('#profileForm'),
   characteristicsGrid: document.querySelector('#characteristicsGrid'),
   derivedGrid: document.querySelector('#derivedGrid'),
   resourceGrid: document.querySelector('#resourceGrid'),
   skillsTable: document.querySelector('#skillsTable'),
   readyCharacter: document.querySelector('#readyCharacter'),
-  readyState: document.querySelector('#readyState'),
   // 状态面板
   statusPanel: document.querySelector('#statusPanel'),
   statusName: document.querySelector('#statusName'),
@@ -830,6 +834,17 @@ function collectCharacterSheet() {
 function renderProfile() {
   if (!state.participant) return;
   const sheet = currentSheet();
+  const name = sheet.investigator?.name || state.participant.characterName || '';
+  els.charCardName.textContent = name || '未创建角色';
+  els.charCardStatus.textContent = state.participant.isReady ? '✅ 已准备' : (name ? '⚠ 未准备' : '');
+  els.readyCharacter.textContent = state.participant.isReady ? '取消准备' : '准备';
+  els.dialogReadyState.textContent = state.participant.isReady ? '已准备' : '未准备';
+  renderStatusPanel();
+}
+
+function renderProfileForm() {
+  if (!state.participant) return;
+  const sheet = currentSheet();
   setTextField('investigator.name', sheet.investigator?.name || state.participant.characterName || '');
   setTextField('investigator.occupation', sheet.investigator?.occupation || '');
   setTextField('investigator.age', sheet.investigator?.age || '');
@@ -838,9 +853,6 @@ function renderProfile() {
   for (const field of textSectionFields) setTextField(field, sheet[field] || '');
   renderCharacteristicInputs(sheet);
   renderSkills(sheet);
-  els.readyState.textContent = state.participant.isReady ? '已准备' : '未准备';
-  els.readyCharacter.textContent = state.participant.isReady ? '取消准备' : '准备';
-  renderStatusPanel();
 }
 
 function renderLifecycleActions() {
@@ -888,7 +900,8 @@ function render() {
 
   els.entryPanel.hidden = inRoom;
   els.roomPanel.hidden = !inRoom;
-  els.editorPanel.hidden = !inRoom;
+  els.characterCard.hidden = !inRoom;
+  els.readyCharacter.hidden = !inRoom;
   els.tableArea.hidden = !inRoom;
   els.summaryPanel.hidden = true;
   els.messageForm.hidden = !inRoom;
@@ -1154,12 +1167,22 @@ els.profileForm.addEventListener('submit', async (event) => {
     state.participant = payload.participant;
     const index = state.participants.findIndex((participant) => participant.playerId === state.playerId);
     if (index >= 0) state.participants[index] = payload.participant;
-    render();
+    els.characterDialog.close();
+    renderProfile();
+    renderStatusPanel();
     toast('角色已保存');
   } catch (error) {
     toast(error.message);
   }
 });
+
+// 角色卡弹窗
+els.btnEditCharacter.addEventListener('click', () => {
+  renderProfileForm();
+  els.characterDialog.showModal();
+});
+document.querySelector('#closeCharacterDialog').addEventListener('click', () => els.characterDialog.close());
+els.characterDialog.addEventListener('click', (e) => { if (e.target === els.characterDialog) els.characterDialog.close(); });
 
 els.readyCharacter.addEventListener('click', async () => {
   if (!state.room || !state.participant) return;
