@@ -16,7 +16,6 @@ import { exportGameJson, exportGameMarkdown } from './export.js';
 import { readJson, sendError, sendJson, serveStatic } from './http.js';
 import { extractModuleText, scoreModuleSegment, segmentModuleText, validateModuleFile } from './moduleParser.js';
 import { readMultipartForm } from './multipart.js';
-import { detectContestedAction } from './checkDetector.js';
 import { capturePreRoundState, computeRollback, createRoundRecord } from './rounds.js';
 import { buildAllPlayerStates } from './playerState.js';
 import { RoomEventHub } from './sse.js';
@@ -65,13 +64,6 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     hub.broadcast(code, 'ai_task_updated', { task });
   }
 
-  // 暂存前置检定结果，供 generateDmReply 读取
-  const _pendingContestResults = new Map();
-
-  function getContestEmoji(type) {
-    return { social: '🎭', stealth: '🥷', combat: '⚔️', item: '🔧' }[type] || '⚡';
-  }
-
   function setAiTaskStatus(code, taskUid, status, error = '') {
     const task = database.updateAiTaskStatus({ taskUid, status, error });
     if (task) broadcastAiTask(code, task);
@@ -114,10 +106,6 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       .sort((a, b) => b.score - a.score || a.segment.sortOrder - b.segment.sortOrder)
       .slice(0, 6)
       .map((item) => item.segment);
-
-    // 读取前置检定结果（如果有）
-    state.contestResult = _pendingContestResults.get(code) || null;
-    _pendingContestResults.delete(code);
 
     // Build per-player state JSONs
     state.playerStates = buildAllPlayerStates(state.participants, state.room);
@@ -908,88 +896,8 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
         const message = database.createPlayerMessage({ code, playerId, content, messageType });
         hub.broadcast(code, 'message_created', { message });
-
-        // === 前置检测：玩家行动是否需要对抗检定 ===
-        let contestResult = null;
-        const { participant } = database.getParticipant(code, playerId);
-        const detected = detectContestedAction(content, participant?.characterSheet);
-        if (detected) {
-          // 从最近的 AI 回复中提取当前 NPC
-          const roomState = database.getRoomState(code, 20);
-          const recentDm = roomState.messages.find((m) => m.authorType === 'dm');
-          let npcName = '对方';
-          let npcSkill = 50;
-          if (roomState.moduleJson?.npcs && recentDm) {
-            for (const npc of roomState.moduleJson.npcs) {
-              if (recentDm.content?.includes(npc.name)) {
-                npcName = npc.name;
-                if (npc.skills?.心理学) npcSkill = Number(npc.skills.心理学);
-                else if (npc.attributes?.心理学) npcSkill = Number(npc.attributes.心理学);
-                else {
-                  const role = String(npc.role || '');
-                  if (/警察|侦探|保安/.test(role)) npcSkill = 65;
-                  else if (/干部|医生|教师/.test(role)) npcSkill = 55;
-                  else npcSkill = 45;
-                }
-                break;
-              }
-            }
-          }
-
-          const check = rollContestedCheck({
-            playerSkill: detected.skillValue,
-            npcSkill,
-            playerName: participant.characterName || participant.displayName,
-            npcName
-          });
-
-          // 存储结果，供 AI 上下文使用
-          contestResult = {
-            detected,
-            check,
-            npcName,
-            npcSkill,
-            playerName: participant.characterName || participant.displayName
-          };
-
-          // 立即广播检定结果
-          const roll = database.createDiceRoll({
-            code,
-            playerId,
-            rollType: 'contested_check',
-            expression: '1d100',
-            label: `${detected.label}: ${detected.skill} vs ${npcName}(心理学)`,
-            result: check
-          });
-
-          const playerWon = check.winner === 'player';
-          const msg = database.createMessage({
-            code,
-            authorType: 'system',
-            messageType: 'SYSTEM',
-            displayName: '对抗检定',
-            content: [
-              `${getContestEmoji(detected.contestType)} ${detected.label}`,
-              `${contestResult.playerName} 的 ${detected.skill}(${detected.skillValue}) vs ${npcName} 的 心理学(${npcSkill})`,
-              `调查员 1d100 = ${check.player.roll} → ${check.player.successLevel}${check.player.isCritical ? ' 🎯大成功！' : ''}${check.player.isFumble ? ' 💀大失败！' : ''}`,
-              `${npcName} 1d100 = ${check.npc.roll} → ${check.npc.successLevel}`,
-              `判定：${check.reason}`,
-              `结果：${playerWon ? '✅ 调查员胜' : (check.winner === 'npc' ? '❌ NPC胜' : '平局')}`
-            ].join('\n'),
-            status: 'complete'
-          });
-
-          hub.broadcast(code, 'message_created', { message: msg });
-          hub.broadcast(code, 'dice_rolled', { roll });
-        }
-
         let aiTask = null;
         if (triggersAi) {
-          // 将检定结果暂存，generateDmReply 会读取
-          if (contestResult) {
-            _pendingContestResults.set(code, contestResult);
-          }
-
           const idempotencyKey = body.actionId
             ? `action:${playerId}:${String(body.actionId).slice(0, 80)}`
             : `message:${message.id}`;

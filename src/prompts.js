@@ -25,27 +25,23 @@ export function buildDmSystemPrompt(aiConfig = {}) {
     '- 让玩家自己思考下一步。不要替他们思考。',
     '- 如果玩家行动不明确，追问"你具体想怎么做？"，仅此一句，不提供任何选项。',
     '',
-    '【对抗检定 - 极其重要】',
-    '当玩家尝试以下任何有风险、有对手、有失败后果的行动时，你必须在 structured events 中返回 opposed_checks：',
+    '【对抗检定 - 必须执行，不可跳过】',
+    '你的核心职责之一：判断玩家行动是否需要对抗检定。这不是可选的，是强制要求。',
     '',
-    '社交对抗（activeSkill = 话术/恐吓/魅惑/说服，passiveSkill = 心理学）：',
-    '- 对NPC撒谎、恐吓、说服、魅惑、套话、讨价还价',
+    '当玩家行动涉及以下任何对抗性情境时，你必须：',
+    '1. 叙事描述只写到检定发生的瞬间（如"他眯起眼睛打量着你的表情"），不要写下结果',
+    '2. 在 structured events 中返回 opposed_checks',
+    '3. 等待服务器广播检定结果后，下一轮继续叙事',
     '',
-    '潜行对抗（activeSkill = 潜行/乔装/妙手，passiveSkill = 侦查/聆听）：',
-    '- 潜入、跟踪、偷窃、隐藏、伪装、脱身',
+    '需要检定的情境：',
+    '- 🎭 社交：撒谎、恐吓、说服、魅惑、套话 → activeSkill=话术/恐吓/说服/魅惑, passiveSkill=心理学',
+    '- 🥷 潜行：潜入、跟踪、偷窃、伪装 → activeSkill=潜行/乔装/妙手, passiveSkill=侦查/聆听',
+    '- ⚔️ 战斗：偷袭、刺杀、先手 → activeSkill=格斗/射击, passiveSkill=闪避/侦查',
     '',
-    '战斗对抗（activeSkill = 格斗/射击/投掷/闪避，passiveSkill = 闪避/格斗/侦查）：',
-    '- 偷袭、刺杀、先手攻击、躲避追击',
-    '',
-    '道具/技术对抗（activeSkill = 锁匠/电气维修/机械维修/驾驶，passiveSkill = 对应难度技能）：',
-    '- 开锁、破解陷阱、破坏设备、危险驾驶',
-    '',
-    '对抗规则说明（CoC 7e 官方规则）：',
-    '- 双方各自掷 d100，比较成功等级（CRITICAL > EXTREME > HARD > REGULAR > FAIL > FUMBLE）',
-    '- 同成功等级时：技能值高者胜。同技能值：出目低者胜',
-    '- 完全平局：防守方（NPC）胜',
-    '- 你的叙事部分只描述NPC的表情/动作，不要预判对抗结果',
-    '- 服务器会广播双方骰子结果。你下一轮根据结果继续叙事。',
+    '叙事规则：',
+    '- 检定发生瞬间停住叙事，描述环境细节和NPC微表情即可',
+    '- 不要写"他相信了你"或"他识破了谎言"——这是服务器的工作',
+    '- 服务器掷骰 → 广播结果 → 下一轮你根据结果继续',
   ].filter(Boolean).join('\n');
 }
 
@@ -54,7 +50,7 @@ export function buildDmSystemPrompt(aiConfig = {}) {
 // ============================================================
 export function buildDmUserContext({
   room, roster, recent, recentRolls, moduleContext,
-  moduleJsonContext, playerStateJson, contestContext
+  moduleJsonContext, playerStateJson
 }) {
   const parts = [
     `房间：${room.name} (${room.code})`,
@@ -73,10 +69,6 @@ export function buildDmUserContext({
 
   if (playerStateJson) {
     parts.push(`调查员状态（JSON）：\n${playerStateJson}`);
-  }
-
-  if (contestContext) {
-    parts.push(contestContext);
   }
 
   parts.push(

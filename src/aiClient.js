@@ -126,7 +126,7 @@ function trimToBudget(text, maxTokens, label) {
   return result || text.slice(0, maxTokens * 4);
 }
 
-export function buildDmMessages({ room, participants, messages, diceRolls = [], moduleSegments = [], playerStates = [], moduleJson = null, contestResult = null }) {
+export function buildDmMessages({ room, participants, messages, diceRolls = [], moduleSegments = [], playerStates = [], moduleJson = null }) {
   const aiConfig = room.aiConfig || {};
   const tokenBudget = Number(aiConfig.tokenBudget) || DEFAULT_TOKEN_BUDGET;
   // Reserve ~800 tokens for system prompt + overhead
@@ -268,31 +268,13 @@ export function buildDmMessages({ room, participants, messages, diceRolls = [], 
 
   const estimatedTotal = estimateTokens(userContent) + 200;
 
-  // 前置检定结果
-  let contestContext = '';
-  if (contestResult) {
-    const { detected, check, npcName, npcSkill, playerName } = contestResult;
-    const won = check.winner === 'player';
-    contestContext = [
-      '=== 前置检定结果（已由服务器执行，请据此叙事） ===',
-      `${detected.label}：${playerName} 的 ${detected.skill}(${detected.skillValue}) vs ${npcName} 的 心理学(${npcSkill})`,
-      `调查员 1d100 = ${check.player.roll} → ${check.player.successLevel}${check.player.isCritical ? ' CRITICAL' : ''}`,
-      `${npcName} 1d100 = ${check.npc.roll} → ${check.npc.successLevel}`,
-      `结果：${won ? '调查员成功' : (check.winner === 'npc' ? 'NPC识破/抵抗成功' : '平局')}`,
-      won
-        ? `请描述 NPC 被${detected.skill}成功后的反应。`
-        : `请描述 NPC 识破了玩家的${detected.skill}，并做出相应反应。`
-    ].join('\n');
-  }
-
   const userContext = buildDmUserContext({
     room, roster,
     recent: recent.length > 0 ? recent.join('\n') : '暂无聊天',
     recentRolls: recentRolls.length > 0 ? recentRolls.join('\n') : '暂无骰子',
     moduleContext,
     moduleJsonContext,
-    playerStateJson: playerStateJson || '',
-    contestContext
+    playerStateJson: playerStateJson || ''
   });
 
   return [
