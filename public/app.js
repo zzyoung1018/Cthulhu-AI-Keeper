@@ -914,34 +914,34 @@ function renderProfile() {
 }
 
 function renderProfileForm() {
-  if (!state.participant) return;
-  if (!els.occupationSelect || !els.skillsTable) return;
+  if (!state.participant) return toast('无角色数据');
   const sheet = currentSheet();
 
-  // 填充职业下拉
-  els.occupationSelect.innerHTML = '<option value="">自定义</option>';
-  for (const [name] of Object.entries(occupationTemplates)) {
-    if (!name) continue;
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = name;
-    els.occupationSelect.append(opt);
-  }
-  // 匹配当前职业
-  const currentOcc = sheet.investigator?.occupation || '';
-  const matched = Object.keys(occupationTemplates).find(
-    (o) => o === currentOcc || currentOcc.includes(o)
-  );
-  els.occupationSelect.value = matched || '';
+  try {
+    if (!els.occupationSelect) return toast('缺少 #occupationSelect');
+    els.occupationSelect.innerHTML = '<option value="">自定义</option>';
+    for (const [name] of Object.entries(occupationTemplates)) {
+      if (!name) continue;
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      els.occupationSelect.append(opt);
+    }
+    const currentOcc = sheet.investigator?.occupation || '';
+    const matched = Object.keys(occupationTemplates).find(o => o === currentOcc || currentOcc.includes(o));
+    els.occupationSelect.value = matched || '';
+  } catch (e) { return toast('职业下拉失败: ' + e.message); }
 
-  setTextField('investigator.name', sheet.investigator?.name || state.participant.characterName || '');
-  setTextField('investigator.occupation', sheet.investigator?.occupation || '');
-  setTextField('investigator.age', sheet.investigator?.age || '');
-  setTextField('investigator.residence', sheet.investigator?.residence || '');
-  setTextField('weaponsText', weaponLines(sheet.weapons));
-  for (const field of textSectionFields) setTextField(field, sheet[field] || '');
-  renderCharacteristicInputs(sheet);
-  renderSkills(sheet);
+  try { setTextField('investigator.name', sheet.investigator?.name || state.participant.characterName || ''); } catch (e) { return toast('name失败: ' + e.message); }
+  try { setTextField('investigator.occupation', sheet.investigator?.occupation || ''); } catch (e) { return toast('occupation失败: ' + e.message); }
+  try { setTextField('investigator.age', sheet.investigator?.age || ''); } catch (e) { return toast('age失败: ' + e.message); }
+  try { setTextField('investigator.residence', sheet.investigator?.residence || ''); } catch (e) { return toast('residence失败: ' + e.message); }
+  try { setTextField('weaponsText', weaponLines(sheet.weapons)); } catch (e) { return toast('weapons失败: ' + e.message); }
+  for (const field of textSectionFields) {
+    try { setTextField(field, sheet[field] || ''); } catch (e) { return toast(field + '失败: ' + e.message); }
+  }
+
+  try { renderCharacteristicInputs(sheet); } catch (e) { return toast('属性渲染失败: ' + e.message); }
+  try { renderSkills(sheet); } catch (e) { return toast('技能渲染失败: ' + e.message); }
 }
 
 // 职业选择变化时重渲染技能
@@ -1279,20 +1279,8 @@ els.profileForm.addEventListener('submit', async (event) => {
 // 角色卡弹窗
 els.btnEditCharacter.addEventListener('click', () => {
   try {
-    // 调试：检查关键元素
-    const missing = [];
-    if (!els.characterDialog) missing.push('characterDialog');
-    if (!els.occupationSelect) missing.push('occupationSelect');
-    if (!els.skillsTable) missing.push('skillsTable');
-    if (!els.profileForm) missing.push('profileForm');
-    if (!els.characteristicsGrid) missing.push('characteristicsGrid');
-    if (!els.occPtsRemaining) missing.push('occPtsRemaining');
-    if (!els.intPtsRemaining) missing.push('intPtsRemaining');
-    if (missing.length > 0) {
-      toast('缺失元素: ' + missing.join(', '));
-      return;
-    }
     renderProfileForm();
+    if (!els.characterDialog) { toast('缺少characterDialog'); return; }
     els.characterDialog.showModal();
   } catch (e) {
     console.error(e);
