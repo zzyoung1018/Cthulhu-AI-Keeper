@@ -145,8 +145,8 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
     try {
       const aiMessages = buildDmMessages(state);
-      // Append structured output instruction
-      aiMessages.push({ role: 'user', content: buildStructuredOutputPrompt() });
+      // 结构化输出指令作为 system 消息，优先级最高
+      aiMessages.splice(1, 0, { role: 'system', content: buildStructuredOutputPrompt() });
       const taskAiConfig = roomRuntimeAiConfig(config.ai, database.getRoomAiSettings(code));
       for await (const chunk of streamChatCompletion(taskAiConfig, aiMessages)) {
         assertTaskNotCancelled(taskUid);

@@ -17,6 +17,12 @@ export function buildDmSystemPrompt(aiConfig = {}) {
     aiConfig.contentBoundaries ? `内容限制和游戏边界：${aiConfig.contentBoundaries}` : '',
     '如果资料不足，优先基于已有剧情摘要、角色卡、人物状态和最近聊天继续。',
     '',
+    '【NPC行为铁则】',
+    'NPC 绝对不能凭直觉自动识破玩家的谎言。',
+    'NPC 绝对不能凭经验自动发现潜行的玩家。',
+    'NPC 绝对不能自动赢得任何对抗。',
+    '每次玩家对NPC采取对抗性行动，你都必须返回 opposed_checks，让服务器掷骰判定。',
+    '',
     '【极其重要 - 禁止行动建议】',
     '- 你的回复末尾绝对不允许出现任何形式的行动建议列表。',
     '- 禁止的句式包括但不限于："你可以…"、"你们可以…"、"接下来…"、"…也是一个选择"。',
@@ -132,7 +138,14 @@ export function buildIntroUserContext({ moduleTitle, maxPlayers, moduleContext }
 // ============================================================
 export function buildStructuredOutputPrompt() {
   return [
-    '在你完成叙事后，请附加一个 JSON 代码块，包含你提议的结构化事件。格式如下：',
+    '【强制步骤 - 必须在叙事前完成】',
+    '1. 分析玩家最近一条 ACTION 消息。判断是否涉及：撒谎/欺骗、恐吓/威胁、说服/谈判、',
+    '   魅惑/引诱、潜入/跟踪、偷窃、偷袭/刺杀、或其他有对手、有失败后果的行为。',
+    '2. 如果是 → 你必须在下方 JSON 中返回 opposed_checks。叙事部分只描述 NPC 的微表情',
+    '   和动作，不要在叙事中宣布"他相信了"或"他识破了"。等待服务器掷骰。',
+    '3. 如果不是 → opposed_checks 可以省略。',
+    '',
+    '在你完成叙事后，请附加一个 JSON 代码块。格式如下：',
     '',
     '```json',
     JSON.stringify({
