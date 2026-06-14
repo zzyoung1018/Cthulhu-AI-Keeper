@@ -264,6 +264,18 @@
       </div>
     </dialog>
 
+    <!-- AI生成中覆盖层 -->
+    <dialog id="aiGeneratingDialog">
+      <div class="dialog-content ai-generating-overlay">
+        <div class="ai-generating-header">
+          <span class="ai-generating-spinner"></span>
+          <span id="aiGeneratingLabel">AI 正在生成中…</span>
+        </div>
+        <div class="ai-generating-body" id="aiGeneratingBody"></div>
+        <div class="ai-generating-hint">内容将实时流式展示，生成完成后自动关闭</div>
+      </div>
+    </dialog>
+
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script type="module" src="/app.js?v=20260614-lobby"></script>
   </body>

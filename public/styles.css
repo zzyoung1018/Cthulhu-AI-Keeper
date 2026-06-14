@@ -1076,6 +1076,65 @@ dialog::backdrop {
   margin: 0 0 8px;
 }
 
+/* === AI生成中遮罩 === */
+#aiGeneratingDialog {
+  max-width: 520px;
+  width: 70vw;
+  border-color: rgba(215, 173, 95, 0.45);
+}
+
+.ai-generating-overlay {
+  padding: 20px 24px;
+  text-align: center;
+}
+
+.ai-generating-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.ai-generating-spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(215, 173, 95, 0.3);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: ai-spin 0.7s linear infinite;
+}
+
+@keyframes ai-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ai-generating-body {
+  max-height: 40vh;
+  overflow-y: auto;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+  color: var(--text);
+  font-size: 0.9rem;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  min-height: 60px;
+}
+
+.ai-generating-hint {
+  margin-top: 10px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
 /* === 弹窗内表单样式 === */
 dialog .form {
   display: flex;

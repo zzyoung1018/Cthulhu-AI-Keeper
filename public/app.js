@@ -103,6 +103,10 @@ const els = {
   charSheetDialog: document.querySelector('#charSheetDialog'),
   charSheetTitle: document.querySelector('#charSheetTitle'),
   charSheetBody: document.querySelector('#charSheetBody'),
+  // AI 生成遮罩
+  aiGeneratingDialog: document.querySelector('#aiGeneratingDialog'),
+  aiGeneratingLabel: document.querySelector('#aiGeneratingLabel'),
+  aiGeneratingBody: document.querySelector('#aiGeneratingBody'),
   // 摘要
   summaryForm: document.querySelector('#summaryForm'),
   summaryPanel: document.querySelector('#summaryPanel'),
@@ -975,6 +979,13 @@ function connectEvents() {
       updateMessageNode(message);
     }
     setAiBusy(true);
+    // 显示 AI 生成遮罩
+    els.aiGeneratingBody.textContent = content || '';
+    if (!els.aiGeneratingDialog.open) {
+      els.aiGeneratingLabel.textContent = 'AI 正在生成中…';
+      els.aiGeneratingDialog.showModal();
+    }
+    els.aiGeneratingBody.scrollTop = els.aiGeneratingBody.scrollHeight;
   });
 
   source.addEventListener('message_completed', (event) => {
@@ -983,6 +994,19 @@ function connectEvents() {
     if (index >= 0) state.messages[index] = message;
     updateMessageNode(message);
     setAiBusy(false);
+    // 关闭 AI 生成遮罩
+    els.aiGeneratingDialog.close();
+  });
+
+  source.addEventListener('message_error', (event) => {
+    const { message } = JSON.parse(event.data);
+    const index = state.messages.findIndex((item) => item.id === message.id);
+    if (index >= 0) state.messages[index] = message;
+    updateMessageNode(message);
+    setAiBusy(false);
+    // 关闭 AI 生成遮罩
+    els.aiGeneratingDialog.close();
+    toast('AI 生成失败');
   });
 
   source.addEventListener('ai_task_updated', (event) => {
