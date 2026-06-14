@@ -23,13 +23,13 @@ const EVENT_SCHEMAS = {
     maxItems: 8,
     itemSchema: {
       type: 'object',
-      required: ['activePlayerId', 'activeSkill', 'passiveSkill', 'difficulty', 'reason'],
+      required: ['activePlayerId', 'activeSkill', 'passiveNpcName', 'passiveSkill', 'reason'],
       properties: {
         activePlayerId: 'string',
         activeSkill: 'string',
         passiveNpcName: 'string',
         passiveSkill: 'string',
-        difficulty: 'string',
+        contestType: 'string',
         reason: 'string',
         playerHint: 'string',
         successResult: 'string',

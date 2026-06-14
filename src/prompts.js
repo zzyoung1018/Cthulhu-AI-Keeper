@@ -25,10 +25,26 @@ export function buildDmSystemPrompt(aiConfig = {}) {
     '- 让玩家自己思考下一步。不要替他们思考。',
     '- 如果玩家行动不明确，追问"你具体想怎么做？"，仅此一句，不提供任何选项。',
     '',
-    '【社交对抗】',
-    '- 玩家对NPC撒谎、恐吓、说服时，你必须在 structured events 中返回 opposed_check。',
-    '- 此时你的叙事部分应只描述NPC的表情、语气变化，不要宣布结果。',
-    '- 服务器会掷骰并广播结果。你下一轮根据骰子结果继续叙事。',
+    '【对抗检定 - 极其重要】',
+    '当玩家尝试以下任何有风险、有对手、有失败后果的行动时，你必须在 structured events 中返回 opposed_checks：',
+    '',
+    '社交对抗（activeSkill = 话术/恐吓/魅惑/说服，passiveSkill = 心理学）：',
+    '- 对NPC撒谎、恐吓、说服、魅惑、套话、讨价还价',
+    '',
+    '潜行对抗（activeSkill = 潜行/乔装/妙手，passiveSkill = 侦查/聆听）：',
+    '- 潜入、跟踪、偷窃、隐藏、伪装、脱身',
+    '',
+    '战斗对抗（activeSkill = 格斗/射击/投掷/闪避，passiveSkill = 闪避/格斗/侦查）：',
+    '- 偷袭、刺杀、先手攻击、躲避追击',
+    '',
+    '道具/技术对抗（activeSkill = 锁匠/电气维修/机械维修/驾驶，passiveSkill = 对应难度技能）：',
+    '- 开锁、破解陷阱、破坏设备、危险驾驶',
+    '',
+    '对抗规则说明：',
+    '- NPC 的 passiveSkill 值会被转化为玩家的难度等级（<30=REGULAR, 30-59=HARD, 60-89=EXTREME）',
+    '- 玩家掷 1d100，服务器判定成功等级（含大成功/大失败）并广播结果',
+    '- 你的叙事部分只描述NPC的反应，不要预判结果',
+    '- 服务器会广播骰子结果。你下一轮根据结果继续。',
   ].filter(Boolean).join('\n');
 }
 
@@ -130,13 +146,24 @@ export function buildStructuredOutputPrompt() {
         {
           activePlayerId: '<playerId>',
           activeSkill: '话术',
-          passiveNpcName: '老管家',
+          passiveNpcName: '陈友',
           passiveSkill: '心理学',
-          difficulty: 'REGULAR',
+          contestType: 'social',
           reason: '玩家对NPC撒谎',
-          playerHint: '老管家眯起眼睛，似乎在判断你的话是否可信…',
-          successResult: '老管家相信了你的说法',
-          failureResult: '老管家识破了你的谎言'
+          playerHint: '陈友眯起眼睛，似乎在判断你的话是否可信…',
+          successResult: '陈友相信了你的说法，放松了警惕',
+          failureResult: '陈友识破了你的谎言，态度变得冷淡'
+        },
+        {
+          activePlayerId: '<playerId>',
+          activeSkill: '潜行',
+          passiveNpcName: '巡逻保安',
+          passiveSkill: '侦查',
+          contestType: 'stealth',
+          reason: '玩家试图潜入档案室',
+          playerHint: '你贴着墙壁移动，走廊尽头传来脚步声…',
+          successResult: '你悄无声息地溜进了档案室',
+          failureResult: '保安发现了你的身影，大喊站住'
         }
       ],
       proposed_state_changes: [

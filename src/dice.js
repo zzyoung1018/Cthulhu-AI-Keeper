@@ -309,6 +309,61 @@ export function dispatchDiceRoll({ rollType, expression, target, skillName, skil
   return { result: rollDiceExpression(expression), label: '' };
 }
 
+// 将 NPC 技能值转化为玩家检定的难度等级
+// CoC 7e 对抗规则：NPC 越强，玩家需要越高的成功等级
+export function npcSkillToDifficulty(npcSkill) {
+  const s = Number(npcSkill);
+  if (!Number.isFinite(s) || s < 1) return 'REGULAR';
+  if (s < 30) return 'REGULAR';
+  if (s < 60) return 'HARD';
+  if (s < 90) return 'EXTREME';
+  return 'EXTREME'; // 90+ NPC needs EXTREME success; CRITICAL always wins
+}
+
+// 对抗检定：玩家单方面掷骰，NPC 技能转化为难度
+// 返回详细的成功/大成功/大失败信息
+export function rollContestedCheck({
+  playerSkill,
+  npcSkill,
+  npcName = 'NPC',
+  playerName = '玩家',
+  bonusDice = 0,
+  penaltyDice = 0,
+  rng = Math.random
+}) {
+  assertInteger(playerSkill, 'Player skill', 0, 100);
+  const npcVal = Number(npcSkill);
+  const difficulty = npcSkillToDifficulty(npcVal);
+  const roll = rollCocCheck({ target: playerSkill, difficulty, bonusDice, penaltyDice, rng });
+
+  const isCritical = roll.successLevel === 'CRITICAL';
+  const isFumble = roll.successLevel === 'FUMBLE';
+
+  // CRITICAL always wins, FUMBLE always loses, otherwise difficulty determines
+  const playerWins = isCritical ? true : (isFumble ? false : roll.passed);
+
+  return {
+    type: 'contested_check',
+    expression: '1d100',
+    playerName,
+    npcName,
+    playerSkill,
+    npcSkill: npcVal,
+    difficulty,
+    roll: roll.total,
+    successLevel: roll.successLevel,
+    isCritical,
+    isFumble,
+    passed: roll.passed,
+    playerWins,
+    bonusDice,
+    penaltyDice,
+    description: playerWins
+      ? (isCritical ? '🎯 大成功！完美通过' : `${roll.successLevel} 成功，对抗通过`)
+      : (isFumble ? '💀 大失败！严重失误' : `${roll.successLevel}，对抗失败`)
+  };
+}
+
 export function formatRollSummary({ participantName, label, result }) {
   const prefix = `${participantName} · ${label || '骰子'}`;
 

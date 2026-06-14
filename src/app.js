@@ -10,7 +10,7 @@ import { assertAiSettingsInput, roomRuntimeAiConfig } from './aiSettings.js';
 import { getSkillTarget } from './character.js';
 import { isAiConfigured } from './config.js';
 import { createDatabase } from './db.js';
-import { dispatchDiceRoll, formatRollSummary, rollOpposedCheck } from './dice.js';
+import { dispatchDiceRoll, formatRollSummary, rollContestedCheck } from './dice.js';
 import { assertString, optionalString, HttpError } from './errors.js';
 import { exportGameJson, exportGameMarkdown } from './export.js';
 import { readJson, sendError, sendJson, serveStatic } from './http.js';
@@ -211,7 +211,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
   function applyStructuredEvents(code, taskUid, events, dmMessageId) {
     const state = database.getRoomState(code, 80);
 
-    // Process opposed checks (social contests)
+    // Process opposed/contested checks (all types: social, stealth, combat, item)
     if (Array.isArray(events.opposed_checks)) {
       for (const opp of events.opposed_checks) {
         try {
@@ -221,39 +221,60 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
           const playerSkill = getSkillTarget(participant.characterSheet, opp.activeSkill);
           if (!Number.isInteger(playerSkill)) continue;
 
-          // NPC passive skill: try module data first, fallback to difficulty map
-          let npcSkill = null;
+          // NPC passive skill: try module data first, fallback based on NPC role
+          let npcSkill = 50; // default
           if (state.moduleJson?.npcs) {
             const npc = state.moduleJson.npcs.find((n) =>
               n.name === opp.passiveNpcName || n.npc_id === opp.passiveNpcName
             );
-            if (npc?.skills?.[opp.passiveSkill]) {
-              npcSkill = Number(npc.skills[opp.passiveSkill]);
-            } else if (npc?.attributes?.[opp.passiveSkill]) {
-              npcSkill = Number(npc.attributes[opp.passiveSkill]);
+            if (npc) {
+              if (npc.skills?.[opp.passiveSkill]) {
+                npcSkill = Number(npc.skills[opp.passiveSkill]);
+              } else if (npc.attributes?.[opp.passiveSkill]) {
+                npcSkill = Number(npc.attributes[opp.passiveSkill]);
+              } else if (npc.role) {
+                // Estimate based on role
+                const role = String(npc.role).toLowerCase();
+                if (/警察|侦探|保安/.test(role)) npcSkill = 65;
+                else if (/干部|医生|教师/.test(role)) npcSkill = 55;
+                else if (/农民|工人|司机/.test(role)) npcSkill = 40;
+                else if (/老人|小孩/.test(role)) npcSkill = 35;
+              }
             }
           }
-          if (!Number.isInteger(npcSkill) || npcSkill <= 0) {
-            const npcSkillMap = { REGULAR: 50, HARD: 70, EXTREME: 90 };
-            npcSkill = npcSkillMap[opp.difficulty] || 50;
-          }
 
-          const check = rollOpposedCheck({
-            activeTarget: playerSkill,
-            passiveTarget: npcSkill
+          const playerName = participant.characterName || participant.displayName;
+          const check = rollContestedCheck({
+            playerSkill,
+            npcSkill,
+            npcName: opp.passiveNpcName || 'NPC',
+            playerName
           });
 
-          const playerWon = check.winner === 'active';
-          const resultLabel = opp.playerHint
-            ? `${opp.playerHint}\n${playerWon ? (opp.successResult || '成功') : (opp.failureResult || '失败')}`
-            : `${opp.reason} — ${playerWon ? '玩家成功' : 'NPC胜出'}`;
+          const contestTypeLabel = {
+            social: '🎭 社交对抗', stealth: '🥷 潜行对抗',
+            combat: '⚔️ 战斗对抗', item: '🔧 技术对抗'
+          }[opp.contestType] || '⚡ 对抗检定';
+
+          const detailLines = [
+            `${contestTypeLabel}：${playerName} 的 ${opp.activeSkill}(${playerSkill}) vs ${opp.passiveNpcName} 的 ${opp.passiveSkill}(${npcSkill})`,
+            `NPC 技能 ${npcSkill} → 玩家需要 ${check.difficulty} 成功`,
+            `玩家 1d100 = ${check.roll}，${check.successLevel}${check.isCritical ? ' 🎯大成功！' : ''}${check.isFumble ? ' 💀大失败！' : ''}`,
+            `结果：${check.description}`
+          ];
+
+          if (check.playerWins && opp.successResult) {
+            detailLines.push('', opp.successResult);
+          } else if (!check.playerWins && opp.failureResult) {
+            detailLines.push('', opp.failureResult);
+          }
 
           const roll = database.createDiceRoll({
             code,
             playerId: opp.activePlayerId,
-            rollType: 'opposed_check',
+            rollType: 'contested_check',
             expression: '1d100',
-            label: `${opp.activeSkill} vs ${opp.passiveNpcName || 'NPC'}(${opp.passiveSkill})`,
+            label: `${opp.activeSkill} vs ${opp.passiveNpcName}(${opp.passiveSkill})`,
             result: check
           });
 
@@ -261,15 +282,8 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
             code,
             authorType: 'system',
             messageType: 'SYSTEM',
-            displayName: '社交对抗',
-            content: [
-              `🎭 ${participant.characterName || participant.displayName} 的 ${opp.activeSkill}(${playerSkill}) vs ${opp.passiveNpcName || 'NPC'} 的 ${opp.passiveSkill}(${npcSkill})`,
-              `玩家 1d100 = ${check.active.roll}，${check.active.successLevel}`,
-              `NPC 1d100 = ${check.passive.roll}，${check.passive.successLevel}`,
-              `结果：${playerWon ? '玩家胜' : 'NPC胜'}`,
-              '',
-              resultLabel
-            ].join('\n'),
+            displayName: '对抗检定',
+            content: detailLines.join('\n'),
             status: 'complete'
           });
 
