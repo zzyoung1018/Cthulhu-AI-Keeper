@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractStructuredEvents, validateStructuredEvents, formatEventsForPrompt } from '../src/aiOutput.js';
+import { extractStructuredEvents, validateStructuredEvents } from '../src/aiOutput.js';
+import { buildStructuredOutputPrompt } from '../src/prompts.js';
 
 test('extracts structured events from AI response with JSON block', () => {
   const text = [
@@ -126,7 +127,7 @@ test('rejects array items exceeding max limits', () => {
 });
 
 test('formats structured output instructions for AI prompt', () => {
-  const instructions = formatEventsForPrompt();
+  const instructions = buildStructuredOutputPrompt();
 
   assert.match(instructions, /required_checks/);
   assert.match(instructions, /proposed_state_changes/);

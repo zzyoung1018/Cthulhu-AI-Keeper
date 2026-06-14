@@ -3,7 +3,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { buildDmMessages, streamChatCompletion } from './aiClient.js';
-import { extractStructuredEvents, formatEventsForPrompt, validateStructuredEvents } from './aiOutput.js';
+import { extractStructuredEvents, validateStructuredEvents } from './aiOutput.js';
+import { buildIntroSystemPrompt, buildIntroUserContext, buildStructuredOutputPrompt } from './prompts.js';
 import { RoomAiQueue } from './aiQueue.js';
 import { assertAiSettingsInput, roomRuntimeAiConfig } from './aiSettings.js';
 import { getSkillTarget } from './character.js';
@@ -125,7 +126,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     try {
       const aiMessages = buildDmMessages(state);
       // Append structured output instruction
-      aiMessages.push({ role: 'user', content: formatEventsForPrompt() });
+      aiMessages.push({ role: 'user', content: buildStructuredOutputPrompt() });
       const taskAiConfig = roomRuntimeAiConfig(config.ai, database.getRoomAiSettings(code));
       for await (const chunk of streamChatCompletion(taskAiConfig, aiMessages)) {
         assertTaskNotCancelled(taskUid);
@@ -396,43 +397,12 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         .map((s) => `[${s.scene || s.title}]\n${s.content}`).join('\n\n');
     }
 
-    const systemMsg = [
-      '你是 CoC Online 的 AI 守秘人（Keeper）。当前房间刚创建，处于准备阶段。',
-      '你的任务是：向即将加入的玩家介绍本次模组，并指导他们创建适合的调查员角色。',
-      '',
-      '请按以下结构输出(使用Markdown格式)：',
-      '## 模组简介',
-      '- 时代背景、地理位置、整体氛围',
-      '- 调查员的公开身份和调查目标',
-      '',
-      '## 调查员创建指南',
-      '- 建议的职业方向（列出2-4个适合的职业及理由）',
-      '- 推荐的核心技能（列出5-8个，说明为什么重要）',
-      '- 角色关系建议（调查员之间、或与NPC的关系）',
-      '',
-      '## 注意事项',
-      '- 创建角色时必须填写调查员姓名',
-      '- 属性值范围0-100，建议核心属性不低于40',
-      '- 技能默认值已预设，可根据职业调整',
-      '- 所有玩家准备好角色后，房主即可开始游戏',
-      '',
-      '重要规则：',
-      '- 不要泄露守秘人秘密、幕后真相或未发现的线索',
-      '- 不要替玩家决定角色的背景故事，只提供建议方向',
-      '- 回复应友好、专业，适合直接展示给所有玩家',
-      `叙事风格：${roomCfg.dmStyle || '悬疑、克制，不替玩家做决定'}`,
-      `规则严格度：${roomCfg.rulesStrictness || 'STANDARD'}`
-    ].join('\n');
-
-    const userMsg = [
-      `模组名称：${state.room.moduleTitle || '未知模组'}`,
-      `游玩人数：${state.room.maxPlayers || 5} 人`,
-      `系统：Call of Cthulhu 7th Edition`,
-      '',
-      moduleContext || '暂无模组内容',
-      '',
-      '请生成准备阶段的模组介绍和角色创建指南。'
-    ].join('\n');
+    const systemMsg = buildIntroSystemPrompt(roomCfg);
+    const userMsg = buildIntroUserContext({
+      moduleTitle: state.room.moduleTitle,
+      maxPlayers: state.room.maxPlayers,
+      moduleContext
+    });
 
     setAiTaskStatus(code, taskUid, 'GENERATING');
 
