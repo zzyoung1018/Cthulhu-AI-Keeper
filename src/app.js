@@ -332,6 +332,96 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     queue.enqueue(room.id, () => generateDmReply(code, taskUid));
   }
 
+  function enqueueModuleIntro(code, taskUid) {
+    const { room } = database.getRoomState(code, 1);
+    queue.enqueue(room.id, () => generateModuleIntro(code, taskUid));
+  }
+
+  async function generateModuleIntro(code, taskUid) {
+    setAiTaskStatus(code, taskUid, 'RETRIEVING');
+
+    const state = database.getRoomState(code, 80);
+    const roomCfg = state.room.aiConfig || {};
+    const moduleSegments = database.getRoomModuleSegments(code, 40);
+
+    // Build intro context from module data
+    const title = state.room.moduleTitle || '未知模组';
+    const segments = moduleSegments.slice(0, 8).map((s) => `[${s.scene || s.title}]\n${s.content}`).join('\n\n');
+    const systemMsg = [
+      '你是 CoC Online 的 AI 守秘人。当前房间刚创建，处于准备阶段。',
+      '你的任务是：向玩家介绍即将进行的模组，并说明创建角色时需要满足的基本要求。',
+      '',
+      '请按以下结构输出：',
+      '1. 模组简介（时代、地点、氛围）',
+      '2. 调查员要求（建议职业、技能、人数）',
+      '3. 创建角色卡时的注意事项',
+      '',
+      `叙事风格：${roomCfg.dmStyle || '悬疑、克制'}`,
+      `规则严格度：${roomCfg.rulesStrictness || 'STANDARD'}`
+    ].join('\n');
+
+    const userMsg = [
+      `模组名称：${title}`,
+      `游玩人数：${state.room.maxPlayers || 5} 人`,
+      `系统：Call of Cthulhu 7th Edition`,
+      '',
+      '模组内容片段：',
+      segments || '暂无详细内容',
+      '',
+      '请生成模组介绍和角色创建指南。回复要友好、清晰，适合直接展示给玩家。'
+    ].join('\n');
+
+    setAiTaskStatus(code, taskUid, 'GENERATING');
+
+    const dmMessage = database.createMessage({
+      code,
+      authorType: 'dm',
+      messageType: 'AI_DM',
+      displayName: 'AI 守秘人',
+      content: '',
+      status: 'streaming'
+    });
+    broadcastAiTask(code, database.attachAiTaskMessage({ taskUid, messageId: dmMessage.id }));
+    hub.broadcast(code, 'message_created', { message: dmMessage });
+    setAiTaskStatus(code, taskUid, 'STREAMING');
+
+    let content = '';
+    let lastPersistedAt = Date.now();
+
+    try {
+      const taskAiConfig = roomRuntimeAiConfig(config.ai, database.getRoomAiSettings(code));
+      for await (const chunk of streamChatCompletion(taskAiConfig, [
+        { role: 'system', content: systemMsg },
+        { role: 'user', content: userMsg }
+      ])) {
+        content += chunk;
+        hub.broadcast(code, 'message_delta', { id: dmMessage.id, delta: chunk, content });
+
+        if (Date.now() - lastPersistedAt > 750) {
+          database.updateMessage({ id: dmMessage.id, content, status: 'streaming' });
+          lastPersistedAt = Date.now();
+        }
+      }
+
+      setAiTaskStatus(code, taskUid, 'VALIDATING');
+      const completed = database.updateMessage({
+        id: dmMessage.id,
+        content: content.trim() || '（AI 未能生成模组介绍，请房主手动说明。）',
+        status: 'complete'
+      });
+      setAiTaskStatus(code, taskUid, 'COMPLETED');
+      hub.broadcast(code, 'message_completed', { message: completed });
+    } catch (error) {
+      const failed = database.updateMessage({
+        id: dmMessage.id,
+        content: `${content}\n\n[生成失败：${publicError(error)}]`.trim(),
+        status: 'error'
+      });
+      setAiTaskStatus(code, taskUid, 'FAILED', publicError(error));
+      hub.broadcast(code, 'message_error', { message: failed });
+    }
+  }
+
   function createSystemMessage(code, content) {
     return database.createMessage({
       code,
@@ -476,6 +566,16 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       if (!Number.isInteger(moduleId)) throw new HttpError(400, 'moduleId is required');
       const maxPlayers = Number(body.maxPlayers) || 5;
       const result = database.createRoom({ name, playerId, displayName, moduleId, maxPlayers });
+
+      // 触发 AI 生成模组介绍和角色要求
+      const introTask = database.createAiTask({
+        code: result.room.code,
+        playerId,
+        idempotencyKey: `intro:${result.room.code}`
+      });
+      broadcastAiTask(result.room.code, introTask.task);
+      if (introTask.created) enqueueModuleIntro(result.room.code, introTask.task.uid);
+
       sendJson(response, 201, {
         ...result,
         participants: [result.participant],
