@@ -1,3 +1,9 @@
+window.onerror = function(msg, url, line) {
+  document.body.insertAdjacentHTML('beforeend',
+    '<div style=\"position:fixed;top:0;left:0;right:0;background:red;color:#fff;padding:10px;z-index:99999;font-size:14px\">' +
+    'JS错误: ' + msg + ' (行' + line + ')</div>');
+};
+
 function createPlayerId() {
   if (globalThis.crypto?.randomUUID) {
     return globalThis.crypto.randomUUID();
