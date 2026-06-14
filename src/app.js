@@ -64,6 +64,18 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     hub.broadcast(code, 'ai_task_updated', { task });
   }
 
+  // 每房间 AI 诊断日志
+  const _aiLogs = new Map();
+
+  function addAiLog(code, entry) {
+    const logs = _aiLogs.get(code) || [];
+    logs.push({ ...entry, time: new Date().toISOString() });
+    if (logs.length > 50) logs.shift();
+    _aiLogs.set(code, logs);
+    // 同时输出到 console
+    console.error(`[ai-log ${code}] ${entry.stage}: ${JSON.stringify(entry.summary || entry)}`);
+  }
+
   function setAiTaskStatus(code, taskUid, status, error = '') {
     const task = database.updateAiTaskStatus({ taskUid, status, error });
     if (task) broadcastAiTask(code, task);
@@ -165,6 +177,20 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       const { narrative, events } = extractStructuredEvents(content);
       const { valid, rejected, issues } = validateStructuredEvents(events);
 
+      // 诊断日志
+      addAiLog(code, {
+        stage: 'structured-events',
+        taskUid,
+        hasJsonBlock: Object.keys(events).length > 0,
+        eventKeys: Object.keys(events),
+        validKeys: Object.keys(valid),
+        rejectedKeys: rejected,
+        issues,
+        hasOpposedChecks: Array.isArray(events.opposed_checks) && events.opposed_checks.length > 0,
+        opposedCount: Array.isArray(events.opposed_checks) ? events.opposed_checks.length : 0,
+        rawResponseSnippet: content.slice(-500)
+      });
+
       const narrationContent = narrative || content.trim() || '（DM 沉默片刻，等待玩家继续行动。）';
       const completed = database.updateMessage({
         id: dmMessage.id,
@@ -174,10 +200,12 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
       // Apply valid structured events
       if (Object.keys(valid).length > 0) {
+        addAiLog(code, { stage: 'apply-events', taskUid, keys: Object.keys(valid) });
         applyStructuredEvents(code, taskUid, valid, dmMessage.id);
       }
 
       if (rejected.length > 0) {
+        addAiLog(code, { stage: 'rejected-events', taskUid, rejected, issues });
         console.error('[ai-output] rejected events:', rejected, issues);
       }
 
@@ -194,13 +222,15 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         console.error('[ai-output] round record failed:', roundError.message);
       }
 
+      addAiLog(code, { stage: 'dm-completed', taskUid });
       setAiTaskStatus(code, taskUid, 'COMPLETED');
       hub.broadcast(code, 'message_completed', { message: completed });
     } catch (error) {
       const cancelled = error instanceof AiTaskCancelled;
+      addAiLog(code, { stage: 'dm-failed', taskUid, cancelled, error: publicError(error) });
       const failed = database.updateMessage({
         id: dmMessage.id,
-        content: `${content}\n\n[AI DM ${cancelled ? '已取消' : `生成失败：${publicError(error)}`}]`.trim(),
+        content: `${content}\n\n[AI DM ${cancelled ? '已取消' : '生成失败：' + publicError(error)}]`.trim(),
         status: 'error'
       });
       setAiTaskStatus(code, taskUid, cancelled ? 'CANCELLED' : 'FAILED', cancelled ? '' : publicError(error));
@@ -549,12 +579,14 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         content: content.trim() || '（AI 未能生成模组介绍，请房主手动说明。）',
         status: 'complete'
       });
+      addAiLog(code, { stage: 'intro-completed', taskUid });
       setAiTaskStatus(code, taskUid, 'COMPLETED');
       hub.broadcast(code, 'message_completed', { message: completed });
     } catch (error) {
+      addAiLog(code, { stage: 'intro-failed', taskUid, error: publicError(error) });
       const failed = database.updateMessage({
         id: dmMessage.id,
-        content: `${content}\n\n[生成失败：${publicError(error)}]`.trim(),
+        content: (content + '\n\n[生成失败：' + publicError(error) + ']').trim(),
         status: 'error'
       });
       setAiTaskStatus(code, taskUid, 'FAILED', publicError(error));
@@ -743,6 +775,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         // 房主离开 → 房间结束
         if (room.ownerPlayerId === playerId) {
           const ended = database.setRoomStatus({ code, playerId, status: 'ENDED' });
+          _aiLogs.delete(code);
           const msg = createSystemMessage(code, '房主离开了，房间已结束。');
           const state = database.getRoomState(code);
           hub.broadcast(code, 'room_state', state);
@@ -769,6 +802,10 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
           playerId,
           status: assertString(body.status, 'status', 20)
         });
+        // 房间结束或归档时清理诊断日志
+        if (room.status === 'ENDED' || room.status === 'ARCHIVED') {
+          _aiLogs.delete(code);
+        }
         const message = createSystemMessage(code, `房间状态变更为：${STATUS_LABELS[room.status] || room.status}`);
         const state = database.getRoomState(code);
         hub.broadcast(code, 'room_state', state);
@@ -1096,6 +1133,14 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         const state = database.getRoomState(code, { playerId });
         hub.broadcast(code, 'room_state', state);
         sendJson(response, 200, { ok: true });
+        return;
+      }
+
+      if (request.method === 'GET' && parts[3] === 'ai-log') {
+        const playerId = url.searchParams.get('playerId');
+        if (playerId) database.getParticipant(code, playerId);
+        const logs = _aiLogs.get(code) || [];
+        sendJson(response, 200, { logs: logs.slice(-30) });
         return;
       }
 
