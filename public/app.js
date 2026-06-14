@@ -709,31 +709,8 @@ function calculateSkillPoints(chars) {
 function renderSkills(sheet) {
   els.skillsTable.innerHTML = '';
   const occSkills = getOccupationSkills();
-  const chars = sheet.characteristics || {};
-  const pools = calculateSkillPoints(chars);
-  const current = collectSkillsFromTable();
   const skills = Object.entries({ ...defaultSkills, ...(sheet.skills || {}) })
     .sort(([left], [right]) => left.localeCompare(right, 'zh-Hans-CN'));
-
-  // 计算已使用的技能点
-  let usedOcc = 0, usedInt = 0;
-  for (const [name, val] of Object.entries(current)) {
-    const base = defaultSkills[name] || 0;
-    const spent = Math.max(0, val - base);
-    if (occSkills.includes(name)) {
-      usedOcc += spent;
-    } else {
-      usedInt += spent;
-    }
-  }
-
-  const remainingOcc = Math.max(0, pools.occupationPoints - usedOcc);
-  const remainingInt = Math.max(0, pools.interestPoints - usedInt);
-
-  els.occPtsRemaining.textContent = occSkills.length > 0
-    ? `${remainingOcc}/${pools.occupationPoints}`
-    : '--';
-  els.intPtsRemaining.textContent = `${remainingInt}/${pools.interestPoints}`;
 
   for (const [name, score] of skills) {
     const isOccSkill = occSkills.includes(name);
@@ -754,10 +731,29 @@ function renderSkills(sheet) {
     input.addEventListener('input', () => {
       const val = numberInRange(input.value, base, 0, 100);
       input.value = Math.max(base, val);
-      renderSkills(currentSheet()); // 重算点数
+      updateSkillPointsDisplay();
     });
     els.skillsTable.append(row);
   }
+  updateSkillPointsDisplay();
+}
+
+function updateSkillPointsDisplay() {
+  const occSkills = getOccupationSkills();
+  const chars = currentSheet().characteristics || {};
+  const pools = calculateSkillPoints(chars);
+  const current = collectSkillsFromTable();
+  let usedOcc = 0, usedInt = 0;
+  for (const [name, val] of Object.entries(current)) {
+    const base = defaultSkills[name] || 0;
+    const spent = Math.max(0, val - base);
+    if (occSkills.includes(name)) usedOcc += spent;
+    else usedInt += spent;
+  }
+  els.occPtsRemaining.textContent = occSkills.length > 0
+    ? `${Math.max(0, pools.occupationPoints - usedOcc)}/${pools.occupationPoints}`
+    : '--';
+  els.intPtsRemaining.textContent = `${Math.max(0, pools.interestPoints - usedInt)}/${pools.interestPoints}`;
 }
 
 function collectSkillsFromTable() {
