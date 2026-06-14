@@ -16,6 +16,7 @@ import { exportGameJson, exportGameMarkdown } from './export.js';
 import { readJson, sendError, sendJson, serveStatic } from './http.js';
 import { extractModuleText, scoreModuleSegment, segmentModuleText, validateModuleFile } from './moduleParser.js';
 import { readMultipartForm } from './multipart.js';
+import { detectContestedAction } from './checkDetector.js';
 import { capturePreRoundState, computeRollback, createRoundRecord } from './rounds.js';
 import { buildAllPlayerStates } from './playerState.js';
 import { RoomEventHub } from './sse.js';
@@ -64,6 +65,13 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     hub.broadcast(code, 'ai_task_updated', { task });
   }
 
+  // 暂存前置检定结果，供 generateDmReply 读取
+  const _pendingContestResults = new Map();
+
+  function getContestEmoji(type) {
+    return { social: '🎭', stealth: '🥷', combat: '⚔️', item: '🔧' }[type] || '⚡';
+  }
+
   function setAiTaskStatus(code, taskUid, status, error = '') {
     const task = database.updateAiTaskStatus({ taskUid, status, error });
     if (task) broadcastAiTask(code, task);
@@ -106,6 +114,10 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       .sort((a, b) => b.score - a.score || a.segment.sortOrder - b.segment.sortOrder)
       .slice(0, 6)
       .map((item) => item.segment);
+
+    // 读取前置检定结果（如果有）
+    state.contestResult = _pendingContestResults.get(code) || null;
+    _pendingContestResults.delete(code);
 
     // Build per-player state JSONs
     state.playerStates = buildAllPlayerStates(state.participants, state.room);
@@ -210,69 +222,6 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
   function applyStructuredEvents(code, taskUid, events, dmMessageId) {
     const state = database.getRoomState(code, 80);
-
-    // === 后端兜底检测：AI 漏掉的社交对抗自动补上 ===
-    if (!Array.isArray(events.opposed_checks) || events.opposed_checks.length === 0) {
-      const recentActions = state.messages.filter((m) => m.messageType === 'ACTION').slice(-3);
-      for (const action of recentActions) {
-        const content = String(action.content || '');
-
-        // 检测社交对抗关键词
-        const socialPatterns = [
-          { pattern: /欺诈|欺骗|撒谎|说谎|骗|哄|忽悠|隐瞒|伪装|冒充|假称|编造/, skill: '话术', contestType: 'social' },
-          { pattern: /恐吓|威胁|吓唬|警告.*不|再.*就杀了/, skill: '恐吓', contestType: 'social' },
-          { pattern: /说服|劝|求情|讲道理|谈条件|讨价还价/, skill: '说服', contestType: 'social' },
-          { pattern: /魅惑|勾引|调情|献媚|示好.*套/, skill: '魅惑', contestType: 'social' },
-          { pattern: /套话|打听.*消息|探.*口风|旁敲侧击/, skill: '话术', contestType: 'social' },
-        ];
-
-        let matchedPattern = null;
-        for (const p of socialPatterns) {
-          if (p.pattern.test(content)) {
-            matchedPattern = p;
-            break;
-          }
-        }
-        if (!matchedPattern) continue;
-
-        // 找到最近AI回复中提到的NPC
-        const recentDmMsg = state.messages.find((m) => m.authorType === 'dm');
-        let npcName = '对方';
-        let npcSkill = 50;
-        if (state.moduleJson?.npcs && recentDmMsg) {
-          const dmContent = recentDmMsg.content || '';
-          for (const npc of state.moduleJson.npcs) {
-            if (dmContent.includes(npc.name)) {
-              npcName = npc.name;
-              if (npc.skills?.心理学) npcSkill = Number(npc.skills.心理学);
-              else if (npc.attributes?.心理学) npcSkill = Number(npc.attributes.心理学);
-              else {
-                const role = String(npc.role || '').toLowerCase();
-                if (/警察|侦探|保安/.test(role)) npcSkill = 65;
-                else if (/干部|医生|教师/.test(role)) npcSkill = 55;
-                else npcSkill = 45;
-              }
-              break;
-            }
-          }
-        }
-
-        console.error(`[ai-output] AI missed opposed check, auto-detected: ${matchedPattern.skill} vs ${npcName}(${npcSkill})`);
-
-        events.opposed_checks = [{
-          activePlayerId: action.playerId,
-          activeSkill: matchedPattern.skill,
-          passiveNpcName: npcName,
-          passiveSkill: '心理学',
-          contestType: matchedPattern.contestType,
-          reason: `[自动检测] 玩家尝试${matchedPattern.skill}`,
-          playerHint: '',
-          successResult: '',
-          failureResult: ''
-        }];
-        break; // 只补一个
-      }
-    }
 
     // Process opposed/contested checks (all types: social, stealth, combat, item)
     if (Array.isArray(events.opposed_checks)) {
@@ -959,8 +908,88 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
         const message = database.createPlayerMessage({ code, playerId, content, messageType });
         hub.broadcast(code, 'message_created', { message });
+
+        // === 前置检测：玩家行动是否需要对抗检定 ===
+        let contestResult = null;
+        const { participant } = database.getParticipant(code, playerId);
+        const detected = detectContestedAction(content, participant?.characterSheet);
+        if (detected) {
+          // 从最近的 AI 回复中提取当前 NPC
+          const roomState = database.getRoomState(code, 20);
+          const recentDm = roomState.messages.find((m) => m.authorType === 'dm');
+          let npcName = '对方';
+          let npcSkill = 50;
+          if (roomState.moduleJson?.npcs && recentDm) {
+            for (const npc of roomState.moduleJson.npcs) {
+              if (recentDm.content?.includes(npc.name)) {
+                npcName = npc.name;
+                if (npc.skills?.心理学) npcSkill = Number(npc.skills.心理学);
+                else if (npc.attributes?.心理学) npcSkill = Number(npc.attributes.心理学);
+                else {
+                  const role = String(npc.role || '');
+                  if (/警察|侦探|保安/.test(role)) npcSkill = 65;
+                  else if (/干部|医生|教师/.test(role)) npcSkill = 55;
+                  else npcSkill = 45;
+                }
+                break;
+              }
+            }
+          }
+
+          const check = rollContestedCheck({
+            playerSkill: detected.skillValue,
+            npcSkill,
+            playerName: participant.characterName || participant.displayName,
+            npcName
+          });
+
+          // 存储结果，供 AI 上下文使用
+          contestResult = {
+            detected,
+            check,
+            npcName,
+            npcSkill,
+            playerName: participant.characterName || participant.displayName
+          };
+
+          // 立即广播检定结果
+          const roll = database.createDiceRoll({
+            code,
+            playerId,
+            rollType: 'contested_check',
+            expression: '1d100',
+            label: `${detected.label}: ${detected.skill} vs ${npcName}(心理学)`,
+            result: check
+          });
+
+          const playerWon = check.winner === 'player';
+          const msg = database.createMessage({
+            code,
+            authorType: 'system',
+            messageType: 'SYSTEM',
+            displayName: '对抗检定',
+            content: [
+              `${getContestEmoji(detected.contestType)} ${detected.label}`,
+              `${contestResult.playerName} 的 ${detected.skill}(${detected.skillValue}) vs ${npcName} 的 心理学(${npcSkill})`,
+              `调查员 1d100 = ${check.player.roll} → ${check.player.successLevel}${check.player.isCritical ? ' 🎯大成功！' : ''}${check.player.isFumble ? ' 💀大失败！' : ''}`,
+              `${npcName} 1d100 = ${check.npc.roll} → ${check.npc.successLevel}`,
+              `判定：${check.reason}`,
+              `结果：${playerWon ? '✅ 调查员胜' : (check.winner === 'npc' ? '❌ NPC胜' : '平局')}`
+            ].join('\n'),
+            status: 'complete'
+          });
+
+          hub.broadcast(code, 'message_created', { message: msg });
+          hub.broadcast(code, 'dice_rolled', { roll });
+        }
+
         let aiTask = null;
         if (triggersAi) {
+          // 将检定结果暂存，generateDmReply 会读取
+          if (contestResult) {
+            _pendingContestResults.set(code, contestResult);
+          }
+
           const idempotencyKey = body.actionId
             ? `action:${playerId}:${String(body.actionId).slice(0, 80)}`
             : `message:${message.id}`;

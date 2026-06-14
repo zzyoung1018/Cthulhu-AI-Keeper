@@ -54,7 +54,7 @@ export function buildDmSystemPrompt(aiConfig = {}) {
 // ============================================================
 export function buildDmUserContext({
   room, roster, recent, recentRolls, moduleContext,
-  moduleJsonContext, playerStateJson
+  moduleJsonContext, playerStateJson, contestContext
 }) {
   const parts = [
     `房间：${room.name} (${room.code})`,
@@ -73,6 +73,10 @@ export function buildDmUserContext({
 
   if (playerStateJson) {
     parts.push(`调查员状态（JSON）：\n${playerStateJson}`);
+  }
+
+  if (contestContext) {
+    parts.push(contestContext);
   }
 
   parts.push(
