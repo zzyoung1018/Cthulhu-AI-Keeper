@@ -69,6 +69,28 @@ npm run audit:deployment -- http://<host> --require-ai  # Require real AI (no fa
 
 **Frontend** (`public/`): Single-page app with vanilla JS (`app.js`), raw HTML (`index.html`), and CSS (`styles.css`). Communicates via `fetch` to the JSON API and `EventSource` for SSE.
 
+前端分为三个界面状态，由 `state.room` 是否存在控制切换：
+
+### 1. 大厅（`state.room === null`）
+
+- 左侧边栏显示 logo + 两个按钮："创建房间"（打开 `#createRoomDialog`）、"加入房间"（打开 `#joinRoomDialog`）
+- 右侧桌面区域完全隐藏（`#tableTitle`、`#tableSubtitle`、聊天区、输入框均不显示）
+- 创建房间弹窗：玩家名、房间名、游玩人数（2-6）、模组选择/上传
+- 加入房间弹窗：玩家名、房间码
+
+### 2. 准备界面（`state.room.status === 'PREPARING'`）
+
+- 左侧边栏：房间面板（房名、房间码可点击复制、人数、玩家列表、开始/暂停/结束按钮）、角色卡编辑器
+- 右侧桌面：显示"等待开局"占位，聊天区仅显示系统消息，输入框可用（仅 OOC）
+- 房主点击"开始"→ 检查全员准备 → `PATCH /status ACTIVE`
+
+### 3. 游玩界面（`state.room.status === 'ACTIVE' / 'PAUSED'`）
+
+- 完整三栏布局：边栏（房间信息+角色卡）、聊天区（独立滚动）、右侧状态面板
+- 聊天区右上角 📋 按钮 → 角色状态弹窗（`#charSheetDialog`）
+- 输入框固定底部，消息类型切换 IC/OOC/ACTION/私聊
+- ACTION 消息触发 AI DM 生成
+
 **Deployment** (`deploy/`): `install_server.sh` installs Node 22, Nginx, sets up a systemd service (`dm-online.service`), and configures Nginx as reverse proxy. `configure_ai.sh` securely writes AI credentials to `/etc/dm-online.env`.
 
 **Error handling** (`src/errors.js`): `HttpError(statusCode, message)` thrown anywhere in route handlers; caught at the top-level `createServer` handler and serialized via `sendError()`. 500s are logged to stderr; client-safe messages are truncated to 220 chars.

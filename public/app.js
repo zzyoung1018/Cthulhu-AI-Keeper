@@ -104,6 +104,7 @@ const els = {
   summaryPanel: document.querySelector('#summaryPanel'),
   summaryInput: document.querySelector('#summaryInput'),
   // 桌面
+  tableArea: document.querySelector('#tableArea'),
   tableTitle: document.querySelector('#tableTitle'),
   tableSubtitle: document.querySelector('#tableSubtitle'),
   chatLog: document.querySelector('#chatLog'),
@@ -885,11 +886,13 @@ function render() {
   els.entryPanel.hidden = inRoom;
   els.roomPanel.hidden = !inRoom;
   els.editorPanel.hidden = !inRoom;
-  els.summaryPanel.hidden = !inRoom;
+  els.tableArea.hidden = !inRoom;
+  els.summaryPanel.hidden = true;
   els.messageForm.hidden = !inRoom;
   els.btnSettings.hidden = !inRoom || !isOwner();
 
   if (inRoom) {
+    els.summaryPanel.hidden = false;
     els.roomTitle.textContent = state.room.name;
     els.roomStatus.textContent = roomStatusLabels[state.room.status] || state.room.status || '准备阶段';
     els.tableTitle.textContent = state.room.name;
