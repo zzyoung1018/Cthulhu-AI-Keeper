@@ -81,6 +81,24 @@ textarea:focus-visible {
   grid-template-columns: minmax(300px, 360px) 1fr;
 }
 
+.shell.lobby {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shell.lobby .sidebar {
+  max-width: 400px;
+  width: 100%;
+  border-right: 0;
+  border-radius: 14px;
+  background: rgba(28, 32, 38, 0.8);
+}
+
+.shell.lobby .table {
+  display: none;
+}
+
 .sidebar {
   border-right: 1px solid var(--line);
   background: rgba(28, 32, 38, 0.96);

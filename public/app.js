@@ -883,6 +883,9 @@ function renderAiConfigForm() {
 
 function render() {
   const inRoom = Boolean(state.room);
+  // 大厅模式居中
+  document.querySelector('.shell').classList.toggle('lobby', !inRoom);
+
   els.entryPanel.hidden = inRoom;
   els.roomPanel.hidden = !inRoom;
   els.editorPanel.hidden = !inRoom;
