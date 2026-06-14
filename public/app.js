@@ -107,10 +107,6 @@ const els = {
   aiGeneratingDialog: document.querySelector('#aiGeneratingDialog'),
   aiGeneratingLabel: document.querySelector('#aiGeneratingLabel'),
   aiGeneratingBody: document.querySelector('#aiGeneratingBody'),
-  // 摘要
-  summaryForm: document.querySelector('#summaryForm'),
-  summaryPanel: document.querySelector('#summaryPanel'),
-  summaryInput: document.querySelector('#summaryInput'),
   // 桌面
   tableArea: document.querySelector('#tableArea'),
   tableTitle: document.querySelector('#tableTitle'),
@@ -907,12 +903,10 @@ function render() {
   els.characterCard.hidden = !inRoom;
   els.readyCharacter.hidden = !inRoom;
   els.tableArea.hidden = !inRoom;
-  els.summaryPanel.hidden = true;
   els.messageForm.hidden = !inRoom;
   els.btnSettings.hidden = !inRoom || !isOwner();
 
   if (inRoom) {
-    els.summaryPanel.hidden = false;
     els.roomTitle.textContent = state.room.name;
     els.roomStatus.textContent = roomStatusLabels[state.room.status] || state.room.status || '准备阶段';
     els.tableTitle.textContent = state.room.name;
@@ -924,7 +918,6 @@ function render() {
       `房间码 ${state.room.code}`,
       state.room.moduleTitle ? `模组 ${state.room.moduleTitle}` : ''
     ].filter(Boolean).join(' · ');
-    els.summaryInput.value = state.room.summary || '';
   } else {
     els.tableTitle.textContent = '等待开局';
     els.tableSubtitle.textContent = '创建或加入房间后开始记录冒险。';
@@ -1244,24 +1237,6 @@ async function rollSkill(skillName) {
     toast(error.message);
   }
 }
-
-els.summaryForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (!state.room) return;
-
-  try {
-    await api(`/api/rooms/${state.room.code}/summary`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        playerId: state.playerId,
-        summary: els.summaryInput.value
-      })
-    });
-    toast('摘要已保存');
-  } catch (error) {
-    toast(error.message);
-  }
-});
 
 els.aiConfigForm.addEventListener('submit', async (event) => {
   event.preventDefault();
