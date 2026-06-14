@@ -691,6 +691,7 @@ function renderCharacteristicInputs(sheet) {
       const nextDerived = calculateDerived(readCharacteristics(), readStatus());
       renderDerived(nextDerived);
       renderResourceInputs({ status: readStatus() }, nextDerived);
+      updateSkillPointsDisplay();
     });
     els.characteristicsGrid.append(label);
   }
@@ -750,7 +751,7 @@ function renderSkills(sheet) {
 function updateSkillPointsDisplay() {
   if (!els.occPtsRemaining || !els.intPtsRemaining) return;
   const occSkills = getOccupationSkills();
-  const chars = currentSheet().characteristics || {};
+  const chars = readCharacteristics();
   const pools = calculateSkillPoints(chars);
   const current = collectSkillsFromTable();
   let usedOcc = 0, usedInt = 0;
