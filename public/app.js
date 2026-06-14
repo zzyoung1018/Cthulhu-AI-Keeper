@@ -767,7 +767,11 @@ function updateSkillPointsDisplay() {
 }
 
 function collectSkillsFromTable() {
-  const skills = collectSkillsFromTable();
+  const skills = {};
+  if (!els.skillsTable) return skills;
+  els.skillsTable.querySelectorAll('[data-skill-name]').forEach((input) => {
+    skills[input.dataset.skillName] = numberInRange(input.value, 0, 0, 100);
+  });
   return skills;
 }
 
