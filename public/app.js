@@ -93,6 +93,10 @@ const els = {
   derivedGrid: document.querySelector('#derivedGrid'),
   resourceGrid: document.querySelector('#resourceGrid'),
   skillsTable: document.querySelector('#skillsTable'),
+  occupationSelect: document.querySelector('#occupationSelect'),
+  occPtsRemaining: document.querySelector('#occPtsRemaining'),
+  intPtsRemaining: document.querySelector('#intPtsRemaining'),
+  skillPointsDisplay: document.querySelector('#skillPointsDisplay'),
   readyCharacter: document.querySelector('#readyCharacter'),
   // 状态面板
   statusPanel: document.querySelector('#statusPanel'),
@@ -207,6 +211,35 @@ const defaultSkills = {
   游泳: 20,
   投掷: 20,
   追踪: 10
+};
+
+// CoC 7e 职业模板（名称 → 职业技能列表）
+const occupationTemplates = {
+  '': [],
+  '会计师': ['会计', '法律', '图书馆使用', '聆听', '说服', '侦查'],
+  '演员': ['乔装', '话术', '魅惑', '心理学', '妙手'],
+  '考古学家': ['估价', '考古学', '历史', '图书馆使用', '侦查', '外语'],
+  '医生': ['急救', '医学', '心理学', '侦查', '药学', '外语'],
+  '记者': ['话术', '图书馆使用', '聆听', '说服', '心理学', '侦查'],
+  '律师': ['话术', '法律', '图书馆使用', '说服', '心理学'],
+  '警察': ['格斗', '射击', '法律', '聆听', '心理学', '侦查'],
+  '教授': ['图书馆使用', '母语', '心理学', '说服', '神秘学'],
+  '私家侦探': ['图书馆使用', '摄影', '潜行', '心理学', '侦查', '追踪'],
+  '图书管理员': ['会计', '图书馆使用', '母语', '说服', '侦查'],
+  '摄影师': ['摄影', '侦查', '心理学', '潜行'],
+  '艺术家': ['工艺', '侦查', '历史', '神秘学', '心理学'],
+  '音乐家': ['魅惑', '聆听', '心理学', '妙手'],
+  '作家': ['话术', '历史', '图书馆使用', '母语', '心理学', '侦查'],
+  '科学家': ['电气维修', '图书馆使用', '机械维修', '博物学', '药学'],
+  '工程师': ['电气维修', '图书馆使用', '机械维修', '物理学', '化学'],
+  '神职人员': ['魅惑', '聆听', '心理学', '说服', '神秘学'],
+  '罪犯': ['格斗', '射击', '锁匠', '潜行', '妙手', '侦查'],
+  '刺客': ['格斗', '射击', '闪避', '潜行', '锁匠', '妙手'],
+  '司机': ['驾驶汽车', '聆听', '机械维修', '心理学', '侦查'],
+  '农民': ['攀爬', '格斗', '追踪', '博物学', '机械维修'],
+  '海员': ['攀爬', '跳跃', '格斗', '导航', '聆听', '游泳'],
+  '飞行员': ['驾驶', '电气维修', '导航', '侦查', '机械维修'],
+  '士兵': ['格斗', '射击', '闪避', '潜行', '急救', '投掷'],
 };
 
 const textSectionFields = [
@@ -659,23 +692,77 @@ function renderCharacteristicInputs(sheet) {
   renderResourceInputs(sheet, derived);
 }
 
+function getOccupationSkills() {
+  const occ = els.occupationSelect.value;
+  return occupationTemplates[occ] || [];
+}
+
+function calculateSkillPoints(chars) {
+  const edu = numberInRange(chars?.EDU, 50, 0, 100);
+  const int = numberInRange(chars?.INT, 50, 0, 100);
+  return {
+    occupationPoints: edu * 4,
+    interestPoints: int * 2
+  };
+}
+
 function renderSkills(sheet) {
   els.skillsTable.innerHTML = '';
+  const occSkills = getOccupationSkills();
+  const chars = sheet.characteristics || {};
+  const pools = calculateSkillPoints(chars);
+  const current = collectSkillsFromTable();
   const skills = Object.entries({ ...defaultSkills, ...(sheet.skills || {}) })
     .sort(([left], [right]) => left.localeCompare(right, 'zh-Hans-CN'));
+
+  // 计算已使用的技能点
+  let usedOcc = 0, usedInt = 0;
+  for (const [name, val] of Object.entries(current)) {
+    const base = defaultSkills[name] || 0;
+    const spent = Math.max(0, val - base);
+    if (occSkills.includes(name)) {
+      usedOcc += spent;
+    } else {
+      usedInt += spent;
+    }
+  }
+
+  const remainingOcc = Math.max(0, pools.occupationPoints - usedOcc);
+  const remainingInt = Math.max(0, pools.interestPoints - usedInt);
+
+  els.occPtsRemaining.textContent = occSkills.length > 0
+    ? `${remainingOcc}/${pools.occupationPoints}`
+    : '--';
+  els.intPtsRemaining.textContent = `${remainingInt}/${pools.interestPoints}`;
+
   for (const [name, score] of skills) {
+    const isOccSkill = occSkills.includes(name);
     const row = document.createElement('div');
-    row.className = 'skill-row';
+    row.className = 'skill-row' + (isOccSkill ? ' occ-skill' : '');
+    const base = defaultSkills[name] || 0;
     row.innerHTML = `
-      <span class="skill-name"></span>
-      <input type="number" min="0" max="100" step="1" data-skill-name="">
+      <span class="skill-name">${isOccSkill ? '★ ' : ''}</span>
+      <span class="skill-base">${base}</span>
+      <input type="number" min="${base}" max="100" step="1" data-skill-name="">
+      <span class="skill-spent"></span>
     `;
-    row.querySelector('.skill-name').textContent = name;
+    row.querySelector('.skill-name').firstChild.textContent = (isOccSkill ? '★ ' : '') + name;
     const input = row.querySelector('input');
     input.dataset.skillName = name;
+    input.dataset.base = base;
     input.value = score;
+    input.addEventListener('input', () => {
+      const val = numberInRange(input.value, base, 0, 100);
+      input.value = Math.max(base, val);
+      renderSkills(currentSheet()); // 重算点数
+    });
     els.skillsTable.append(row);
   }
+}
+
+function collectSkillsFromTable() {
+  const skills = collectSkillsFromTable();
+  return skills;
 }
 
 function renderStatusPanel() {
@@ -785,10 +872,7 @@ function collectCharacterSheet() {
   const characteristics = readCharacteristics();
   const status = readStatus();
   const derived = calculateDerived(characteristics, status);
-  const skills = {};
-  els.skillsTable.querySelectorAll('[data-skill-name]').forEach((input) => {
-    skills[input.dataset.skillName] = numberInRange(input.value, 0, 0, 100);
-  });
+  const skills = collectSkillsFromTable();
 
   const sheet = {
     version: 1,
@@ -834,6 +918,23 @@ function renderProfile() {
 function renderProfileForm() {
   if (!state.participant) return;
   const sheet = currentSheet();
+
+  // 填充职业下拉
+  els.occupationSelect.innerHTML = '<option value="">自定义</option>';
+  for (const [name] of Object.entries(occupationTemplates)) {
+    if (!name) continue;
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    els.occupationSelect.append(opt);
+  }
+  // 匹配当前职业
+  const currentOcc = sheet.investigator?.occupation || '';
+  const matched = Object.keys(occupationTemplates).find(
+    (o) => o === currentOcc || currentOcc.includes(o)
+  );
+  els.occupationSelect.value = matched || '';
+
   setTextField('investigator.name', sheet.investigator?.name || state.participant.characterName || '');
   setTextField('investigator.occupation', sheet.investigator?.occupation || '');
   setTextField('investigator.age', sheet.investigator?.age || '');
@@ -843,6 +944,15 @@ function renderProfileForm() {
   renderCharacteristicInputs(sheet);
   renderSkills(sheet);
 }
+
+// 职业选择变化时重渲染技能
+els.occupationSelect.addEventListener('change', () => {
+  const occ = els.occupationSelect.value;
+  if (occ) {
+    els.profileForm.elements['investigator.occupation'].value = occ;
+  }
+  renderSkills(currentSheet());
+});
 
 function renderLifecycleActions() {
   const owner = isOwner();

@@ -180,7 +180,19 @@
             <div class="resource-grid" id="resourceGrid"></div>
           </div>
           <div class="sheet-section">
-            <div class="section-head"><h3>技能</h3></div>
+            <div class="section-head">
+              <h3>职业与技能</h3>
+              <div class="skill-points-display" id="skillPointsDisplay">
+                <span>职业点：<strong id="occPtsRemaining">--</strong></span>
+                <span>兴趣点：<strong id="intPtsRemaining">--</strong></span>
+              </div>
+            </div>
+            <label class="occupation-select-label">
+              职业模板（可选，用于标记职业技能）
+              <select id="occupationSelect">
+                <option value="">自定义</option>
+              </select>
+            </label>
             <div class="skills-table" id="skillsTable"></div>
           </div>
           <div class="sheet-section">

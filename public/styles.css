@@ -1010,6 +1010,46 @@ dialog::backdrop {
   padding: 6px 12px;
 }
 
+/* === 技能点池 === */
+.skill-points-display {
+  display: flex;
+  gap: 16px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.skill-points-display strong {
+  color: var(--gold);
+}
+
+.occupation-select-label {
+  margin-bottom: 8px;
+}
+
+/* 职业技能行高亮 */
+.skill-row.occ-skill {
+  background: rgba(215, 173, 95, 0.06);
+  border-radius: 4px;
+}
+
+.skill-row.occ-skill .skill-name {
+  color: var(--gold);
+}
+
+.skill-base {
+  font-size: 0.7rem;
+  color: var(--muted);
+  min-width: 28px;
+  text-align: right;
+}
+
+.skill-spent {
+  font-size: 0.7rem;
+  color: var(--muted);
+  min-width: 40px;
+  text-align: right;
+}
+
 /* === 角色卡编辑弹窗（全屏大窗口） === */
 #characterDialog {
   max-width: 780px;
