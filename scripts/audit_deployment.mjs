@@ -131,6 +131,85 @@ function auditCharacterSheet(name, skill = 55) {
   };
 }
 
+function auditModuleContent() {
+  return JSON.stringify({
+    schema_version: '1.0',
+    module_info: {
+      title: '部署审计模组',
+      system: 'Call of Cthulhu 7th Edition',
+      time_period: '现代',
+      location: '审计走廊',
+      setting: '调查员站在一条狭窄走廊中，墙面潮湿，尽头有一扇半掩的门。',
+      themes: ['调查', '部署验证'],
+      tone: '克制悬疑',
+      recommended_players: '1-5'
+    },
+    keeper_overview: {
+      truth: '走廊尽头的书房里放着一本记录异常梦境的皮面笔记。',
+      investigation_goal: '确认房间、聊天、AI 流式回复和持久化链路正常。',
+      default_opening: '调查员抵达审计走廊入口。'
+    },
+    player_opening: {
+      initial_public_information: '走廊潮湿、安静，尽头有一扇半掩的门。',
+      initial_objective: '观察走廊并确认是否有异常。',
+      suggested_intro_text: '提灯亮起时，墙面水痕映出细碎的反光。'
+    },
+    scenes: [
+      {
+        scene_id: 'audit_corridor',
+        name: '审计走廊',
+        type: 'location',
+        player_visible_description: '一条狭窄走廊，墙面潮湿，尽头有一扇半掩的门。',
+        keeper_secret: '门后是隐藏书房。',
+        when_players_enter: '提灯照亮潮湿墙面，远处门缝里没有光。',
+        when_players_search: '墙面水痕旁能发现新的脚印。'
+      },
+      {
+        scene_id: 'hidden_study',
+        name: '隐藏书房',
+        type: 'location',
+        player_visible_description: '书桌上放着一本皮面笔记。',
+        keeper_secret: '笔记记录了异常梦境。'
+      }
+    ],
+    npcs: [
+      {
+        npc_id: 'audit_keeper',
+        name: '沉默管理员',
+        role: '部署审计中的观察者',
+        player_visible_info: '他站在走廊尽头，等待调查员说明来意。',
+        skills: { 心理学: 50, 侦查: 50, 聆听: 45 }
+      }
+    ],
+    clues: [
+      {
+        clue_id: 'wet_footprints',
+        name: '潮湿脚印',
+        scene_id: 'audit_corridor',
+        is_core_clue: true,
+        reveal_condition: '侦查检定成功',
+        player_visible_text: '脚印从半掩的门后延伸到走廊中央。'
+      }
+    ],
+    checks: [
+      {
+        check_id: 'audit_spot_hidden',
+        scene_id: 'audit_corridor',
+        skill: '侦查',
+        difficulty: 'regular',
+        trigger: '玩家观察走廊尽头',
+        success: '发现潮湿脚印',
+        failure: '只看到普通水痕'
+      }
+    ],
+    ai_dm_global_rules: {
+      role: 'CoC Keeper',
+      must_follow: ['不泄露守秘人秘密', '不替玩家做决定'],
+      style: { narration_length: '1-2 paragraphs', tone: 'suspenseful' }
+    }
+  }, null, 2);
+}
+
 async function waitForStreamedDm(code, playerId, sendMessage) {
   const timeout = timeoutSignal(aiStreamTimeoutMs);
   const events = [];
@@ -207,15 +286,9 @@ async function main() {
       title: '部署审计模组'
     },
     file: {
-      name: 'audit-module.txt',
-      contentType: 'text/plain',
-      content: [
-        '场景：审计走廊',
-        '调查员站在一条狭窄走廊中，墙面潮湿，尽头有一扇半掩的门。',
-        '',
-        '场景：隐藏书房',
-        '书房内有一本记录异常梦境的皮面笔记。'
-      ].join('\n')
+      name: 'audit-module.json',
+      contentType: 'application/json',
+      content: auditModuleContent()
     }
   });
   assert.equal(uploadedModule.module.parseStatus, 'PARSED');
