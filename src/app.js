@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { buildDmMessages, streamChatCompletion } from './aiClient.js';
-import { extractStructuredEvents, validateStructuredEvents } from './aiOutput.js';
+import { enhanceStructuredEvents, extractStructuredEvents, validateStructuredEvents } from './aiOutput.js';
 import { buildIntroSystemPrompt, buildIntroUserContext, buildStructuredOutputPrompt } from './prompts.js';
 import { RoomAiQueue } from './aiQueue.js';
 import { assertAiSettingsInput, roomRuntimeAiConfig } from './aiSettings.js';
@@ -175,7 +175,8 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
       // Parse and validate structured events
       const { narrative, events } = extractStructuredEvents(content);
-      const { valid, rejected, issues } = validateStructuredEvents(events);
+      const enhanced = enhanceStructuredEvents({ events, narrative, roomState: state });
+      const { valid, rejected, issues } = validateStructuredEvents(enhanced.events);
 
       // 诊断日志
       addAiLog(code, {
@@ -183,15 +184,17 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         taskUid,
         hasJsonBlock: Object.keys(events).length > 0,
         eventKeys: Object.keys(events),
+        enhancedEventKeys: Object.keys(enhanced.events),
         validKeys: Object.keys(valid),
         rejectedKeys: rejected,
         issues,
-        hasOpposedChecks: Array.isArray(events.opposed_checks) && events.opposed_checks.length > 0,
-        opposedCount: Array.isArray(events.opposed_checks) ? events.opposed_checks.length : 0,
+        hasOpposedChecks: Array.isArray(enhanced.events.opposed_checks) && enhanced.events.opposed_checks.length > 0,
+        opposedCount: Array.isArray(enhanced.events.opposed_checks) ? enhanced.events.opposed_checks.length : 0,
+        detection: enhanced.diagnostics,
         rawResponseSnippet: content.slice(-500)
       });
 
-      const narrationContent = narrative || content.trim() || '（DM 沉默片刻，等待玩家继续行动。）';
+      const narrationContent = enhanced.narrative || narrative || content.trim() || '（DM 沉默片刻，等待玩家继续行动。）';
       const completed = database.updateMessage({
         id: dmMessage.id,
         content: narrationContent,

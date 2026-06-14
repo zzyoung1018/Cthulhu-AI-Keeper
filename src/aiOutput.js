@@ -91,6 +91,8 @@ const EVENT_SCHEMAS = {
   summary_update: 'string'
 };
 
+const REQUIRED_OPPOSED_FIELDS = ['activePlayerId', 'activeSkill', 'passiveNpcName', 'passiveSkill', 'reason'];
+
 const VALID_FIELD_PATHS = new Set([
   'status.hp',
   'status.mp',
@@ -107,6 +109,93 @@ const VALID_FIELD_PATHS = new Set([
   'characteristics.Luck'
 ]);
 
+const ACTION_DETECTION_RULES = [
+  {
+    type: 'social',
+    activeSkill: '恐吓',
+    passiveSkill: '心理学',
+    reason: '玩家对 NPC 进行恐吓或威胁',
+    pattern: /恐吓|威胁|吓唬|逼问|震慑|警告|拍桌|拔刀|亮(?:出)?武器|用.*吓|压迫/
+  },
+  {
+    type: 'social',
+    activeSkill: '说服',
+    passiveSkill: '心理学',
+    reason: '玩家试图说服 NPC 改变态度或提供协助',
+    pattern: /说服|劝(?:说)?|请求|拜托|交涉|谈判|打动|安抚|让.*(?:同意|答应|配合)|求(?:他|她|对方)/
+  },
+  {
+    type: 'social',
+    activeSkill: '魅惑',
+    passiveSkill: '心理学',
+    reason: '玩家试图用亲和或讨好方式影响 NPC',
+    pattern: /魅惑|讨好|套近乎|献殷勤|拉关系|客套|寒暄/
+  },
+  {
+    type: 'social',
+    activeSkill: '话术',
+    passiveSkill: '心理学',
+    reason: '玩家对 NPC 撒谎、伪装身份或套话',
+    pattern: /撒谎|说谎|谎称|欺骗|骗|忽悠|糊弄|瞎编|编(?:个|造)?|假装|装作|伪装|冒充|掩饰|隐瞒|套话|套出|诈(?:他|她|对方)?|诈称|自称|找(?:个)?借口|让.*相信|祖上|老一辈|姓郑|陈友让/
+  },
+  {
+    type: 'stealth',
+    activeSkill: '妙手',
+    passiveSkill: '侦查',
+    reason: '玩家试图偷取或暗中操作物品',
+    pattern: /偷(?:走|拿|取|窃)|扒|摸走|顺走|悄悄拿|不被发现.*拿|藏起/
+  },
+  {
+    type: 'stealth',
+    activeSkill: '乔装',
+    passiveSkill: '心理学',
+    reason: '玩家试图乔装或伪装身份避开识破',
+    pattern: /乔装|易容|伪装成|扮成|假扮|装成/
+  },
+  {
+    type: 'stealth',
+    activeSkill: '潜行',
+    passiveSkill: '侦查',
+    reason: '玩家试图潜行、跟踪或避开 NPC 发现',
+    pattern: /潜行|偷偷|悄悄|无声|屏住呼吸|跟踪|尾随|躲(?:开|藏)?|藏(?:起来|身)?|避开|绕开|溜(?:进|过去|走)|潜入|不被.*发现|别.*发现/
+  },
+  {
+    type: 'combat',
+    activeSkill: '格斗',
+    passiveSkill: '闪避',
+    reason: '玩家对 NPC 发起攻击或试图制服对方',
+    pattern: /攻击|偷袭|刺杀|刺向|挥拳|打(?:他|她|对方)?|砍|射击|开枪|制服|夺(?:刀|枪|武器)|抢(?:刀|枪|武器)/
+  }
+];
+
+const NPC_ALIAS_PAIRS = [
+  ['林处长', '林处长'],
+  ['王哥', '王勇'],
+  ['王勇', '王勇'],
+  ['顾所长', '顾振兴'],
+  ['顾振兴', '顾振兴'],
+  ['马大胆', '马大胆'],
+  ['陈师傅', '陈友'],
+  ['陈友', '陈友'],
+  ['陈伯', '陈伯'],
+  ['白主任', '白崇礼'],
+  ['白崇礼', '白崇礼'],
+  ['宋大夫', '宋大夫'],
+  ['吴秀梅', '吴秀梅'],
+  ['陈婆婆', '陈婆婆'],
+  ['韩梅', '韩梅'],
+  ['韩老师', '韩老师'],
+  ['板寸头', '板寸头'],
+  ['老汉', '老汉'],
+  ['拖拉机师傅', '拖拉机师傅'],
+  ['司机', '司机'],
+  ['保安', '保安']
+];
+
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function validateBySchema(value, schema, path = '') {
   const issues = [];
 
@@ -117,10 +206,20 @@ function validateBySchema(value, schema, path = '') {
 
   if (schema === 'any') return issues;
 
+  if (schema === 'boolean') {
+    if (typeof value !== 'boolean') issues.push(`${path}: expected boolean`);
+    return issues;
+  }
+
   if (schema.type === 'object') {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       issues.push(`${path}: expected object`);
       return issues;
+    }
+    for (const key of schema.required || []) {
+      if (value[key] === undefined || value[key] === null || value[key] === '') {
+        issues.push(`${path ? `${path}.` : ''}${key}: required`);
+      }
     }
     for (const [key, propSchema] of Object.entries(schema.properties || {})) {
       if (value[key] !== undefined) {
@@ -154,6 +253,17 @@ function validateBySchema(value, schema, path = '') {
   return issues;
 }
 
+function isCompleteOpposedCheck(check) {
+  return check && typeof check === 'object' && !Array.isArray(check) &&
+    REQUIRED_OPPOSED_FIELDS.every((field) => typeof check[field] === 'string' && check[field].trim());
+}
+
+function compactEventArray(value, key) {
+  if (!Array.isArray(value)) return value;
+  if (key !== 'opposed_checks') return value;
+  return value.filter(isCompleteOpposedCheck);
+}
+
 function validateStateChangeField(fieldPath) {
   if (!VALID_FIELD_PATHS.has(fieldPath)) {
     return [`Invalid state change field: ${fieldPath}`];
@@ -179,69 +289,304 @@ function validateStateChangeField(fieldPath) {
   return [];
 }
 
-function parseStructuredBlock(text) {
-  const trimmed = String(text || '').trim();
-  if (!trimmed) return null;
-
-  const fenceStart = /^```(?:json)?\s*$/m;
-  const startMatch = trimmed.match(fenceStart);
-  if (!startMatch) return null;
-
-  const afterStart = trimmed.slice((startMatch.index || 0) + startMatch[0].length);
-  const endMatch = afterStart.match(/^```\s*$/m);
-  if (!endMatch) return null;
-
-  const jsonText = afterStart.slice(0, endMatch.index).trim();
-  if (!jsonText) return null;
-
-  try {
-    return JSON.parse(jsonText);
-  } catch {
-    return null;
-  }
-}
-
 export function extractStructuredEvents(text) {
   const narrative = [];
   const events = {};
-  let remaining = text;
+  const source = String(text || '');
+  const fencePattern = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gm;
+  let lastIndex = 0;
+  let matchedFence = false;
 
-  while (remaining.length > 0) {
-    const fenceStart = /^```(?:json)?\s*$/m;
-    const startMatch = remaining.match(fenceStart);
-
-    if (!startMatch) {
-      narrative.push(remaining.trimEnd());
-      break;
-    }
-
-    narrative.push(remaining.slice(0, startMatch.index).trimEnd());
-
-    const afterStart = remaining.slice((startMatch.index || 0) + startMatch[0].length);
-    const endMatch = afterStart.match(/^```\s*$/m);
-
-    if (!endMatch) {
-      narrative.push(remaining.slice(startMatch.index).trimEnd());
-      break;
-    }
-
-    const jsonText = afterStart.slice(0, endMatch.index).trim();
-    remaining = afterStart.slice((endMatch.index || 0) + endMatch[0].length);
-
+  for (const match of source.matchAll(fencePattern)) {
+    matchedFence = true;
+    narrative.push(source.slice(lastIndex, match.index).trimEnd());
+    const jsonText = match[1].trim();
     try {
       const parsed = JSON.parse(jsonText);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         Object.assign(events, parsed);
       }
     } catch {
-      // Invalid JSON block — leave it in narrative
-      narrative.push(remaining.slice(startMatch.index, startMatch.index + endMatch.index + endMatch[0].length + afterStart.length));
+      narrative.push(match[0].trimEnd());
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  narrative.push(source.slice(lastIndex).trimEnd());
+
+  if (!matchedFence && Object.keys(events).length === 0) {
+    const trailing = extractTrailingJsonObject(source);
+    if (trailing) {
+      return trailing;
     }
   }
 
   return {
     narrative: narrative.filter(Boolean).join('\n\n').trim(),
     events
+  };
+}
+
+function extractTrailingJsonObject(text) {
+  const source = String(text || '').trimEnd();
+  if (!source.endsWith('}')) return null;
+
+  const starts = [];
+  for (let index = source.lastIndexOf('{'); index >= 0; index = source.lastIndexOf('{', index - 1)) {
+    if (index === 0 || /\n\s*$/.test(source.slice(0, index))) {
+      starts.push(index);
+    }
+    if (starts.length >= 12) break;
+  }
+
+  for (const index of starts) {
+    try {
+      const parsed = JSON.parse(source.slice(index).trim());
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return {
+          narrative: source.slice(0, index).trim(),
+          events: parsed
+        };
+      }
+    } catch {
+      // Try an earlier opening brace.
+    }
+  }
+
+  return null;
+}
+
+function normalizeText(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim();
+}
+
+function classifyOpposedAction(actionText) {
+  const text = normalizeText(actionText);
+  if (!text) return null;
+
+  for (const rule of ACTION_DETECTION_RULES) {
+    if (rule.pattern.test(text)) {
+      const passiveSkill = rule.type === 'stealth' && /听|声音|脚步|响|聆听/.test(text)
+        ? '聆听'
+        : rule.passiveSkill;
+      return { ...rule, passiveSkill };
+    }
+  }
+
+  return null;
+}
+
+function npcCandidates(roomState = {}) {
+  const pairs = [...NPC_ALIAS_PAIRS];
+  for (const npc of roomState.moduleJson?.npcs || []) {
+    if (npc?.name) pairs.push([String(npc.name), String(npc.name)]);
+    if (npc?.npc_id && npc?.name) pairs.push([String(npc.npc_id), String(npc.name)]);
+  }
+
+  const seen = new Set();
+  return pairs
+    .filter(([alias, name]) => alias && name)
+    .map(([alias, name]) => ({ alias, name }))
+    .filter((item) => {
+      const key = `${item.alias}:${item.name}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => b.alias.length - a.alias.length);
+}
+
+function findExplicitNpc(text, candidates) {
+  const source = String(text || '');
+  return candidates.find(({ alias }) => new RegExp(escapeRegExp(alias)).test(source))?.name || '';
+}
+
+function inferNpcName({ actionText, narrative, roomState }) {
+  const candidates = npcCandidates(roomState);
+  const explicit = findExplicitNpc(actionText, candidates);
+  if (explicit) return explicit;
+
+  const recentText = (roomState.messages || [])
+    .slice(-8)
+    .map((message) => message.content || '')
+    .join('\n');
+
+  const pronounTarget = /(?:他|她|对方|那人|那个人|老人|老汉|司机|板寸头|主任|所长|大夫|师傅)/.test(actionText);
+  if (pronounTarget) {
+    const fromNarrative = findExplicitNpc(narrative, candidates);
+    if (fromNarrative) return fromNarrative;
+    const fromRecent = findExplicitNpc(recentText, candidates);
+    if (fromRecent) return fromRecent;
+  }
+
+  const fromNarrative = findExplicitNpc(narrative, candidates);
+  if (fromNarrative) return fromNarrative;
+
+  return '';
+}
+
+function latestPlayerAction(roomState = {}) {
+  return [...(roomState.messages || [])]
+    .reverse()
+    .find((message) => message.authorType === 'player' && message.messageType === 'ACTION' && message.playerId);
+}
+
+function buildInferredOpposedCheck({ action, rule, npcName }) {
+  return {
+    activePlayerId: action.playerId,
+    activeSkill: rule.activeSkill,
+    passiveNpcName: npcName || '附近NPC',
+    passiveSkill: rule.passiveSkill,
+    contestType: rule.type,
+    reason: rule.reason,
+    playerHint: rule.type === 'social'
+      ? `${npcName || '对方'}停顿了一下，似乎正在判断你的话是否可信。`
+      : `${npcName || '对方'}的注意力转向四周，局势停在被发现前的一瞬。`,
+    successResult: rule.type === 'social'
+      ? `${npcName || '对方'}暂时接受了你的说法。`
+      : '你没有被发现，行动继续保持隐蔽。',
+    failureResult: rule.type === 'social'
+      ? `${npcName || '对方'}察觉到不对，态度转为警惕。`
+      : `${npcName || '对方'}发现了你的行动。`
+  };
+}
+
+function inferOpposedChecks({ events, narrative, roomState }) {
+  const action = latestPlayerAction(roomState);
+  const rule = action ? classifyOpposedAction(action.content) : null;
+  if (!action || !rule) {
+    return { checks: [], reason: '', action: null };
+  }
+
+  const existing = Array.isArray(events.opposed_checks) ? events.opposed_checks.filter(isCompleteOpposedCheck) : [];
+  if (existing.length > 0) {
+    return { checks: [], reason: 'model-provided', action };
+  }
+
+  const npcName = inferNpcName({ actionText: action.content, narrative, roomState });
+  return {
+    checks: [buildInferredOpposedCheck({ action, rule, npcName })],
+    reason: `backend-${rule.type}`,
+    action
+  };
+}
+
+function isSuggestionLine(line) {
+  const text = String(line || '').trim();
+  if (!text) return false;
+  return /^(?:[-*]\s*)?(?:你们?|调查员).{0,20}(?:可以|可选择|也可以|接下来|下一步|若想|如果想|是否|要不要)/.test(text) ||
+    /^(?:[-*]\s*)?(?:接下来|下一步|可选行动|行动建议|建议|选择|选项)[:：]/.test(text) ||
+    /^(?:[-*]\s*)?(?:接下来|下一步).{0,20}(?:可以|可选择|选择|要做)/.test(text) ||
+    /(?:也是一个选择|都是可行的|任选其一|供你们选择)/.test(text);
+}
+
+function stripTrailingActionSuggestions(text) {
+  const lines = String(text || '').trimEnd().split(/\r?\n/);
+  let cut = lines.length;
+  let sawSuggestionHeading = false;
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index].trim();
+    const blockLine = /^(?:[-*]|\d+[.、])\s+/.test(line) || line === '---';
+    const suggestionLine = isSuggestionLine(line);
+
+    if (!line && cut < lines.length) {
+      cut = index;
+      continue;
+    }
+    if (suggestionLine || blockLine) {
+      if (suggestionLine) sawSuggestionHeading = true;
+      cut = index;
+      continue;
+    }
+    break;
+  }
+
+  if (!sawSuggestionHeading) return { text: String(text || '').trim(), stripped: false };
+  return { text: lines.slice(0, cut).join('\n').trim(), stripped: true };
+}
+
+function trimDecisiveOutcomeForCheck(text) {
+  const source = String(text || '').trim();
+  if (!source) return { text: source, stripped: false };
+
+  const decisive = /(?:相信了|信了|没有怀疑|没怀疑|放松了警惕|答应了|同意了|被说服|被吓住|被唬住|识破了|看穿了|不信|发现了你|发现了.*身影|没有发现你|没发现你|注意到你|没注意到你|察觉到你|没察觉到你|抓住你|拦住你)/;
+  const sentences = source.match(/[^。！？!?]+[。！？!?]?|\n+/g) || [source];
+  const kept = [];
+
+  for (const sentence of sentences) {
+    if (decisive.test(sentence)) {
+      const textBeforeOutcome = kept.join('').trim();
+      return {
+        text: textBeforeOutcome || '局势停在结果揭晓前的一瞬。',
+        stripped: true
+      };
+    }
+    kept.push(sentence);
+  }
+
+  return { text: source, stripped: false };
+}
+
+function sanitizeNarrative(narrative, inferredChecks) {
+  const suggestionResult = stripTrailingActionSuggestions(narrative);
+  let text = suggestionResult.text;
+  let decisiveStripped = false;
+
+  if (inferredChecks.length > 0) {
+    const result = trimDecisiveOutcomeForCheck(text);
+    text = result.text;
+    decisiveStripped = result.stripped;
+    text = [
+      text,
+      `（此处触发${inferredChecks[0].contestType === 'social' ? '社交' : inferredChecks[0].contestType === 'stealth' ? '潜行' : '对抗'}检定，等待服务器骰点结果后继续。）`
+    ].filter(Boolean).join('\n\n');
+  }
+
+  return {
+    narrative: text,
+    strippedActionSuggestions: suggestionResult.stripped,
+    strippedDecisiveOutcome: decisiveStripped
+  };
+}
+
+export function enhanceStructuredEvents({ events, narrative, roomState } = {}) {
+  const enhancedEvents = { ...(events || {}) };
+  const diagnostics = {
+    inferredOpposedChecks: [],
+    inferredReason: '',
+    droppedIncompleteOpposedChecks: 0,
+    strippedActionSuggestions: false,
+    strippedDecisiveOutcome: false,
+    latestActionId: null
+  };
+
+  if (Array.isArray(enhancedEvents.opposed_checks)) {
+    const before = enhancedEvents.opposed_checks.length;
+    enhancedEvents.opposed_checks = compactEventArray(enhancedEvents.opposed_checks, 'opposed_checks');
+    diagnostics.droppedIncompleteOpposedChecks = before - enhancedEvents.opposed_checks.length;
+  }
+
+  const inferred = inferOpposedChecks({ events: enhancedEvents, narrative, roomState });
+  diagnostics.latestActionId = inferred.action?.id || null;
+  diagnostics.inferredReason = inferred.reason;
+
+  if (inferred.checks.length > 0) {
+    enhancedEvents.opposed_checks = [
+      ...(Array.isArray(enhancedEvents.opposed_checks) ? enhancedEvents.opposed_checks : []),
+      ...inferred.checks
+    ];
+    diagnostics.inferredOpposedChecks = inferred.checks;
+  }
+
+  const sanitized = sanitizeNarrative(narrative, inferred.checks);
+  diagnostics.strippedActionSuggestions = sanitized.strippedActionSuggestions;
+  diagnostics.strippedDecisiveOutcome = sanitized.strippedDecisiveOutcome;
+
+  return {
+    narrative: sanitized.narrative,
+    events: enhancedEvents,
+    diagnostics
   };
 }
 
@@ -280,9 +625,36 @@ export function validateStructuredEvents(events) {
       }
     }
 
+    if (key === 'required_checks') {
+      const difficultyIssues = value.flatMap((check, index) => {
+        const difficulty = String(check.difficulty || '').toUpperCase();
+        return ['REGULAR', 'NORMAL', 'HARD', 'EXTREME'].includes(difficulty)
+          ? []
+          : [`${key}[${index}].difficulty: invalid difficulty`];
+      });
+      if (difficultyIssues.length > 0) {
+        rejected.push(key);
+        issues.push(...difficultyIssues);
+        continue;
+      }
+    }
+
+    if (key === 'opposed_checks') {
+      const contestIssues = value.flatMap((check, index) => {
+        if (!check.contestType) return [];
+        return ['social', 'stealth', 'combat', 'item'].includes(String(check.contestType))
+          ? []
+          : [`${key}[${index}].contestType: invalid contest type`];
+      });
+      if (contestIssues.length > 0) {
+        rejected.push(key);
+        issues.push(...contestIssues);
+        continue;
+      }
+    }
+
     valid[key] = value;
   }
 
   return { valid, rejected, issues };
 }
-
