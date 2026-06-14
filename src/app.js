@@ -221,9 +221,22 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
           const playerSkill = getSkillTarget(participant.characterSheet, opp.activeSkill);
           if (!Number.isInteger(playerSkill)) continue;
 
-          // NPC passive skill defaults based on difficulty
-          const npcSkillMap = { REGULAR: 50, HARD: 70, EXTREME: 90 };
-          const npcSkill = npcSkillMap[opp.difficulty] || 50;
+          // NPC passive skill: try module data first, fallback to difficulty map
+          let npcSkill = null;
+          if (state.moduleJson?.npcs) {
+            const npc = state.moduleJson.npcs.find((n) =>
+              n.name === opp.passiveNpcName || n.npc_id === opp.passiveNpcName
+            );
+            if (npc?.skills?.[opp.passiveSkill]) {
+              npcSkill = Number(npc.skills[opp.passiveSkill]);
+            } else if (npc?.attributes?.[opp.passiveSkill]) {
+              npcSkill = Number(npc.attributes[opp.passiveSkill]);
+            }
+          }
+          if (!Number.isInteger(npcSkill) || npcSkill <= 0) {
+            const npcSkillMap = { REGULAR: 50, HARD: 70, EXTREME: 90 };
+            npcSkill = npcSkillMap[opp.difficulty] || 50;
+          }
 
           const check = rollOpposedCheck({
             activeTarget: playerSkill,
