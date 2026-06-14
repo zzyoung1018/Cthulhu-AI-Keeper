@@ -730,7 +730,7 @@ function renderSkills(sheet) {
       <input type="number" min="${base}" max="100" step="1" data-skill-name="">
       <span class="skill-spent"></span>
     `;
-    row.querySelector('.skill-name').firstChild.textContent = (isOccSkill ? '★ ' : '') + name;
+    row.querySelector('.skill-name').textContent = (isOccSkill ? '★ ' : '') + name;
     const input = row.querySelector('input');
     input.dataset.skillName = name;
     input.dataset.base = base;
