@@ -118,11 +118,6 @@ const els = {
   rollbackRound: document.querySelector('#rollbackRound'),
   submitRound: document.querySelector('#submitRound'),
   exportGame: document.querySelector('#exportGame'),
-  // 私聊
-  privateTargetRow: document.querySelector('#privateTargetRow'),
-  privateTargetSelect: document.querySelector('#privateTargetSelect'),
-  // 消息类型
-  typeOptions: [...document.querySelectorAll('[data-message-type]')],
   toast: document.querySelector('#toast')
 };
 
@@ -1030,34 +1025,7 @@ function connectEvents() {
   };
 }
 
-function setMessageType(messageType) {
-  state.messageType = messageType;
-  for (const option of els.typeOptions) {
-    option.classList.toggle('active', option.dataset.messageType === messageType);
-  }
-  els.privateTargetRow.hidden = messageType !== 'PRIVATE';
-  if (messageType === 'PRIVATE') {
-    updatePrivateTargetOptions();
-  }
-  els.messageForm.content.placeholder = messageType === 'ACTION'
-    ? '声明正式行动，提交给 AI DM...'
-    : messageType === 'PRIVATE'
-      ? '私密消息，仅你和目标玩家可见...'
-      : messageType === 'OOC'
-        ? '场外讨论，不触发 AI...'
-        : '角色内发言，不自动触发 AI...';
-}
-
-function updatePrivateTargetOptions() {
-  els.privateTargetSelect.innerHTML = '<option value="">选择私聊对象</option>';
-  for (const p of state.participants) {
-    if (p.playerId === state.playerId) continue;
-    const option = document.createElement('option');
-    option.value = p.playerId;
-    option.textContent = p.characterName || p.displayName;
-    els.privateTargetSelect.append(option);
-  }
-}
+// 消息类型固定为 ACTION，所有发言都提交给 AI DM
 
 async function restoreLastRoom() {
   const roomCode = localStorage.getItem(storageKeys.lastRoomCode);
@@ -1114,10 +1082,6 @@ els.uploadModule.addEventListener('click', async () => {
     els.uploadModule.disabled = false;
   }
 });
-els.typeOptions.forEach((option) => {
-  option.addEventListener('click', () => setMessageType(option.dataset.messageType));
-});
-
 // 创建房间表单
 els.createRoomForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1278,24 +1242,17 @@ els.messageForm.addEventListener('submit', async (event) => {
   if (!content) return;
 
   els.messageForm.content.value = '';
-  const shouldTriggerAi = state.messageType === 'ACTION';
-  if (shouldTriggerAi) setAiBusy(true);
-
-  const body = {
-    playerId: state.playerId,
-    content,
-    messageType: state.messageType,
-    submitToDm: shouldTriggerAi
-  };
-
-  if (state.messageType === 'PRIVATE') {
-    body.privateTarget = els.privateTargetSelect.value;
-  }
+  setAiBusy(true);
 
   try {
     const payload = await api(`/api/rooms/${state.room.code}/messages`, {
       method: 'POST',
-      body: JSON.stringify(body)
+      body: JSON.stringify({
+        playerId: state.playerId,
+        content,
+        messageType: 'ACTION',
+        submitToDm: true
+      })
     });
     if (payload.aiTask) {
       const index = state.aiTasks.findIndex((task) => task.uid === payload.aiTask.uid);
@@ -1305,7 +1262,7 @@ els.messageForm.addEventListener('submit', async (event) => {
       renderAiTaskControls();
     }
   } catch (error) {
-    if (shouldTriggerAi) setAiBusy(false);
+    setAiBusy(false);
     toast(error.message);
   }
 });
@@ -1445,7 +1402,6 @@ els.resumeGame.addEventListener('click', () => changeRoomStatus('ACTIVE'));
 els.endGame.addEventListener('click', () => changeRoomStatus('ENDED'));
 
 render();
-setMessageType('IC');
 loadModules();
 restoreLastRoom();
 

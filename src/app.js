@@ -17,6 +17,7 @@ import { readJson, sendError, sendJson, serveStatic } from './http.js';
 import { extractModuleText, scoreModuleSegment, segmentModuleText, validateModuleFile } from './moduleParser.js';
 import { readMultipartForm } from './multipart.js';
 import { capturePreRoundState, computeRollback, createRoundRecord } from './rounds.js';
+import { buildAllPlayerStates } from './playerState.js';
 import { RoomEventHub } from './sse.js';
 
 function route(pathname) {
@@ -105,6 +106,25 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       .sort((a, b) => b.score - a.score || a.segment.sortOrder - b.segment.sortOrder)
       .slice(0, 6)
       .map((item) => item.segment);
+
+    // Build per-player state JSONs
+    state.playerStates = buildAllPlayerStates(state.participants, state.room);
+
+    // Try to get module JSON for AI context
+    state.moduleJson = null;
+    try {
+      if (state.room.moduleId) {
+        const preview = database.getModuleForOwner(
+          state.room.moduleId,
+          state.room.ownerPlayerId,
+          { includeText: true, includeSegments: false }
+        );
+        const pt = preview?.module?.parsedText || '';
+        if (pt.trim().startsWith('{')) {
+          state.moduleJson = JSON.parse(pt);
+        }
+      }
+    } catch { /* use text segments instead */ }
 
     setAiTaskStatus(code, taskUid, 'GENERATING');
     const dmMessage = database.createMessage({
@@ -978,6 +998,17 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
             'Content-Disposition': `attachment; filename="dm-online-${code}.md"` });
           response.end(mdOutput);
         }
+        return;
+      }
+
+      if (request.method === 'PATCH' && parts[3] === 'player-state') {
+        const body = await readJson(request);
+        const playerId = assertString(body.playerId, 'playerId', 80);
+        const meta = body.meta || {};
+        database.updatePlayerMeta({ code, playerId, meta });
+        const state = database.getRoomState(code, { playerId });
+        hub.broadcast(code, 'room_state', state);
+        sendJson(response, 200, { ok: true });
         return;
       }
 

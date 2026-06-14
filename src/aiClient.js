@@ -1,5 +1,6 @@
 import { isAiConfigured } from './config.js';
 import { formatCharacterState, summarizeCharacterSheet } from './character.js';
+import { summarizePlayerState } from './playerState.js';
 import { buildDmSystemPrompt, buildDmUserContext, FALLBACK_TEXT } from './prompts.js';
 
 function delay(ms) {
@@ -125,14 +126,21 @@ function trimToBudget(text, maxTokens, label) {
   return result || text.slice(0, maxTokens * 4);
 }
 
-export function buildDmMessages({ room, participants, messages, diceRolls = [], moduleSegments = [] }) {
+export function buildDmMessages({ room, participants, messages, diceRolls = [], moduleSegments = [], playerStates = [], moduleJson = null }) {
   const aiConfig = room.aiConfig || {};
   const tokenBudget = Number(aiConfig.tokenBudget) || DEFAULT_TOKEN_BUDGET;
   // Reserve ~800 tokens for system prompt + overhead
   const contextBudget = Math.max(800, tokenBudget - 800);
 
-  const roster = participants
-    .map((participant, index) => {
+  // 玩家状态摘要（文本）
+  const roster = (playerStates.length > 0 ? playerStates : participants)
+    .map((item, index) => {
+      if (item.playerId) {
+        // is a PlayerState object
+        return `${index + 1}. ${summarizePlayerState(item)}`;
+      }
+      // fallback to old format
+      const participant = item;
       const character = participant.characterName || '未命名角色';
       const card = participant.characterSheet
         ? summarizeCharacterSheet(participant.characterSheet)
@@ -143,6 +151,64 @@ export function buildDmMessages({ room, participants, messages, diceRolls = [], 
       return `${index + 1}. 玩家 ${participant.displayName} / 角色 ${character}\n角色卡：${card}\n人物状态：${state}`;
     })
     .join('\n\n');
+
+  // 玩家状态 JSON（结构化数据给 AI）
+  let playerStateJson = '';
+  if (playerStates.length > 0) {
+    playerStateJson = JSON.stringify(playerStates.map((s) => ({
+      playerId: s.playerId,
+      characterName: s.characterName,
+      occupation: s.occupation,
+      status: s.status,
+      characteristics: s.characteristics,
+      derived: s.derived,
+      location: s.location,
+      party: s.party,
+      skills: s.skills,
+      weapons: s.weapons,
+      equipment: s.equipment,
+      conditions: s.conditions,
+      discoveredClues: s.discoveredClues,
+      knownNpcs: s.knownNpcs
+    })), null, 2);
+  }
+
+  // 模组 JSON 摘要（提取关键字段）
+  let moduleJsonContext = '';
+  if (moduleJson) {
+    const mi = moduleJson.module_info || {};
+    const po = moduleJson.player_opening || {};
+    const ko = moduleJson.keeper_overview || {};
+    const rules = moduleJson.ai_dm_global_rules || {};
+    const sp = moduleJson.story_progression || {};
+
+    moduleJsonContext = [
+      '=== 模组结构化数据 ===',
+      `标题：${mi.title || room.moduleTitle}`,
+      `时代：${mi.time_period || ''}`,
+      `地点：${mi.location || ''}`,
+      `主题：${(mi.themes || []).join('、')}`,
+      `氛围：${mi.tone || ''}`,
+      '',
+      `调查目标：${ko.investigation_goal || ''}`,
+      `主要冲突：${ko.main_conflict || ''}`,
+      '',
+      '当前场景数据：',
+      // Include current active scenes
+      ...(moduleJson.scenes || []).slice(0, 3).map((s) =>
+        `[${s.scene_id}] ${s.name}: ${s.player_visible_description || ''}`
+      ),
+      '',
+      '当前 NPC：',
+      ...(moduleJson.npcs || []).slice(0, 5).map((n) =>
+        `[${n.npc_id}] ${n.name} (${n.role || ''}): ${n.player_visible_info || ''}`
+      ),
+      '',
+      'AI DM 规则：',
+      ...(rules.must_follow || []).map((r, i) => `${i + 1}. ${r}`),
+      rules.style ? `叙述：${rules.style.narration_length || ''}, 语气：${rules.style.tone || ''}` : ''
+    ].filter(Boolean).join('\n');
+  }
 
   const recent = messages
     .filter((message) => !['OOC', 'PRIVATE'].includes(message.messageType))
@@ -206,7 +272,9 @@ export function buildDmMessages({ room, participants, messages, diceRolls = [], 
     room, roster,
     recent: recent.length > 0 ? recent.join('\n') : '暂无聊天',
     recentRolls: recentRolls.length > 0 ? recentRolls.join('\n') : '暂无骰子',
-    moduleContext
+    moduleContext,
+    moduleJsonContext,
+    playerStateJson: playerStateJson || ''
   });
 
   return [

@@ -106,6 +106,8 @@ function rowToParticipant(row, room = null) {
     displayName: row.display_name,
     characterName: row.character_name
   });
+  let playerMeta = {};
+  try { playerMeta = JSON.parse(row.player_meta_json || '{}'); } catch { /* keep default */ }
   return {
     id: row.id,
     roomId: row.room_id,
@@ -118,6 +120,12 @@ function rowToParticipant(row, room = null) {
     characterSheet,
     characterRevision: Number(row.character_revision || 0),
     state: row.state || '',
+    stateSceneId: playerMeta.sceneId || '',
+    stateSceneName: playerMeta.sceneName || '',
+    stateLocationUpdatedAt: playerMeta.locationUpdatedAt || '',
+    discoveredClues: playerMeta.discoveredClues || [],
+    knownNpcs: playerMeta.knownNpcs || [],
+    playerMeta,
     joinedAt: row.joined_at,
     updatedAt: row.updated_at
   };
@@ -432,6 +440,9 @@ export function createDatabase(dbPath) {
   if (!hasColumn('rooms', 'max_players')) {
     db.exec(`ALTER TABLE rooms ADD COLUMN max_players INTEGER NOT NULL DEFAULT ${DEFAULT_MAX_PLAYERS}`);
   }
+  if (!hasColumn('participants', 'player_meta_json')) {
+    db.exec("ALTER TABLE participants ADD COLUMN player_meta_json TEXT NOT NULL DEFAULT '{}'");
+  }
 
   const statements = {
     getRoomByCode: db.prepare(`
@@ -586,6 +597,9 @@ export function createDatabase(dbPath) {
     createSummaryVersion: db.prepare(`
       INSERT INTO story_summaries (room_id, participant_id, summary, created_at)
       VALUES (?, ?, ?, ?)
+    `),
+    updatePlayerMeta: db.prepare(`
+      UPDATE participants SET player_meta_json = ?, updated_at = ? WHERE room_id = ? AND player_id = ?
     `),
     createRoundState: db.prepare(`
       INSERT INTO round_states (room_id, ai_task_uid, dm_message_id, snapshot_json, created_at)
@@ -912,6 +926,12 @@ export function createDatabase(dbPath) {
     removeParticipant(roomId, playerId) {
       const stmt = db.prepare('DELETE FROM participants WHERE room_id = ? AND player_id = ?');
       stmt.run(roomId, playerId);
+    },
+
+    updatePlayerMeta({ code, playerId, meta }) {
+      const { room } = this.getParticipant(code, playerId);
+      const updated = now();
+      statements.updatePlayerMeta.run(JSON.stringify(meta || {}), updated, room.id, playerId);
     },
 
     setParticipantReady({ code, playerId, isReady }) {

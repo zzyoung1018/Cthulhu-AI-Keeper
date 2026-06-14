@@ -105,15 +105,9 @@
 
         <form class="composer" id="messageForm" hidden>
           <div class="message-type-toggle" role="radiogroup" aria-label="消息类型">
-            <button class="type-option active" type="button" data-message-type="IC">IC</button>
-            <button class="type-option" type="button" data-message-type="OOC">OOC</button>
-            <button class="type-option" type="button" data-message-type="ACTION">ACTION</button>
-            <button class="type-option" type="button" data-message-type="PRIVATE">私聊</button>
+            <button class="type-option active" type="button" data-message-type="ACTION">提交行动</button>
           </div>
-          <div class="private-target-row" id="privateTargetRow" hidden>
-            <select id="privateTargetSelect"><option value="">选择私聊对象</option></select>
-          </div>
-          <textarea name="content" rows="2" maxlength="4000" placeholder="描述你的行动..." required></textarea>
+          <textarea name="content" rows="2" maxlength="4000" placeholder="描述你的行动，提交给 AI DM..." required></textarea>
           <button class="primary send" type="submit">发送</button>
         </form>
       </section>

@@ -23,18 +23,36 @@ export function buildDmSystemPrompt(aiConfig = {}) {
 // 游玩阶段上下文组装
 // ============================================================
 export function buildDmUserContext({
-  room, roster, recent, recentRolls, moduleContext
+  room, roster, recent, recentRolls, moduleContext,
+  moduleJsonContext, playerStateJson
 }) {
-  return [
+  const parts = [
     `房间：${room.name} (${room.code})`,
-    `模组：${room.moduleTitle || '未命名模组'}`,
-    `相关模组片段：\n${moduleContext || '暂无可用片段'}`,
-    `剧情摘要：${room.summary || '暂无摘要'}`,
-    `角色资料：\n${roster || '暂无角色'}`,
+    `模组：${room.moduleTitle || '未命名模组'}`
+  ];
+
+  if (moduleJsonContext) {
+    parts.push(moduleJsonContext);
+  } else {
+    parts.push(`相关模组片段：\n${moduleContext || '暂无可用片段'}`);
+  }
+
+  parts.push(
+    `剧情摘要：${room.summary || '暂无摘要'}`
+  );
+
+  if (playerStateJson) {
+    parts.push(`调查员状态（JSON）：\n${playerStateJson}`);
+  }
+
+  parts.push(
+    `角色摘要：\n${roster || '暂无角色'}`,
     `最近骰子：\n${recentRolls || '暂无骰子'}`,
     `最近聊天：\n${recent || '暂无聊天'}`,
-    '请生成下一段 DM 回复。'
-  ].join('\n\n');
+    '请根据以上模组数据和调查员状态，生成下一段 DM 回复。'
+  );
+
+  return parts.join('\n\n');
 }
 
 // ============================================================
