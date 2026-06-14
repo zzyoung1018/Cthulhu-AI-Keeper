@@ -103,10 +103,6 @@ const els = {
   charSheetDialog: document.querySelector('#charSheetDialog'),
   charSheetTitle: document.querySelector('#charSheetTitle'),
   charSheetBody: document.querySelector('#charSheetBody'),
-  // AI 生成遮罩
-  aiGeneratingDialog: document.querySelector('#aiGeneratingDialog'),
-  aiGeneratingLabel: document.querySelector('#aiGeneratingLabel'),
-  aiGeneratingBody: document.querySelector('#aiGeneratingBody'),
   // 桌面
   tableArea: document.querySelector('#tableArea'),
   tableTitle: document.querySelector('#tableTitle'),
@@ -958,6 +954,10 @@ function connectEvents() {
   source.addEventListener('message_created', (event) => {
     const { message } = JSON.parse(event.data);
     if (!state.messages.some((existing) => existing.id === message.id)) {
+      // 流式生成中的消息显示"正在输入"占位
+      if (message.authorType === 'dm' && message.status === 'streaming') {
+        message.content = '⏳ AI 正在输入中…';
+      }
       state.messages.push(message);
       renderMessages();
     }
@@ -972,23 +972,15 @@ function connectEvents() {
       updateMessageNode(message);
     }
     setAiBusy(true);
-    // 显示 AI 生成遮罩
-    els.aiGeneratingBody.textContent = content || '';
-    if (!els.aiGeneratingDialog.open) {
-      els.aiGeneratingLabel.textContent = 'AI 正在生成中…';
-      els.aiGeneratingDialog.showModal();
-    }
-    els.aiGeneratingBody.scrollTop = els.aiGeneratingBody.scrollHeight;
   });
 
   source.addEventListener('message_completed', (event) => {
     const { message } = JSON.parse(event.data);
     const index = state.messages.findIndex((item) => item.id === message.id);
     if (index >= 0) state.messages[index] = message;
+    else state.messages.push(message);
     updateMessageNode(message);
     setAiBusy(false);
-    // 关闭 AI 生成遮罩
-    els.aiGeneratingDialog.close();
   });
 
   source.addEventListener('message_error', (event) => {
@@ -997,8 +989,6 @@ function connectEvents() {
     if (index >= 0) state.messages[index] = message;
     updateMessageNode(message);
     setAiBusy(false);
-    // 关闭 AI 生成遮罩
-    els.aiGeneratingDialog.close();
     toast('AI 生成失败');
   });
 
