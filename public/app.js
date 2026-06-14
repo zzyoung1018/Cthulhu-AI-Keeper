@@ -946,13 +946,20 @@ function renderProfileForm() {
 }
 
 // 职业选择变化时重渲染技能
-els.occupationSelect.addEventListener('change', () => {
-  const occ = els.occupationSelect.value;
-  if (occ) {
-    els.profileForm.elements['investigator.occupation'].value = occ;
-  }
-  renderSkills(currentSheet());
-});
+if (els.occupationSelect) {
+  els.occupationSelect.addEventListener('change', () => {
+    try {
+      const occ = els.occupationSelect.value;
+      if (occ) {
+        const field = els.profileForm?.elements?.['investigator.occupation'];
+        if (field) field.value = occ;
+      }
+      renderSkills(currentSheet());
+    } catch (e) {
+      console.error('occupation change error:', e);
+    }
+  });
+}
 
 function renderLifecycleActions() {
   const owner = isOwner();
@@ -1272,8 +1279,13 @@ els.profileForm.addEventListener('submit', async (event) => {
 
 // 角色卡弹窗
 els.btnEditCharacter.addEventListener('click', () => {
-  renderProfileForm();
-  els.characterDialog.showModal();
+  try {
+    renderProfileForm();
+    els.characterDialog.showModal();
+  } catch (e) {
+    console.error(e);
+    toast('打开角色卡失败：' + e.message);
+  }
 });
 document.querySelector('#closeCharacterDialog').addEventListener('click', () => els.characterDialog.close());
 els.characterDialog.addEventListener('click', (e) => { if (e.target === els.characterDialog) els.characterDialog.close(); });
