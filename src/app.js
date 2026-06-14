@@ -211,6 +211,69 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
   function applyStructuredEvents(code, taskUid, events, dmMessageId) {
     const state = database.getRoomState(code, 80);
 
+    // === 后端兜底检测：AI 漏掉的社交对抗自动补上 ===
+    if (!Array.isArray(events.opposed_checks) || events.opposed_checks.length === 0) {
+      const recentActions = state.messages.filter((m) => m.messageType === 'ACTION').slice(-3);
+      for (const action of recentActions) {
+        const content = String(action.content || '');
+
+        // 检测社交对抗关键词
+        const socialPatterns = [
+          { pattern: /欺诈|欺骗|撒谎|说谎|骗|哄|忽悠|隐瞒|伪装|冒充|假称|编造/, skill: '话术', contestType: 'social' },
+          { pattern: /恐吓|威胁|吓唬|警告.*不|再.*就杀了/, skill: '恐吓', contestType: 'social' },
+          { pattern: /说服|劝|求情|讲道理|谈条件|讨价还价/, skill: '说服', contestType: 'social' },
+          { pattern: /魅惑|勾引|调情|献媚|示好.*套/, skill: '魅惑', contestType: 'social' },
+          { pattern: /套话|打听.*消息|探.*口风|旁敲侧击/, skill: '话术', contestType: 'social' },
+        ];
+
+        let matchedPattern = null;
+        for (const p of socialPatterns) {
+          if (p.pattern.test(content)) {
+            matchedPattern = p;
+            break;
+          }
+        }
+        if (!matchedPattern) continue;
+
+        // 找到最近AI回复中提到的NPC
+        const recentDmMsg = state.messages.find((m) => m.authorType === 'dm');
+        let npcName = '对方';
+        let npcSkill = 50;
+        if (state.moduleJson?.npcs && recentDmMsg) {
+          const dmContent = recentDmMsg.content || '';
+          for (const npc of state.moduleJson.npcs) {
+            if (dmContent.includes(npc.name)) {
+              npcName = npc.name;
+              if (npc.skills?.心理学) npcSkill = Number(npc.skills.心理学);
+              else if (npc.attributes?.心理学) npcSkill = Number(npc.attributes.心理学);
+              else {
+                const role = String(npc.role || '').toLowerCase();
+                if (/警察|侦探|保安/.test(role)) npcSkill = 65;
+                else if (/干部|医生|教师/.test(role)) npcSkill = 55;
+                else npcSkill = 45;
+              }
+              break;
+            }
+          }
+        }
+
+        console.error(`[ai-output] AI missed opposed check, auto-detected: ${matchedPattern.skill} vs ${npcName}(${npcSkill})`);
+
+        events.opposed_checks = [{
+          activePlayerId: action.playerId,
+          activeSkill: matchedPattern.skill,
+          passiveNpcName: npcName,
+          passiveSkill: '心理学',
+          contestType: matchedPattern.contestType,
+          reason: `[自动检测] 玩家尝试${matchedPattern.skill}`,
+          playerHint: '',
+          successResult: '',
+          failureResult: ''
+        }];
+        break; // 只补一个
+      }
+    }
+
     // Process opposed/contested checks (all types: social, stealth, combat, item)
     if (Array.isArray(events.opposed_checks)) {
       for (const opp of events.opposed_checks) {
