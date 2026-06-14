@@ -736,9 +736,11 @@ function renderSkills(sheet) {
     input.dataset.base = base;
     input.value = score;
     input.addEventListener('input', () => {
-      const val = numberInRange(input.value, base, 0, 100);
-      input.value = Math.max(base, val);
       updateSkillPointsDisplay();
+    });
+    input.addEventListener('change', () => {
+      const val = numberInRange(input.value, base, 0, 100);
+      if (val < base) input.value = base;
     });
     els.skillsTable.append(row);
   }
