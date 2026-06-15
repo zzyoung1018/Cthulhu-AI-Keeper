@@ -789,9 +789,22 @@ function inferNpcName({ actionText, narrative, roomState }) {
 }
 
 function latestPlayerAction(roomState = {}) {
-  return [...(roomState.messages || [])]
+  const messages = roomState.messages || [];
+  const action = [...messages]
     .reverse()
     .find((message) => message.authorType === 'player' && message.messageType === 'ACTION' && message.playerId);
+  if (!action) return null;
+
+  // 如果这条 ACTION 之后已经有 DM 回复或检定系统消息，
+  // 说明已经被 AI 处理过，不应再用来推断检定
+  const actionIndex = messages.findIndex((m) => m.id === action.id);
+  const alreadyProcessed = messages.slice(actionIndex + 1).some((m) =>
+    m.authorType === 'dm' ||
+    (m.authorType === 'system' && ['对抗检定', '必要检定'].includes(m.displayName || ''))
+  );
+  if (alreadyProcessed) return null;
+
+  return action;
 }
 
 function buildInferredOpposedCheck({ action, rule, npcName }) {
