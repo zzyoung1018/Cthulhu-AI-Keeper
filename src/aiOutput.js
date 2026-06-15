@@ -278,10 +278,6 @@ function validateBySchema(value, schema, path = '') {
     return issues;
   }
 
-  if (schema === 'string') {
-    if (typeof value !== 'string') issues.push(`${path}: expected string`);
-  }
-
   return issues;
 }
 

@@ -265,16 +265,18 @@ export function hasReadyCharacter(sheet) {
   return Boolean(normalized.investigator.name);
 }
 
-export function getSkillTarget(sheet, skillName) {
-  const normalized = normalizeCharacterSheet(sheet);
+function _lookupSkill(normalizedSheet, skillName) {
   const targetName = trimText(skillName, 80);
   if (!targetName) return null;
-  if (Object.hasOwn(normalized.skills, targetName)) {
-    return normalized.skills[targetName];
+  if (Object.hasOwn(normalizedSheet.skills, targetName)) {
+    return normalizedSheet.skills[targetName];
   }
-
-  const found = Object.entries(normalized.skills).find(([name]) => name.toLowerCase() === targetName.toLowerCase());
+  const found = Object.entries(normalizedSheet.skills).find(([name]) => name.toLowerCase() === targetName.toLowerCase());
   return found ? found[1] : null;
+}
+
+export function getSkillTarget(sheet, skillName) {
+  return _lookupSkill(normalizeCharacterSheet(sheet), skillName);
 }
 
 export function getCheckTarget(sheet, checkName) {
@@ -282,7 +284,7 @@ export function getCheckTarget(sheet, checkName) {
   const targetName = trimText(checkName, 80);
   if (!targetName) return null;
 
-  const skillTarget = getSkillTarget(normalized, targetName);
+  const skillTarget = _lookupSkill(normalized, targetName);
   if (Number.isInteger(skillTarget)) {
     const canonicalSkill = Object.keys(normalized.skills).find((name) => name.toLowerCase() === targetName.toLowerCase()) || targetName;
     return { type: 'skill', label: canonicalSkill, target: skillTarget };
