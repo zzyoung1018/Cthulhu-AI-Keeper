@@ -518,3 +518,40 @@ test('formats structured output instructions for AI prompt', () => {
   assert.match(instructions, /summary_update/);
   assert.match(instructions, /json/);
 });
+
+test('strips AI-generated check markers so backend can inject its own', () => {
+
+  const enhanced = enhanceStructuredEvents({
+    events: {
+      opposed_checks: [{
+        activePlayerId: 'p1', activeSkill: '恐吓',
+        passiveNpcName: '王勇', passiveSkill: '心理学',
+        contestType: 'social', reason: '威胁NPC'
+      }]
+    },
+    narrative: [
+      '王勇转过身，手按住了腰间的枪套搭扣。',
+      '（此处触发对抗检定，立即暂停叙事，等待服务器骰点结果。）',
+      '（此处触发战斗检定，由服务器骰点判定胜负。）',
+      '日光灯管嗡嗡作响。'
+    ].join('\n'),
+    roomState: {
+      messages: [{
+        id: 1, authorType: 'player', messageType: 'ACTION',
+        playerId: 'p1', content: '威胁王勇交出所有资料。'
+      }]
+    }
+  });
+
+  // AI 自己写的两个标记都应被清理
+  assert.ok(!enhanced.narrative.includes('对抗检定，立即暂停叙事'),
+    'AI写的"对抗检定"标记应被删除');
+  assert.ok(!enhanced.narrative.includes('战斗检定，由服务器骰点判定胜负'),
+    'AI写的"战斗检定"标记应被删除');
+  // 后端注入的标记应该存在
+  assert.ok(enhanced.narrative.includes('社交检定'),
+    '后端注入的标记应该存在');
+  // 只出现一次"此处触发"
+  const count = (enhanced.narrative.match(/此处触发/g) || []).length;
+  assert.equal(count, 1, '应该只有一个"此处触发"标记');
+});

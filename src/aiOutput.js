@@ -1010,9 +1010,14 @@ function trimDecisiveOutcomeForRequiredCheck(text) {
   return { text: source, stripped: false };
 }
 
+// AI 有时会在叙事里自己写"此处触发XX检定"标记，但这是后端的职责。
+// 先清理掉 AI 生成的标记，再由后端统一追加。
+const AI_CHECK_MARKER = /（此处触发[^）]*?检定[^）]*?。）\s*/g;
+
 function sanitizeNarrative(narrative, inferredOpposedChecks, inferredRequiredChecks) {
-  const suggestionResult = stripTrailingActionSuggestions(narrative);
-  let text = suggestionResult.text;
+  let text = String(narrative || '').replace(AI_CHECK_MARKER, '').trim();
+  const suggestionResult = stripTrailingActionSuggestions(text);
+  text = suggestionResult.text;
   let decisiveStripped = false;
 
   if (inferredOpposedChecks.length > 0) {
