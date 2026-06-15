@@ -533,6 +533,34 @@ function findActiveAiTask(tasks = []) {
   return tasks.find((task) => activeAiStatuses.includes(task.status)) || null;
 }
 
+function canSubmitToDm() {
+  return Boolean(state.room && state.participant && state.room.status === 'ACTIVE' && !findActiveAiTask(state.aiTasks));
+}
+
+function isCheckResultMessage(message) {
+  return message?.authorType === 'system' &&
+    ['对抗检定', '必要检定'].includes(message.displayName || '');
+}
+
+function latestContinuableCheckMessage() {
+  const index = [...state.messages].reverse().findIndex(isCheckResultMessage);
+  if (index < 0) return null;
+
+  const messageIndex = state.messages.length - 1 - index;
+  const laterMessages = state.messages.slice(messageIndex + 1);
+  const alreadyContinued = laterMessages.some((message) =>
+    message.authorType === 'dm' ||
+    (message.authorType === 'player' && message.messageType === 'ACTION')
+  );
+
+  if (alreadyContinued) return null;
+  return state.messages[messageIndex];
+}
+
+function shouldShowContinueAction() {
+  return canSubmitToDm() && Boolean(latestContinuableCheckMessage());
+}
+
 function syncDisplayNameFromParticipant(participant) {
   if (!participant?.displayName) return;
   state.displayName = participant.displayName;
@@ -676,6 +704,19 @@ function renderMessages() {
     node.querySelector('.message-body').textContent = message.content;
     els.chatLog.append(node);
   }
+
+  const checkMessage = shouldShowContinueAction() ? latestContinuableCheckMessage() : null;
+  if (checkMessage) {
+    const action = document.createElement('div');
+    action.className = 'continue-action';
+    action.innerHTML = `
+      <button class="primary continue-button" type="button" data-continue-from-check="${checkMessage.id}">
+        继续叙事
+      </button>
+    `;
+    els.chatLog.append(action);
+  }
+
   els.chatLog.scrollTop = els.chatLog.scrollHeight;
 }
 
@@ -688,6 +729,10 @@ function updateMessageNode(message) {
   }
   node.className = messageClass(message);
   node.querySelector('.message-body').textContent = message.content;
+  if (shouldShowContinueAction() && !els.chatLog.querySelector('[data-continue-from-check]')) {
+    renderMessages();
+    return;
+  }
   els.chatLog.scrollTop = els.chatLog.scrollHeight;
 }
 
@@ -1496,6 +1541,7 @@ function connectEvents() {
     state.aiTasks = state.aiTasks.slice(-20);
     state.activeAiTask = findActiveAiTask(state.aiTasks);
     renderAiTaskControls();
+    renderMessages();
   });
 
   source.addEventListener('message_error', (event) => {
@@ -1671,6 +1717,48 @@ els.statusCards?.addEventListener('click', (event) => {
   els.charSheetDialog.showModal();
 });
 
+async function submitActionToDm(content, { actionId = '' } = {}) {
+  if (!state.room) return null;
+  setAiBusy(true);
+  const payload = await api(`/api/rooms/${state.room.code}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({
+      playerId: state.playerId,
+      content,
+      messageType: 'ACTION',
+      submitToDm: true,
+      ...(actionId ? { actionId } : {})
+    })
+  });
+
+  if (payload.aiTask) {
+    const index = state.aiTasks.findIndex((task) => task.uid === payload.aiTask.uid);
+    if (index >= 0) state.aiTasks[index] = payload.aiTask;
+    else state.aiTasks.push(payload.aiTask);
+    state.activeAiTask = findActiveAiTask(state.aiTasks);
+    renderAiTaskControls();
+    renderMessages();
+  }
+
+  return payload;
+}
+
+els.chatLog.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-continue-from-check]');
+  if (!button || !canSubmitToDm()) return;
+
+  button.disabled = true;
+  try {
+    await submitActionToDm('继续：请根据刚才的检定结果推进剧情。', {
+      actionId: `continue:${button.dataset.continueFromCheck}`
+    });
+  } catch (error) {
+    setAiBusy(false);
+    button.disabled = false;
+    toast(error.message);
+  }
+});
+
 els.readyCharacter.addEventListener('click', async () => {
   if (!state.room || !state.participant) return;
   try {
@@ -1744,25 +1832,9 @@ els.messageForm.addEventListener('submit', async (event) => {
   if (!content) return;
 
   els.messageForm.content.value = '';
-  setAiBusy(true);
 
   try {
-    const payload = await api(`/api/rooms/${state.room.code}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({
-        playerId: state.playerId,
-        content,
-        messageType: 'ACTION',
-        submitToDm: true
-      })
-    });
-    if (payload.aiTask) {
-      const index = state.aiTasks.findIndex((task) => task.uid === payload.aiTask.uid);
-      if (index >= 0) state.aiTasks[index] = payload.aiTask;
-      else state.aiTasks.push(payload.aiTask);
-      state.activeAiTask = findActiveAiTask(state.aiTasks);
-      renderAiTaskControls();
-    }
+    await submitActionToDm(content);
   } catch (error) {
     setAiBusy(false);
     toast(error.message);

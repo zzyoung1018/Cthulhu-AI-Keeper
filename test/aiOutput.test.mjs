@@ -381,6 +381,7 @@ test('formats structured output instructions for AI prompt', () => {
   assert.match(instructions, /JSON\.parse/);
   assert.match(instructions, /targetPlayerId/);
   assert.match(instructions, /图书馆使用/);
+  assert.match(instructions, /继续/);
   assert.match(instructions, /proposed_state_changes/);
   assert.match(instructions, /clues_revealed/);
   assert.match(instructions, /scene_change/);

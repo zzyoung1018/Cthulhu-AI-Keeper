@@ -846,6 +846,19 @@ select:focus {
   line-height: 1.58;
 }
 
+.continue-action {
+  width: min(760px, 100%);
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -2px;
+}
+
+.continue-button {
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 6px;
+}
+
 .composer {
   display: grid;
   grid-template-columns: 1fr 96px;
