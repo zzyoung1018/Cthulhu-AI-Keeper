@@ -92,6 +92,7 @@ const EVENT_SCHEMAS = {
 };
 
 const REQUIRED_OPPOSED_FIELDS = ['activePlayerId', 'activeSkill', 'passiveNpcName', 'passiveSkill', 'reason'];
+const REQUIRED_CHECK_FIELDS = ['skill', 'difficulty'];
 
 const VALID_FIELD_PATHS = new Set([
   'status.hp',
@@ -157,14 +158,45 @@ const ACTION_DETECTION_RULES = [
     activeSkill: '潜行',
     passiveSkill: '侦查',
     reason: '玩家试图潜行、跟踪或避开 NPC 发现',
-    pattern: /潜行|偷偷|悄悄|无声|屏住呼吸|跟踪|尾随|躲(?:开|藏)?|藏(?:起来|身)?|避开|绕开|溜(?:进|过去|走)|潜入|不被.*发现|别.*发现/
+    pattern: /潜行|偷偷|悄悄|无声|屏住呼吸|跟踪|尾随|躲开|躲藏|躲起来|藏起来|藏身|避开|绕开|溜(?:进|过去|走)|潜入|不被.*发现|别.*发现/
+  },
+  {
+    type: 'combat',
+    activeSkill: '射击',
+    passiveSkill: '闪避',
+    reason: '玩家对 NPC 开枪或进行远程攻击',
+    pattern: /射击|开枪|枪击|开火|用.*枪|手枪|步枪|霰弹枪|瞄准.*(?:射|打)/
   },
   {
     type: 'combat',
     activeSkill: '格斗',
     passiveSkill: '闪避',
     reason: '玩家对 NPC 发起攻击或试图制服对方',
-    pattern: /攻击|偷袭|刺杀|刺向|挥拳|打(?:他|她|对方)?|砍|射击|开枪|制服|夺(?:刀|枪|武器)|抢(?:刀|枪|武器)/
+    pattern: /攻击|偷袭|刺杀|刺向|挥拳|打(?:他|她|对方)?|砍|制服|夺(?:刀|枪|武器)|抢(?:刀|枪|武器)/
+  }
+];
+
+const REQUIRED_CHECK_DETECTION_RULES = [
+  {
+    skill: '图书馆使用',
+    difficulty: 'REGULAR',
+    reason: '玩家查阅资料、档案或文献寻找信息',
+    playerHint: '你开始翻阅资料，信息是否足够有用取决于检定结果。',
+    pattern: /图书馆使用|查资料|查阅|翻阅|检索|资料|档案|卷宗|文献|书架|书籍|报纸|报刊|记录|名册|登记簿|县志|族谱/
+  },
+  {
+    skill: '侦查',
+    difficulty: 'REGULAR',
+    reason: '玩家搜索或观察环境寻找线索',
+    playerHint: '你放慢动作仔细观察，线索是否显露取决于检定结果。',
+    pattern: /侦查|观察|查看|检查|搜索|搜查|翻找|寻找|找找|看看|打量|环顾|留意|盯着|调查(?:房间|现场|周围|地面|墙|门|窗|桌|柜)/
+  },
+  {
+    skill: '聆听',
+    difficulty: 'REGULAR',
+    reason: '玩家专注倾听环境中的声音或动静',
+    playerHint: '你屏住呼吸倾听，能否分辨细节取决于检定结果。',
+    pattern: /聆听|倾听|听(?:一听|听看|声音|脚步|动静)|有没有.*声音/
   }
 ];
 
@@ -258,8 +290,14 @@ function isCompleteOpposedCheck(check) {
     REQUIRED_OPPOSED_FIELDS.every((field) => typeof check[field] === 'string' && check[field].trim());
 }
 
+function isCompleteRequiredCheck(check) {
+  return check && typeof check === 'object' && !Array.isArray(check) &&
+    REQUIRED_CHECK_FIELDS.every((field) => typeof check[field] === 'string' && check[field].trim());
+}
+
 function compactEventArray(value, key) {
   if (!Array.isArray(value)) return value;
+  if (key === 'required_checks') return value.filter(isCompleteRequiredCheck);
   if (key !== 'opposed_checks') return value;
   return value.filter(isCompleteOpposedCheck);
 }
@@ -376,6 +414,19 @@ function classifyOpposedAction(actionText) {
   return null;
 }
 
+function classifyRequiredAction(actionText) {
+  const text = normalizeText(actionText);
+  if (!text) return null;
+
+  for (const rule of REQUIRED_CHECK_DETECTION_RULES) {
+    if (rule.pattern.test(text)) {
+      return { ...rule };
+    }
+  }
+
+  return null;
+}
+
 function npcCandidates(roomState = {}) {
   const pairs = [...NPC_ALIAS_PAIRS];
   for (const npc of roomState.moduleJson?.npcs || []) {
@@ -451,6 +502,16 @@ function buildInferredOpposedCheck({ action, rule, npcName }) {
   };
 }
 
+function buildInferredRequiredCheck({ action, rule }) {
+  return {
+    targetPlayerId: action.playerId,
+    skill: rule.skill,
+    difficulty: rule.difficulty,
+    reason: rule.reason,
+    playerHint: rule.playerHint
+  };
+}
+
 function inferOpposedChecks({ events, narrative, roomState }) {
   const action = latestPlayerAction(roomState);
   const rule = action ? classifyOpposedAction(action.content) : null;
@@ -467,6 +528,33 @@ function inferOpposedChecks({ events, narrative, roomState }) {
   return {
     checks: [buildInferredOpposedCheck({ action, rule, npcName })],
     reason: `backend-${rule.type}`,
+    action
+  };
+}
+
+function inferRequiredChecks({ events, roomState }) {
+  const action = latestPlayerAction(roomState);
+  if (!action) {
+    return { checks: [], reason: '', action: null };
+  }
+
+  if (classifyOpposedAction(action.content)) {
+    return { checks: [], reason: 'opposed-action', action };
+  }
+
+  const existing = Array.isArray(events.required_checks) ? events.required_checks.filter(isCompleteRequiredCheck) : [];
+  if (existing.length > 0) {
+    return { checks: [], reason: 'model-provided', action };
+  }
+
+  const rule = classifyRequiredAction(action.content);
+  if (!rule) {
+    return { checks: [], reason: '', action };
+  }
+
+  return {
+    checks: [buildInferredRequiredCheck({ action, rule })],
+    reason: `backend-${rule.skill}`,
     action
   };
 }
@@ -528,18 +616,48 @@ function trimDecisiveOutcomeForCheck(text) {
   return { text: source, stripped: false };
 }
 
-function sanitizeNarrative(narrative, inferredChecks) {
+function trimDecisiveOutcomeForRequiredCheck(text) {
+  const source = String(text || '').trim();
+  if (!source) return { text: source, stripped: false };
+
+  const decisive = /(?:发现(?:了|到)|找到(?:了)?|查到(?:了)?|翻出(?:了)?|看出(?:了)?|确认(?:了)?|确定(?:了)?|线索是|答案是)/;
+  const sentences = source.match(/[^。！？!?]+[。！？!?]?|\n+/g) || [source];
+  const kept = [];
+
+  for (const sentence of sentences) {
+    if (decisive.test(sentence)) {
+      const textBeforeOutcome = kept.join('').trim();
+      return {
+        text: textBeforeOutcome || '局势停在检定结果揭晓前的一瞬。',
+        stripped: true
+      };
+    }
+    kept.push(sentence);
+  }
+
+  return { text: source, stripped: false };
+}
+
+function sanitizeNarrative(narrative, inferredOpposedChecks, inferredRequiredChecks) {
   const suggestionResult = stripTrailingActionSuggestions(narrative);
   let text = suggestionResult.text;
   let decisiveStripped = false;
 
-  if (inferredChecks.length > 0) {
+  if (inferredOpposedChecks.length > 0) {
     const result = trimDecisiveOutcomeForCheck(text);
     text = result.text;
     decisiveStripped = result.stripped;
     text = [
       text,
-      `（此处触发${inferredChecks[0].contestType === 'social' ? '社交' : inferredChecks[0].contestType === 'stealth' ? '潜行' : '对抗'}检定，等待服务器骰点结果后继续。）`
+      `（此处触发${inferredOpposedChecks[0].contestType === 'social' ? '社交' : inferredOpposedChecks[0].contestType === 'stealth' ? '潜行' : '对抗'}检定，等待服务器骰点结果后继续。）`
+    ].filter(Boolean).join('\n\n');
+  } else if (inferredRequiredChecks.length > 0) {
+    const result = trimDecisiveOutcomeForRequiredCheck(text);
+    text = result.text;
+    decisiveStripped = result.stripped;
+    text = [
+      text,
+      `（此处触发${inferredRequiredChecks[0].skill}检定，等待服务器骰点结果后继续。）`
     ].filter(Boolean).join('\n\n');
   }
 
@@ -553,9 +671,13 @@ function sanitizeNarrative(narrative, inferredChecks) {
 export function enhanceStructuredEvents({ events, narrative, roomState } = {}) {
   const enhancedEvents = { ...(events || {}) };
   const diagnostics = {
+    inferredRequiredChecks: [],
+    inferredRequiredReason: '',
     inferredOpposedChecks: [],
     inferredReason: '',
+    droppedIncompleteRequiredChecks: 0,
     droppedIncompleteOpposedChecks: 0,
+    droppedRequiredChecksForOpposedAction: 0,
     strippedActionSuggestions: false,
     strippedDecisiveOutcome: false,
     latestActionId: null
@@ -565,6 +687,12 @@ export function enhanceStructuredEvents({ events, narrative, roomState } = {}) {
     const before = enhancedEvents.opposed_checks.length;
     enhancedEvents.opposed_checks = compactEventArray(enhancedEvents.opposed_checks, 'opposed_checks');
     diagnostics.droppedIncompleteOpposedChecks = before - enhancedEvents.opposed_checks.length;
+  }
+
+  if (Array.isArray(enhancedEvents.required_checks)) {
+    const before = enhancedEvents.required_checks.length;
+    enhancedEvents.required_checks = compactEventArray(enhancedEvents.required_checks, 'required_checks');
+    diagnostics.droppedIncompleteRequiredChecks = before - enhancedEvents.required_checks.length;
   }
 
   const inferred = inferOpposedChecks({ events: enhancedEvents, narrative, roomState });
@@ -579,7 +707,24 @@ export function enhanceStructuredEvents({ events, narrative, roomState } = {}) {
     diagnostics.inferredOpposedChecks = inferred.checks;
   }
 
-  const sanitized = sanitizeNarrative(narrative, inferred.checks);
+  if ((inferred.checks.length > 0 || inferred.reason === 'model-provided') && Array.isArray(enhancedEvents.required_checks)) {
+    diagnostics.droppedRequiredChecksForOpposedAction = enhancedEvents.required_checks.length;
+    delete enhancedEvents.required_checks;
+  }
+
+  const inferredRequired = inferRequiredChecks({ events: enhancedEvents, roomState });
+  diagnostics.latestActionId = diagnostics.latestActionId || inferredRequired.action?.id || null;
+  diagnostics.inferredRequiredReason = inferredRequired.reason;
+
+  if (inferredRequired.checks.length > 0) {
+    enhancedEvents.required_checks = [
+      ...(Array.isArray(enhancedEvents.required_checks) ? enhancedEvents.required_checks : []),
+      ...inferredRequired.checks
+    ];
+    diagnostics.inferredRequiredChecks = inferredRequired.checks;
+  }
+
+  const sanitized = sanitizeNarrative(narrative, inferred.checks, inferredRequired.checks);
   diagnostics.strippedActionSuggestions = sanitized.strippedActionSuggestions;
   diagnostics.strippedDecisiveOutcome = sanitized.strippedDecisiveOutcome;
 

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   calculateDerived,
   diffCharacterSheets,
+  getCheckTarget,
   getSkillTarget,
   normalizeCharacterSheet
 } from '../src/character.js';
@@ -49,6 +50,21 @@ test('distinguishes legacy sheets without saved skill allocations', () => {
 
   assert.equal(legacy.skillAllocations, null);
   assert.deepEqual(saved.skillAllocations, {});
+});
+
+test('resolves skill and characteristic targets for checks', () => {
+  const sheet = normalizeCharacterSheet({
+    characteristics: { DEX: 65, POW: 40, Luck: 70 },
+    status: { luck: 33 },
+    skills: { 侦查: 72, 图书馆使用: 45 }
+  });
+
+  assert.deepEqual(getCheckTarget(sheet, '侦查'), { type: 'skill', label: '侦查', target: 72 });
+  assert.deepEqual(getCheckTarget(sheet, '图书馆使用'), { type: 'skill', label: '图书馆使用', target: 45 });
+  assert.deepEqual(getCheckTarget(sheet, '敏捷'), { type: 'characteristic', label: 'DEX', target: 65 });
+  assert.deepEqual(getCheckTarget(sheet, 'POW'), { type: 'characteristic', label: 'POW', target: 40 });
+  assert.deepEqual(getCheckTarget(sheet, '幸运'), { type: 'characteristic', label: 'Luck', target: 33 });
+  assert.equal(getCheckTarget(sheet, '不存在'), null);
 });
 
 test('diffs individual character fields for history records', () => {

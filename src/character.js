@@ -1,5 +1,30 @@
 const CHARACTERISTIC_KEYS = ['STR', 'CON', 'SIZ', 'DEX', 'APP', 'INT', 'POW', 'EDU', 'Luck'];
 
+const CHARACTERISTIC_ALIASES = {
+  STR: 'STR',
+  力量: 'STR',
+  CON: 'CON',
+  体质: 'CON',
+  SIZ: 'SIZ',
+  体型: 'SIZ',
+  DEX: 'DEX',
+  敏捷: 'DEX',
+  APP: 'APP',
+  外貌: 'APP',
+  INT: 'INT',
+  智力: 'INT',
+  灵感: 'INT',
+  POW: 'POW',
+  意志: 'POW',
+  意志力: 'POW',
+  EDU: 'EDU',
+  教育: 'EDU',
+  LUCK: 'Luck',
+  Luck: 'Luck',
+  luck: 'Luck',
+  幸运: 'Luck'
+};
+
 const DEFAULT_CHARACTERISTICS = {
   STR: 50,
   CON: 50,
@@ -250,6 +275,28 @@ export function getSkillTarget(sheet, skillName) {
 
   const found = Object.entries(normalized.skills).find(([name]) => name.toLowerCase() === targetName.toLowerCase());
   return found ? found[1] : null;
+}
+
+export function getCheckTarget(sheet, checkName) {
+  const normalized = normalizeCharacterSheet(sheet);
+  const targetName = trimText(checkName, 80);
+  if (!targetName) return null;
+
+  const skillTarget = getSkillTarget(normalized, targetName);
+  if (Number.isInteger(skillTarget)) {
+    const canonicalSkill = Object.keys(normalized.skills).find((name) => name.toLowerCase() === targetName.toLowerCase()) || targetName;
+    return { type: 'skill', label: canonicalSkill, target: skillTarget };
+  }
+
+  const directKey = CHARACTERISTIC_KEYS.find((key) => key.toLowerCase() === targetName.toLowerCase());
+  const aliasKey = CHARACTERISTIC_ALIASES[targetName] || CHARACTERISTIC_ALIASES[targetName.toUpperCase()];
+  const key = directKey || aliasKey;
+  if (key && Object.hasOwn(normalized.characteristics, key)) {
+    const target = key === 'Luck' ? normalized.status.luck : normalized.characteristics[key];
+    return { type: 'characteristic', label: key, target };
+  }
+
+  return null;
 }
 
 export function formatCharacterState(sheet) {

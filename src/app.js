@@ -7,7 +7,7 @@ import { enhanceStructuredEvents, extractStructuredEvents, validateStructuredEve
 import { buildIntroSystemPrompt, buildIntroUserContext, buildStructuredOutputPrompt } from './prompts.js';
 import { RoomAiQueue } from './aiQueue.js';
 import { assertAiSettingsInput, roomRuntimeAiConfig } from './aiSettings.js';
-import { getSkillTarget } from './character.js';
+import { getCheckTarget, getSkillTarget } from './character.js';
 import { isAiConfigured } from './config.js';
 import { createDatabase } from './db.js';
 import { dispatchDiceRoll, formatRollSummary, rollContestedCheck } from './dice.js';
@@ -243,6 +243,18 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
   function applyStructuredEvents(code, taskUid, events, dmMessageId) {
     const state = database.getRoomState(code, 80);
+    const defaultPlayerId = resolveDefaultCheckPlayerId(state, taskUid);
+
+    // Process required checks against static obstacles or the environment.
+    if (Array.isArray(events.required_checks)) {
+      for (const check of events.required_checks) {
+        try {
+          applyRequiredCheck(code, check, defaultPlayerId);
+        } catch (checkError) {
+          console.error('[ai-output] required check failed:', check.skill, checkError.message);
+        }
+      }
+    }
 
     // Process opposed/contested checks (all types: social, stealth, combat, item)
     if (Array.isArray(events.opposed_checks)) {
@@ -419,6 +431,89 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     // Broadcast updated room state
     const updatedState = database.getRoomState(code, 80);
     hub.broadcast(code, 'room_state', updatedState);
+  }
+
+  function resolveDefaultCheckPlayerId(state, taskUid) {
+    try {
+      const task = database.getAiTask(taskUid);
+      if (task?.requestedByPlayerId) return task.requestedByPlayerId;
+    } catch {
+      // Fall through to latest action.
+    }
+
+    const latestAction = [...(state.messages || [])]
+      .reverse()
+      .find((message) => message.authorType === 'player' && message.messageType === 'ACTION' && message.playerId);
+    return latestAction?.playerId || state.participants?.[0]?.playerId || '';
+  }
+
+  function normalizeCheckDifficulty(value) {
+    const difficulty = String(value || 'REGULAR').trim().toUpperCase();
+    return difficulty === 'NORMAL' ? 'REGULAR' : difficulty;
+  }
+
+  function difficultyText(value) {
+    return {
+      REGULAR: '常规',
+      HARD: '困难',
+      EXTREME: '极难'
+    }[normalizeCheckDifficulty(value)] || normalizeCheckDifficulty(value);
+  }
+
+  function successText(result) {
+    return result.passed ? '成功' : '失败';
+  }
+
+  function applyRequiredCheck(code, check, defaultPlayerId) {
+    const targetPlayerId = check.targetPlayerId || defaultPlayerId;
+    if (!targetPlayerId) return;
+
+    const { participant } = database.getParticipant(code, targetPlayerId);
+    if (!participant) return;
+
+    const target = getCheckTarget(participant.characterSheet, check.skill);
+    if (!target || !Number.isInteger(target.target)) return;
+
+    const difficulty = normalizeCheckDifficulty(check.difficulty);
+    const { result } = dispatchDiceRoll({
+      rollType: 'skill',
+      skillName: target.label,
+      skillTarget: target.target,
+      difficulty
+    });
+    const enrichedResult = {
+      ...result,
+      checkType: target.type,
+      skillName: target.label
+    };
+    const playerName = participant.characterName || participant.displayName;
+
+    const roll = database.createDiceRoll({
+      code,
+      playerId: targetPlayerId,
+      rollType: enrichedResult.type,
+      expression: enrichedResult.expression,
+      label: target.label,
+      result: enrichedResult
+    });
+
+    const msg = database.createMessage({
+      code,
+      authorType: 'system',
+      messageType: 'SYSTEM',
+      displayName: '必要检定',
+      content: [
+        `🎲 必要检定：${playerName} 的 ${target.label}(${target.target})`,
+        `难度：${difficultyText(difficulty)}`,
+        check.reason ? `原因：${check.reason}` : '',
+        `1d100 = ${enrichedResult.total} → ${enrichedResult.successLevel}（${successText(enrichedResult)}）`,
+        check.playerHint || ''
+      ].filter(Boolean).join('\n'),
+      status: 'complete'
+    });
+
+    hub.broadcast(code, 'message_created', { message: msg });
+    hub.broadcast(code, 'dice_rolled', { roll });
   }
 
   function applyStateChange(code, change) {

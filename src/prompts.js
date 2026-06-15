@@ -139,18 +139,36 @@ export function buildIntroUserContext({ moduleTitle, maxPlayers, moduleContext }
 export function buildStructuredOutputPrompt() {
   return [
     '【强制步骤 - 必须在叙事前完成】',
-    '1. 分析玩家最近一条 ACTION 消息。判断是否涉及：撒谎/欺骗、恐吓/威胁、说服/谈判、',
-    '   魅惑/引诱、潜入/跟踪、偷窃、偷袭/刺杀、或其他有对手、有失败后果的行为。',
-    '2. 如果是 → 你必须在下方 JSON 中返回 opposed_checks。叙事部分只描述 NPC 的微表情',
-    '   和动作，不要在叙事中宣布"他相信了"或"他识破了"。等待服务器掷骰。',
-    '3. 如果不是 → opposed_checks 可以省略。',
+    '1. 分析最近一条 [正式行动]。只使用“调查员状态（JSON）”里真实存在的 playerId。',
+    '2. 如果行动有 NPC/敌人/看守/目击者作为直接对手，返回 opposed_checks；不要把它写成 required_checks。',
+    '3. 如果行动是搜索、侦查、聆听、查资料、开锁、医学、急救、驾驶、攀爬等静态障碍或环境检定，返回 required_checks。',
+    '4. 如果需要检定，叙事只能写到检定发生前的一瞬；不要提前宣布成功、失败、发现线索、说服成功或被识破。',
     '',
-    '在你完成叙事后，请附加一个 JSON 代码块。格式如下：',
+    '【输出格式 - 不能违反】',
+    '- 叙事结束后，最后一个内容必须是单独的 ```json 代码块。',
+    '- JSON 必须能被 JSON.parse 直接解析；不能有注释、尾逗号、中文键名、Markdown 表格或多余解释。',
+    '- 关闭 ``` 后不要再输出任何文字。',
+    '- 没有事件时也输出空对象：{}。',
+    '',
+    '格式示例：',
     '',
     '```json',
     JSON.stringify({
       required_checks: [
-        { skill: '侦查', difficulty: 'REGULAR', reason: '找到隐藏线索', playerHint: '你注意到地板有些不对劲' }
+        {
+          targetPlayerId: '<playerId>',
+          skill: '侦查',
+          difficulty: 'REGULAR',
+          reason: '搜索书桌下方是否有隐藏线索',
+          playerHint: '你蹲下身检查桌脚附近的划痕，结果交给检定。'
+        },
+        {
+          targetPlayerId: '<playerId>',
+          skill: '图书馆使用',
+          difficulty: 'HARD',
+          reason: '从档案和旧报纸中查找东乡村旧案',
+          playerHint: '成摞泛黄资料堆在桌上，关键信息需要靠检定筛出。'
+        }
       ],
       opposed_checks: [
         {
@@ -196,12 +214,17 @@ export function buildStructuredOutputPrompt() {
     '```',
     '',
     '规则：',
-    '- 只包含确实发生变化的字段',
+    '- 只包含确实发生或确实需要后端执行的字段',
+    '- targetPlayerId / activePlayerId 必须来自调查员状态 JSON；不确定时用最近正式行动的玩家',
+    '- required_checks 用于无主动 NPC 对手的技能/属性检定，例如侦查、聆听、图书馆使用、锁匠、急救、医学、驾驶汽车、攀爬、DEX、POW',
+    '- required_checks.skill 可以是技能名，也可以是属性名 STR/CON/SIZ/DEX/APP/INT/POW/EDU/Luck 或对应中文',
     '- proposed_state_changes 只允许修改 status.hp, status.mp, status.san, status.luck, characteristics.*',
     '- 必须经过后端规则验证才会生效',
-    '- required_checks 中的 difficulty 必须是 REGULAR、HARD 或 EXTREME',
-    '- opposed_checks 用于社交对抗：玩家对NPC撒谎/恐吓/说服时，必须返回此字段',
-    '- opposed_checks.activeSkill 用玩家技能（话术/恐吓/魅惑/说服），passiveSkill 用NPC的心理学',
+    '- required_checks.difficulty 必须是 REGULAR、HARD 或 EXTREME',
+    '- opposed_checks 用于有主动对手的行动：撒谎/说服/恐吓/魅惑/潜行绕过NPC/偷窃/攻击/偷袭',
+    '- 社交 opposed_checks.activeSkill 用话术/恐吓/魅惑/说服，passiveSkill 通常用 NPC 的心理学',
+    '- 潜行/偷窃 opposed_checks.activeSkill 用潜行/妙手/乔装，passiveSkill 用 NPC 的侦查或聆听',
+    '- 攻击 opposed_checks.activeSkill 用格斗或射击，passiveSkill 用闪避或侦查',
     '- clues_revealed 中 privateTo 为空表示所有玩家可见',
     '- 如果没有某个类型的事件，可以省略该字段'
   ].join('\n');

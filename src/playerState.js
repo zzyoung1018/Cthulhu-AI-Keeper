@@ -64,12 +64,11 @@ export function buildPlayerState(participant, room, allParticipants = []) {
       }))
     },
 
-    // 核心技能（仅含值>0的）
+    // 技能（仅含值>0的，完整发送给 AI 以便普通检定可覆盖所有技能）
     skills: Object.fromEntries(
       Object.entries(sheet.skills || {})
         .filter(([, v]) => v > 0)
         .sort(([, a], [, b]) => b - a)
-        .slice(0, 20)
     ),
 
     // 武器
