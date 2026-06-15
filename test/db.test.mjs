@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDatabase } from '../src/db.js';
 import { HttpError } from '../src/errors.js';
+import { computeRollback } from '../src/rounds.js';
 
 function withDb() {
   const dir = mkdtempSync(join(tmpdir(), 'dm-online-test-'));
@@ -274,6 +275,44 @@ test('saves structured character sheets, derived state, ready flag, and field hi
 
     const history = database.getCharacterHistory({ code: room.code, playerId: 'p1' });
     assert.ok(history.some((entry) => entry.fieldPath === 'skills.侦查' && entry.newValue === 80));
+  } finally {
+    cleanup();
+  }
+});
+
+test('runtime character state updates preserve ready flag and history', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const module = createModule(database, 'p1');
+    const { room } = database.createRoom({
+      name: 'Runtime State',
+      playerId: 'p1',
+      displayName: 'Keeper',
+      moduleId: module.id
+    });
+
+    const saved = database.updateCharacterSheet({
+      code: room.code,
+      playerId: 'p1',
+      displayName: 'Keeper',
+      characterSheet: characterSheet('林娜', 72)
+    });
+    database.setParticipantReady({ code: room.code, playerId: 'p1', isReady: true });
+
+    const runtimeSheet = structuredClone(saved.characterSheet);
+    runtimeSheet.status.hp = 5;
+    const updated = database.updateCharacterRuntimeState({
+      code: room.code,
+      playerId: 'p1',
+      characterSheet: runtimeSheet
+    });
+
+    assert.equal(updated.isReady, true);
+    assert.equal(updated.characterSheet.status.hp, 5);
+    assert.match(updated.state, /HP 5\/11/);
+
+    const history = database.getCharacterHistory({ code: room.code, playerId: 'p1' });
+    assert.ok(history.some((entry) => entry.fieldPath === 'status.hp' && entry.newValue === 5));
   } finally {
     cleanup();
   }
@@ -567,6 +606,7 @@ test('creates and lists round states for rollback tracking', () => {
 
     const rounds = database.listRoundStates(room.id);
     assert.equal(rounds.length, 1);
+    assert.equal(database.getRoundStateByTaskUid(room.id, 'test-task-uid').id, round.id);
 
     database.markRoundRolledBack(round.id);
     const rolled = database.getRoundState(round.id);
@@ -576,7 +616,7 @@ test('creates and lists round states for rollback tracking', () => {
   }
 });
 
-test('rollback restores character snapshots and marks messages rolled back', () => {
+test('rollback by task uid restores snapshots, summary, scene state, and marks messages rolled back', () => {
   const { database, cleanup } = withDb();
   try {
     const mod = createModule(database, 'keeper');
@@ -614,32 +654,30 @@ test('rollback restores character snapshots and marks messages rolled back', () 
           characterSheet: characterSheet('旧名', 50),
           characterRevision: 0
         }],
-        summary: 'old summary'
+        summary: 'old summary',
+        sceneState: JSON.stringify({ currentScene: 'old_scene' })
       })
     });
 
-    // Simulate rollback: restore snapshot and mark message
-    const snap = JSON.parse(round.snapshotJson);
-    for (const s of snap.participants) {
-      const p = database.getParticipantByPlayerId(room.id, s.playerId);
-      if (p) {
-        database.restoreCharacterSnapshot({
-          participantId: p.id,
-          characterSheet: s.characterSheet,
-          characterRevision: s.characterRevision
-        });
-      }
-    }
-    database.markMessageRolledBack(msg.id);
-    database.markRoundRolledBack(round.id);
-    database.forceUpdateSummary(room.id, snap.summary);
+    database.forceUpdateSummary(room.id, 'new summary');
+    database.forceUpdateSceneState(room.id, { currentScene: 'new_scene' });
+    const result = computeRollback({
+      database,
+      roomCode: room.code,
+      playerId: 'keeper',
+      taskUid: 'rollback-test'
+    });
 
     // Verify rollback
+    assert.equal(result.roundId, round.id);
+    assert.equal(result.aiTaskUid, 'rollback-test');
     const rolledMsg = database.getMessageById(msg.id);
     assert.equal(rolledMsg.isRolledBack, true);
 
     const state = database.getRoomState(room.code);
     assert.equal(state.messages.length, 0); // Rolled back messages are filtered
+    assert.equal(state.room.summary, 'old summary');
+    assert.equal(JSON.parse(state.room.sceneState).currentScene, 'old_scene');
   } finally {
     cleanup();
   }

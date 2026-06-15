@@ -94,8 +94,9 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
   }
 
   async function generateDmReply(code, taskUid) {
+    let task;
     try {
-      assertTaskNotCancelled(taskUid);
+      task = assertTaskNotCancelled(taskUid);
     } catch (error) {
       if (error instanceof AiTaskCancelled) {
         setAiTaskStatus(code, taskUid, 'CANCELLED');
@@ -162,6 +163,16 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       const aiMessages = buildDmMessages(state);
       // 结构化输出指令作为 system 消息，优先级最高
       aiMessages.splice(1, 0, { role: 'system', content: buildStructuredOutputPrompt() });
+      if (task?.idempotencyKey?.startsWith('continue:')) {
+        aiMessages.splice(2, 0, {
+          role: 'system',
+          content: [
+            '本轮是“检定结果后的继续叙事”。',
+            '必须根据最近的骰子/系统检定消息推进结果，不要重复要求同一个检定。',
+            '如果最近检定失败，描述失败后果；如果成功，描述成功获得的信息、位置或 NPC 反应。'
+          ].join('\n')
+        });
+      }
       const taskAiConfig = roomRuntimeAiConfig(config.ai, database.getRoomAiSettings(code));
       for await (const chunk of streamChatCompletion(taskAiConfig, aiMessages)) {
         assertTaskNotCancelled(taskUid);
@@ -381,6 +392,20 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       content,
       status: 'complete'
     });
+  }
+
+  function isCheckResultMessage(message) {
+    return message?.authorType === 'system' &&
+      ['对抗检定', '必要检定'].includes(message.displayName || '');
+  }
+
+  function hasNarrativeContinuationAfter(messages, checkMessageId) {
+    const checkIndex = messages.findIndex((message) => message.id === checkMessageId);
+    if (checkIndex < 0) return true;
+    return messages.slice(checkIndex + 1).some((message) =>
+      message.authorType === 'dm' ||
+      (message.authorType === 'player' && message.messageType === 'ACTION')
+    );
   }
 
   function saveModuleFile({ fileName, extension, buffer }) {
@@ -648,6 +673,38 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         return;
       }
 
+      if (request.method === 'POST' && parts[3] === 'continue') {
+        const body = await readJson(request);
+        const playerId = assertString(body.playerId, 'playerId', 80);
+        const checkMessageId = Number(body.checkMessageId);
+        if (!Number.isInteger(checkMessageId)) throw new HttpError(400, 'checkMessageId is required');
+
+        const { room } = database.getParticipant(code, playerId);
+        if (room.status !== 'ACTIVE') throw new HttpError(409, 'Game is not active');
+
+        const state = database.getRoomState(code, { playerId, messageLimit: 100 });
+        if (state.activeAiTask) throw new HttpError(409, 'AI is already generating');
+
+        const checkMessage = state.messages.find((message) => message.id === checkMessageId);
+        if (!checkMessage || checkMessage.roomId !== room.id || !isCheckResultMessage(checkMessage)) {
+          throw new HttpError(400, 'No continuable check message found');
+        }
+        if (hasNarrativeContinuationAfter(state.messages, checkMessageId)) {
+          throw new HttpError(409, 'This check has already been continued');
+        }
+
+        const result = database.createAiTask({
+          code,
+          playerId,
+          triggerMessageId: checkMessage.id,
+          idempotencyKey: `continue:${checkMessage.id}`
+        });
+        broadcastAiTask(code, result.task);
+        if (result.created) enqueueDm(code, result.task.uid);
+        sendJson(response, 201, { aiQueued: true, aiTask: result.task, created: result.created });
+        return;
+      }
+
       if (request.method === 'PATCH' && parts[3] === 'summary') {
         const body = await readJson(request);
         const room = database.updateSummary({
@@ -838,20 +895,24 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
       if (request.method === 'POST' && parts[3] === 'rollback' && parts[4]) {
         const body = await readJson(request);
-        const roundId = Number(parts[4]);
-        if (!Number.isInteger(roundId)) throw new HttpError(400, 'Invalid round id');
+        const playerId = assertString(body.playerId, 'playerId', 80);
+        const rollbackRef = String(parts[4] || '').trim();
+        const numericRoundId = Number(rollbackRef);
+        const useRoundId = Number.isInteger(numericRoundId);
 
         const result = computeRollback({
           database,
           roomCode: code,
-          playerId: assertString(body.playerId, 'playerId', 80),
-          roundId
+          playerId,
+          roundId: useRoundId ? numericRoundId : null,
+          taskUid: useRoundId ? '' : rollbackRef
         });
 
-        const state = database.getRoomState(code, { playerId: body.playerId || '' });
-        hub.broadcast(code, 'room_state', state);
-        hub.broadcast(code, 'round_rolled_back', { roundId });
-        sendJson(response, 200, { ...result, ...state });
+        const publicState = database.getRoomState(code);
+        const playerState = database.getRoomState(code, { playerId });
+        hub.broadcast(code, 'room_state', publicState);
+        hub.broadcast(code, 'round_rolled_back', { roundId: result.roundId, aiTaskUid: result.aiTaskUid });
+        sendJson(response, 200, { ...result, ...playerState });
         return;
       }
 

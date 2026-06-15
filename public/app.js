@@ -1743,15 +1743,36 @@ async function submitActionToDm(content, { actionId = '' } = {}) {
   return payload;
 }
 
+async function continueAfterCheck(checkMessageId) {
+  if (!state.room) return null;
+  setAiBusy(true);
+  const payload = await api(`/api/rooms/${state.room.code}/continue`, {
+    method: 'POST',
+    body: JSON.stringify({
+      playerId: state.playerId,
+      checkMessageId: Number(checkMessageId)
+    })
+  });
+
+  if (payload.aiTask) {
+    const index = state.aiTasks.findIndex((task) => task.uid === payload.aiTask.uid);
+    if (index >= 0) state.aiTasks[index] = payload.aiTask;
+    else state.aiTasks.push(payload.aiTask);
+    state.activeAiTask = findActiveAiTask(state.aiTasks);
+    renderAiTaskControls();
+    renderMessages();
+  }
+
+  return payload;
+}
+
 els.chatLog.addEventListener('click', async (event) => {
   const button = event.target.closest('[data-continue-from-check]');
   if (!button || !canSubmitToDm()) return;
 
   button.disabled = true;
   try {
-    await submitActionToDm('继续：请根据刚才的检定结果推进剧情。', {
-      actionId: `continue:${button.dataset.continueFromCheck}`
-    });
+    await continueAfterCheck(button.dataset.continueFromCheck);
   } catch (error) {
     setAiBusy(false);
     button.disabled = false;
@@ -1876,10 +1897,10 @@ els.regenerateAiTask.addEventListener('click', async () => {
 
 els.rollbackRound.addEventListener('click', async () => {
   if (!state.room) return;
-  const roundId = els.rollbackRound.dataset.taskUid;
-  if (!roundId) return;
+  const rollbackRef = els.rollbackRound.dataset.taskUid;
+  if (!rollbackRef) return;
   try {
-    await api(`/api/rooms/${state.room.code}/rollback/${encodeURIComponent(roundId)}`, {
+    await api(`/api/rooms/${state.room.code}/rollback/${encodeURIComponent(rollbackRef)}`, {
       method: 'POST',
       body: JSON.stringify({ playerId: state.playerId })
     });

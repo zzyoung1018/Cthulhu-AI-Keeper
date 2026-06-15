@@ -720,7 +720,13 @@ export function enhanceStructuredEvents({ events, narrative, roomState } = {}) {
     diagnostics.inferredRequiredChecks = inferredRequired.checks;
   }
 
-  const sanitized = sanitizeNarrative(narrative, inferred.checks, inferredRequired.checks);
+  const opposedChecksForNarrative = Array.isArray(enhancedEvents.opposed_checks)
+    ? enhancedEvents.opposed_checks.filter(isCompleteOpposedCheck)
+    : [];
+  const requiredChecksForNarrative = Array.isArray(enhancedEvents.required_checks)
+    ? enhancedEvents.required_checks.filter(isCompleteRequiredCheck)
+    : [];
+  const sanitized = sanitizeNarrative(narrative, opposedChecksForNarrative, requiredChecksForNarrative);
   diagnostics.strippedActionSuggestions = sanitized.strippedActionSuggestions;
   diagnostics.strippedDecisiveOutcome = sanitized.strippedDecisiveOutcome;
 

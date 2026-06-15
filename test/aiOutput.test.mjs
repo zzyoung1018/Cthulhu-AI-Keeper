@@ -189,6 +189,44 @@ test('infers social opposed check when AI omits structured events for deception'
   assert.match(enhanced.narrative, /触发社交检定/);
 });
 
+test('strips decisive outcome when model provides opposed checks', () => {
+  const roomState = {
+    messages: [
+      {
+        id: 13,
+        authorType: 'player',
+        messageType: 'ACTION',
+        playerId: 'player1',
+        content: '我骗陈友说顾所长让我来取账本。'
+      }
+    ],
+    moduleJson: {
+      npcs: [{ name: '陈友', npc_id: 'npc_chen_you' }]
+    }
+  };
+  const narrative = '陈友相信了你的说法，转身把账本取了出来。';
+
+  const enhanced = enhanceStructuredEvents({
+    events: {
+      opposed_checks: [{
+        activePlayerId: 'player1',
+        activeSkill: '话术',
+        passiveNpcName: '陈友',
+        passiveSkill: '心理学',
+        contestType: 'social',
+        reason: '玩家对 NPC 撒谎'
+      }]
+    },
+    narrative,
+    roomState
+  });
+
+  assert.equal(enhanced.diagnostics.inferredReason, 'model-provided');
+  assert.equal(enhanced.diagnostics.strippedDecisiveOutcome, true);
+  assert.doesNotMatch(enhanced.narrative, /相信了/);
+  assert.match(enhanced.narrative, /触发社交检定/);
+});
+
 test('infers stealth opposed check when model returns an empty opposed_checks array', () => {
   const roomState = {
     messages: [

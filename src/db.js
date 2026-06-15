@@ -200,6 +200,19 @@ function rowToAiTask(row) {
   };
 }
 
+function rowToRoundState(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    roomId: row.room_id,
+    aiTaskUid: row.ai_task_uid,
+    dmMessageId: row.dm_message_id,
+    snapshotJson: row.snapshot_json,
+    isRolledBack: Boolean(row.is_rolled_back),
+    createdAt: row.created_at
+  };
+}
+
 function legacyMessageType(authorType) {
   if (authorType === 'dm') return 'AI_DM';
   if (authorType === 'system') return 'SYSTEM';
@@ -369,6 +382,7 @@ export function createDatabase(dbPath) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_round_states_room ON round_states(room_id, created_at, id);
+    CREATE INDEX IF NOT EXISTS idx_round_states_task ON round_states(room_id, ai_task_uid, id);
 
     CREATE INDEX IF NOT EXISTS idx_participants_room ON participants(room_id);
     CREATE INDEX IF NOT EXISTS idx_messages_room_created ON messages(room_id, created_at, id);
@@ -606,6 +620,12 @@ export function createDatabase(dbPath) {
       VALUES (?, ?, ?, ?, ?)
     `),
     getRoundState: db.prepare('SELECT * FROM round_states WHERE id = ?'),
+    getRoundStateByTaskUid: db.prepare(`
+      SELECT * FROM round_states
+      WHERE room_id = ? AND ai_task_uid = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `),
     listRoundStates: db.prepare(`
       SELECT * FROM round_states
       WHERE room_id = ?
@@ -614,6 +634,7 @@ export function createDatabase(dbPath) {
     `),
     markRoundRolledBack: db.prepare('UPDATE round_states SET is_rolled_back = 1 WHERE id = ?'),
     markMessageRolledBack: db.prepare('UPDATE messages SET is_rolled_back = 1 WHERE id = ?'),
+    forceUpdateSceneState: db.prepare('UPDATE rooms SET scene_state = ?, updated_at = ? WHERE id = ?'),
     getParticipantByPlayerId: db.prepare('SELECT * FROM participants WHERE room_id = ? AND player_id = ?'),
     restoreCharacterSnapshot: db.prepare(`
       UPDATE participants
@@ -923,6 +944,31 @@ export function createDatabase(dbPath) {
       return rowToParticipant(statements.getParticipant.get(room.id, playerId), room);
     },
 
+    updateCharacterRuntimeState({ code, playerId, characterSheet }) {
+      const { room, participant } = this.getParticipant(code, playerId);
+      const nextSheet = normalizeCharacterSheet(characterSheet, {
+        displayName: participant.displayName,
+        characterName: participant.characterName
+      });
+      const changes = diffCharacterSheets(participant.characterSheet, nextSheet);
+      const updated = now();
+      const nextName = nextSheet.investigator.name || participant.characterName;
+      statements.updateParticipantCharacter.run(
+        participant.displayName,
+        nextName,
+        summarizeCharacterSheet(nextSheet),
+        JSON.stringify(nextSheet),
+        changes.length > 0 ? 1 : 0,
+        formatCharacterState(nextSheet),
+        participant.isReady ? 1 : 0,
+        updated,
+        room.id,
+        playerId
+      );
+      writeCharacterHistory(room, participant, changes, updated);
+      return rowToParticipant(statements.getParticipant.get(room.id, playerId), room);
+    },
+
     removeParticipant(roomId, playerId) {
       const stmt = db.prepare('DELETE FROM participants WHERE room_id = ? AND player_id = ?');
       stmt.run(roomId, playerId);
@@ -1119,29 +1165,15 @@ export function createDatabase(dbPath) {
     },
 
     getRoundState(roundId) {
-      const row = statements.getRoundState.get(roundId);
-      if (!row) return null;
-      return {
-        id: row.id,
-        roomId: row.room_id,
-        aiTaskUid: row.ai_task_uid,
-        dmMessageId: row.dm_message_id,
-        snapshotJson: row.snapshot_json,
-        isRolledBack: Boolean(row.is_rolled_back),
-        createdAt: row.created_at
-      };
+      return rowToRoundState(statements.getRoundState.get(roundId));
+    },
+
+    getRoundStateByTaskUid(roomId, taskUid) {
+      return rowToRoundState(statements.getRoundStateByTaskUid.get(roomId, taskUid));
     },
 
     listRoundStates(roomId, limit = 20) {
-      return statements.listRoundStates.all(roomId, limit).map((row) => ({
-        id: row.id,
-        roomId: row.room_id,
-        aiTaskUid: row.ai_task_uid,
-        dmMessageId: row.dm_message_id,
-        snapshotJson: row.snapshot_json,
-        isRolledBack: Boolean(row.is_rolled_back),
-        createdAt: row.created_at
-      }));
+      return statements.listRoundStates.all(roomId, limit).map(rowToRoundState);
     },
 
     markRoundRolledBack(roundId) {
@@ -1167,6 +1199,14 @@ export function createDatabase(dbPath) {
 
     forceUpdateSummary(roomId, summary) {
       statements.forceUpdateSummary.run(summary, now(), roomId);
+    },
+
+    forceUpdateSceneState(roomId, sceneState) {
+      statements.forceUpdateSceneState.run(
+        typeof sceneState === 'string' ? sceneState : JSON.stringify(sceneState || {}),
+        now(),
+        roomId
+      );
     },
 
     updateSceneState({ code, playerId, sceneState }) {

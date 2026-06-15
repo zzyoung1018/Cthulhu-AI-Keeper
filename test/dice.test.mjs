@@ -66,7 +66,7 @@ test('rolls complete CoC checks and sanity loss expressions', () => {
   assert.equal(failureLoss.total, 4);
 });
 
-test('opposed checks determine winner by success level then roll value', () => {
+test('opposed checks determine winner by success level', () => {
   // Active rolls HARD (22), passive rolls REGULAR (50) - same target but active wins by higher level
   const result = rollOpposedCheck({
     activeTarget: 60,
@@ -78,6 +78,20 @@ test('opposed checks determine winner by success level then roll value', () => {
   assert.equal(result.active.roll, 22);
   assert.equal(result.passive.roll, 55);
   assert.equal(result.active.successLevel, 'HARD');
+  assert.equal(result.passive.successLevel, 'REGULAR');
+  assert.equal(result.winner, 'active');
+});
+
+test('opposed checks use skill value before roll total when success levels tie', () => {
+  const result = rollOpposedCheck({
+    activeTarget: 70,
+    passiveTarget: 50,
+    rng: sequence([0.4, 0.4, 0.3, 0.3])
+  });
+
+  assert.equal(result.active.roll, 44);
+  assert.equal(result.passive.roll, 33);
+  assert.equal(result.active.successLevel, 'REGULAR');
   assert.equal(result.passive.successLevel, 'REGULAR');
   assert.equal(result.winner, 'active');
 });

@@ -36,6 +36,31 @@ export function createEventApplier({ database, hub, addAiLog }) {
     return result.passed ? '成功' : '失败';
   }
 
+  function normalizeNpcSkill(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 1) return null;
+    return Math.max(1, Math.min(100, Math.round(number)));
+  }
+
+  function fallbackNpcSkillForRole(role) {
+    const text = String(role || '').toLowerCase();
+    if (/警察|侦探|保安/.test(text)) return 65;
+    if (/干部|医生|教师/.test(text)) return 55;
+    if (/农民|工人|司机/.test(text)) return 40;
+    if (/老人|小孩/.test(text)) return 35;
+    return 50;
+  }
+
+  function parseSceneState(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    try {
+      return JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+
   function applyRequiredCheck(code, check, defaultPlayerId) {
     const targetPlayerId = check.targetPlayerId || defaultPlayerId;
     if (!targetPlayerId) return;
@@ -115,10 +140,9 @@ export function createEventApplier({ database, hub, addAiLog }) {
       return;
     }
 
-    database.updateCharacterSheet({
+    database.updateCharacterRuntimeState({
       code,
       playerId: change.targetPlayerId,
-      displayName: participant.displayName,
       characterSheet: sheet
     });
 
@@ -167,17 +191,21 @@ export function createEventApplier({ database, hub, addAiLog }) {
               n.name === opp.passiveNpcName || n.npc_id === opp.passiveNpcName
             );
             if (npc) {
-              if (npc.skills?.[opp.passiveSkill]) {
-                npcSkill = Number(npc.skills[opp.passiveSkill]);
-              } else if (npc.attributes?.[opp.passiveSkill]) {
-                npcSkill = Number(npc.attributes[opp.passiveSkill]);
-              } else if (npc.role) {
-                // Estimate based on role
-                const role = String(npc.role).toLowerCase();
-                if (/警察|侦探|保安/.test(role)) npcSkill = 65;
-                else if (/干部|医生|教师/.test(role)) npcSkill = 55;
-                else if (/农民|工人|司机/.test(role)) npcSkill = 40;
-                else if (/老人|小孩/.test(role)) npcSkill = 35;
+              const explicitSkill = npc.skills?.[opp.passiveSkill] ?? npc.attributes?.[opp.passiveSkill];
+              const normalizedSkill = normalizeNpcSkill(explicitSkill);
+              if (normalizedSkill !== null) {
+                npcSkill = normalizedSkill;
+              } else {
+                npcSkill = fallbackNpcSkillForRole(npc.role);
+                if (explicitSkill !== undefined) {
+                  addAiLog(code, {
+                    stage: 'npc-skill-fallback',
+                    npcName: opp.passiveNpcName,
+                    passiveSkill: opp.passiveSkill,
+                    value: explicitSkill,
+                    fallback: npcSkill
+                  });
+                }
               }
             }
           }
@@ -268,10 +296,13 @@ export function createEventApplier({ database, hub, addAiLog }) {
       }
     }
 
-    // Update summary
-    if (events.summary_update && typeof events.summary_update === 'string') {
+    const hasSummaryUpdate = events.summary_update && typeof events.summary_update === 'string';
+
+    // Update summary exactly once. If the model supplies summary_update, trust it
+    // as the next summary; otherwise scene changes append a compact note.
+    if (hasSummaryUpdate) {
       try {
-        database.forceUpdateSummary(state.room.id, events.summary_update);
+        database.forceUpdateSummary(state.room.id, events.summary_update.trim());
       } catch (summaryError) {
         console.error('[ai-output] summary update failed:', summaryError.message);
       }
@@ -294,11 +325,30 @@ export function createEventApplier({ database, hub, addAiLog }) {
       });
       hub.broadcast(code, 'message_created', { message: sceneMsg });
 
-      // Update scene state in room
       try {
-        database.forceUpdateSummary(state.room.id,
-          (state.room.summary || '') + '\n' + (events.summary_update || events.scene_change.description || ''));
-      } catch { /* non-critical */ }
+        const currentSceneState = parseSceneState(state.room.sceneState);
+        database.forceUpdateSceneState(state.room.id, {
+          ...currentSceneState,
+          currentScene: events.scene_change.newScene,
+          currentLocation: events.scene_change.newLocation || currentSceneState.currentLocation || '',
+          lastTimeElapsed: events.scene_change.timeElapsed || '',
+          description: events.scene_change.description || '',
+          updatedAt: new Date().toISOString()
+        });
+      } catch (sceneError) {
+        console.error('[ai-output] scene state update failed:', sceneError.message);
+      }
+
+      if (!hasSummaryUpdate && events.scene_change.description) {
+        try {
+          database.forceUpdateSummary(
+            state.room.id,
+            [state.room.summary, events.scene_change.description].filter(Boolean).join('\n')
+          );
+        } catch (summaryError) {
+          console.error('[ai-output] scene summary update failed:', summaryError.message);
+        }
+      }
     }
 
     // NPC state changes

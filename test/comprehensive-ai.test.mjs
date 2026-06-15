@@ -20,6 +20,51 @@ const MODULE_JSON = JSON.parse(
   readFileSync(join(import.meta.dirname || '.', 'fixtures/comprehensive-test-module.json'), 'utf8')
 );
 
+function withDb() {
+  const dir = mkdtempSync(join(tmpdir(), 'dm-online-comprehensive-'));
+  const database = createDatabase(join(dir, 'test.db'));
+  return {
+    database,
+    cleanup() {
+      database.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+}
+
+function createTestRoom(database) {
+  const module = database.createModule({
+    ownerPlayerId: 'p1',
+    title: '综合测试模组',
+    originalName: 'module.json',
+    fileType: 'json',
+    contentType: 'application/json',
+    sizeBytes: 100,
+    storagePath: '/tmp/module.json',
+    parsedText: JSON.stringify(MODULE_JSON),
+    parseStatus: 'PARSED',
+    segments: [{ title: '大厅', scene: 'lobby', content: '陈友站在柜台后面。' }]
+  });
+  const { room } = database.createRoom({
+    name: '综合测试房',
+    playerId: 'p1',
+    displayName: 'Player 1',
+    moduleId: module.id
+  });
+  database.updateCharacterSheet({
+    code: room.code,
+    playerId: 'p1',
+    displayName: 'Player 1',
+    characterSheet: testCharacterSheet()
+  });
+  const task = database.createAiTask({
+    code: room.code,
+    playerId: 'p1',
+    idempotencyKey: 'test-task'
+  }).task;
+  return { room, task };
+}
+
 // ============================================================
 // 测试角色卡
 // ============================================================
@@ -531,6 +576,81 @@ test('结构化事件：NPC 状态变更包括离场标记', () => {
   assert.equal(rejected.length, 0);
   assert.equal(valid.npc_state_changes.length, 2);
   assert.equal(valid.npc_state_changes[1].isPresent, false);
+});
+
+test('事件应用：scene_change 不覆盖 summary_update，并写入 sceneState', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const { room, task } = createTestRoom(database);
+    const hubEvents = [];
+    const hub = {
+      broadcast: (code, event, payload) => hubEvents.push({ code, event, payload }),
+      sendTo: (code, playerId, event, payload) => hubEvents.push({ code, playerId, event, payload })
+    };
+    const { applyStructuredEvents } = createEventApplier({ database, hub, addAiLog: () => undefined });
+
+    database.forceUpdateSummary(room.id, '旧摘要');
+    applyStructuredEvents(room.code, task.uid, {
+      summary_update: '新摘要',
+      scene_change: {
+        newScene: '招待所灶房',
+        newLocation: '后院煤棚',
+        timeElapsed: '15分钟',
+        description: '调查员进入煤棚。'
+      }
+    }, null, MODULE_JSON);
+
+    const state = database.getRoomState(room.code);
+    assert.equal(state.room.summary, '新摘要');
+    const sceneState = JSON.parse(state.room.sceneState);
+    assert.equal(sceneState.currentScene, '招待所灶房');
+    assert.equal(sceneState.currentLocation, '后院煤棚');
+    assert.ok(hubEvents.some((entry) => entry.event === 'message_created' && entry.payload.message.displayName === '场景'));
+  } finally {
+    cleanup();
+  }
+});
+
+test('事件应用：NPC 技能非法时回退角色默认值并继续对抗检定', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const { room, task } = createTestRoom(database);
+    const logs = [];
+    const hub = {
+      broadcast: () => undefined,
+      sendTo: () => undefined
+    };
+    const { applyStructuredEvents } = createEventApplier({
+      database,
+      hub,
+      addAiLog: (_code, entry) => logs.push(entry)
+    });
+
+    applyStructuredEvents(room.code, task.uid, {
+      opposed_checks: [{
+        activePlayerId: 'p1',
+        activeSkill: '话术',
+        passiveNpcName: '保安',
+        passiveSkill: '心理学',
+        contestType: 'social',
+        reason: '玩家对保安撒谎'
+      }]
+    }, null, {
+      npcs: [{
+        name: '保安',
+        role: '保安',
+        skills: { 心理学: '不详' }
+      }]
+    });
+
+    const checkMessage = database.getRoomState(room.code).messages
+      .find((message) => message.displayName === '对抗检定');
+    assert.ok(checkMessage);
+    assert.match(checkMessage.content, /心理学\(65\)/);
+    assert.ok(logs.some((entry) => entry.stage === 'npc-skill-fallback' && entry.fallback === 65));
+  } finally {
+    cleanup();
+  }
 });
 
 // ============================================================

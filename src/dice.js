@@ -166,7 +166,10 @@ export function rollOpposedCheck({
   if (rank[activeLevel] > rank[passiveLevel]) winner = 'active';
   if (rank[passiveLevel] > rank[activeLevel]) winner = 'passive';
   if (winner === 'tie' && activeLevel !== 'FUMBLE' && activeLevel !== 'FAIL') {
-    winner = activeRoll.total > passiveRoll.total ? 'active' : activeRoll.total === passiveRoll.total ? 'tie' : 'passive';
+    if (activeTarget > passiveTarget) winner = 'active';
+    else if (passiveTarget > activeTarget) winner = 'passive';
+    else if (activeRoll.total < passiveRoll.total) winner = 'active';
+    else if (passiveRoll.total < activeRoll.total) winner = 'passive';
   }
 
   return {

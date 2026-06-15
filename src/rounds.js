@@ -2,14 +2,7 @@
 // Each AI round creates a transaction record capturing the pre-state so the
 // owner can roll back the last AI reply, restoring character and scene state.
 
-let _randomUUID;
-async function randomUUID() {
-  if (!_randomUUID) {
-    const crypto = await import('node:crypto');
-    _randomUUID = crypto.randomUUID;
-  }
-  return _randomUUID();
-}
+import { HttpError } from './errors.js';
 
 export function createRoundRecord({ database, roomId, aiTaskUid, dmMessageId, preState }) {
   const record = database.createRoundState({
@@ -37,14 +30,18 @@ export function computeRollback({
   database,
   roomCode,
   playerId,
-  roundId
+  roundId = null,
+  taskUid = ''
 }) {
   const room = database.getRoomByCode(roomCode);
-  if (!room) throw new Error('Room not found');
-  if (room.ownerPlayerId !== playerId) throw new Error('Only the room owner can roll back');
+  if (!room) throw new HttpError(404, 'Room not found');
+  if (room.ownerPlayerId !== playerId) throw new HttpError(403, 'Only the room owner can roll back');
 
-  const round = database.getRoundState(roundId);
-  if (!round || round.roomId !== room.id) throw new Error('Round not found');
+  const round = taskUid
+    ? database.getRoundStateByTaskUid(room.id, taskUid)
+    : database.getRoundState(roundId);
+  if (!round || round.roomId !== room.id) throw new HttpError(404, 'Round not found');
+  if (round.isRolledBack) throw new HttpError(409, 'Round already rolled back');
 
   const preState = JSON.parse(round.snapshotJson);
 
@@ -64,13 +61,17 @@ export function computeRollback({
     database.forceUpdateSummary(room.id, preState.summary);
   }
 
+  if (preState.sceneState !== undefined) {
+    database.forceUpdateSceneState(room.id, preState.sceneState);
+  }
+
   // Mark the DM message as rolled back
   if (round.dmMessageId) {
     database.markMessageRolledBack(round.dmMessageId);
   }
 
   // Mark round as rolled back
-  database.markRoundRolledBack(roundId);
+  database.markRoundRolledBack(round.id);
 
-  return { rolledBack: true, roundId };
+  return { rolledBack: true, roundId: round.id, aiTaskUid: round.aiTaskUid };
 }

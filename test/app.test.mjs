@@ -296,3 +296,102 @@ test('AI required_checks are executed as server-side rolls', async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('continue endpoint queues AI without creating a visible player action', async () => {
+  const fakeAi = await startFakeAiServer('陈友看着刚才的检定结果，态度随之改变。\n\n```json\n{}\n```');
+  const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
+  const app = createApp({
+    config: {
+      dbPath: join(dir, 'test.db'),
+      dataDir: dir,
+      publicDir: resolve('public'),
+      ai: {
+        baseUrl: fakeAi.baseUrl,
+        apiKey: 'test-key',
+        model: 'test-model',
+        temperature: 0.1,
+        timeoutMs: 10_000,
+        localFallback: false
+      }
+    },
+    publicDir: resolve('public')
+  });
+
+  try {
+    const baseUrl = await new Promise((resolveListen) => {
+      app.server.listen(0, '127.0.0.1', () => {
+        const address = app.server.address();
+        resolveListen(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    const module = createModule(app.database, 'p1');
+    const created = await jsonRequest(baseUrl, '/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        displayName: 'Keeper',
+        roomName: 'Continue Room',
+        moduleId: module.id
+      })
+    });
+
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/character`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        playerId: 'p1',
+        displayName: 'Keeper',
+        characterSheet: characterSheet()
+      })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/ready`, {
+      method: 'PATCH',
+      body: JSON.stringify({ playerId: 'p1', isReady: true })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ playerId: 'p1', status: 'ACTIVE' })
+    });
+
+    const checkMessage = app.database.createMessage({
+      code: created.room.code,
+      authorType: 'system',
+      messageType: 'SYSTEM',
+      displayName: '必要检定',
+      content: '🎲 必要检定：林娜 的 侦查(68)\n1d100 = 22 → HARD（成功）',
+      status: 'complete'
+    });
+
+    const queued = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/continue`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        checkMessageId: checkMessage.id
+      })
+    });
+    assert.equal(queued.created, true);
+
+    const state = await waitForState(
+      baseUrl,
+      created.room.code,
+      'p1',
+      (roomState) => roomState.aiTasks.some((task) => task.status === 'COMPLETED')
+    );
+
+    assert.equal(fakeAi.requests.length, 1);
+    assert.ok(fakeAi.requests[0].body.messages.some((message) =>
+      message.role === 'system' && /检定结果后的继续叙事/.test(message.content)
+    ));
+    assert.equal(state.messages.some((message) =>
+      message.authorType === 'player' &&
+      message.messageType === 'ACTION' &&
+      /继续/.test(message.content)
+    ), false);
+    assert.ok(state.messages.some((message) => message.authorType === 'dm'));
+  } finally {
+    await new Promise((resolveClose) => app.server.close(resolveClose));
+    app.database.close();
+    await fakeAi.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
