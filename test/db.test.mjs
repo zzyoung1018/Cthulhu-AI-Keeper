@@ -49,6 +49,12 @@ function characterSheet(name, skillValue = 60) {
     },
     skills: {
       侦查: skillValue
+    },
+    skillAllocations: {
+      侦查: {
+        occupation: Math.max(0, skillValue - 25),
+        interest: 0
+      }
     }
   };
 }
@@ -251,6 +257,7 @@ test('saves structured character sheets, derived state, ready flag, and field hi
     });
     assert.equal(saved.characterName, '林娜');
     assert.equal(saved.characterSheet.skills.侦查, 72);
+    assert.deepEqual(saved.characterSheet.skillAllocations.侦查, { occupation: 47, interest: 0 });
     assert.match(saved.state, /HP 11\/11/);
     assert.equal(saved.isReady, false);
 

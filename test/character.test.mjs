@@ -20,6 +20,9 @@ test('normalizes CoC 7e character sheets and calculates derived values', () => {
     },
     skills: {
       侦查: 72
+    },
+    skillAllocations: {
+      侦查: { occupation: 40, interest: 7 }
     }
   });
 
@@ -32,6 +35,7 @@ test('normalizes CoC 7e character sheets and calculates derived values', () => {
   assert.equal(derived.damageBonus, '+1d4');
   assert.equal(derived.build, 1);
   assert.equal(getSkillTarget(sheet, '侦查'), 72);
+  assert.deepEqual(sheet.skillAllocations.侦查, { occupation: 40, interest: 7 });
 });
 
 test('diffs individual character fields for history records', () => {

@@ -387,6 +387,22 @@ label,
   overflow-wrap: anywhere;
 }
 
+.status-action-card {
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.status-action-card:hover {
+  border-color: rgba(215, 173, 95, 0.55);
+  background: rgba(215, 173, 95, 0.12);
+  transform: translateY(-1px);
+}
+
+.status-action-card strong {
+  color: var(--gold);
+}
+
 .skills-table {
   max-height: 360px;
   overflow-y: auto;
@@ -1285,10 +1301,76 @@ dialog .module-preview {
   border-bottom: 1px solid var(--line);
 }
 
+.skill-allocation-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+
+.skill-allocation-summary span {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+.skill-allocation-summary strong {
+  color: var(--gold);
+}
+
 .char-skills-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px 12px;
+}
+
+.char-skill-allocation-grid {
+  display: grid;
+  gap: 4px;
+}
+
+.char-skill-allocation-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 1fr) 48px 58px 58px 52px;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 6px;
+  border-radius: 6px;
+  background: rgba(19, 22, 26, 0.58);
+  font-size: 0.8rem;
+}
+
+.char-skill-allocation-row span,
+.char-skill-allocation-row strong {
+  min-width: 0;
+  text-align: center;
+}
+
+.char-skill-allocation-row span:first-child {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.char-skill-allocation-row strong {
+  color: var(--gold);
+}
+
+.char-skill-allocation-row.allocation-header {
+  position: sticky;
+  top: 0;
+  background: #13161a;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.char-skill-allocation-row.occupation-skill {
+  background: rgba(215, 173, 95, 0.07);
 }
 
 .char-skill-row {
@@ -1346,5 +1428,14 @@ dialog .module-preview {
 
   .char-skills-grid {
     grid-template-columns: 1fr;
+  }
+
+  .skill-allocation-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .char-skill-allocation-row {
+    grid-template-columns: minmax(82px, 1fr) 38px 48px 48px 42px;
+    gap: 4px;
   }
 }

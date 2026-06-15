@@ -183,6 +183,12 @@ const characteristicInfo = {
   Luck: { label: '幸运', formula: '3D6×5', dice: '3d6' }
 };
 
+const derivedInfo = {
+  MOV: '移动力',
+  DB: '伤害加值',
+  Build: '体格'
+};
+
 const defaultCharacteristics = {
   STR: 50,
   CON: 50,
@@ -273,6 +279,15 @@ const occupationTemplates = {
   '士兵': ['格斗', '射击', '闪避', '潜行', '急救', '投掷'],
 };
 
+function matchOccupationTemplate(occupation = '') {
+  return Object.keys(occupationTemplates)
+    .find((name) => name && (name === occupation || occupation.includes(name))) || '';
+}
+
+function occupationSkillsForName(occupation = '') {
+  return occupationTemplates[occupation] || [];
+}
+
 const textSectionFields = [
   'equipment',
   'relationships',
@@ -329,6 +344,7 @@ function currentSheet() {
     characteristics: { ...defaultCharacteristics },
     status: {},
     skills: { ...defaultSkills },
+    skillAllocations: {},
     weapons: [],
     equipment: '',
     relationships: '',
@@ -701,7 +717,7 @@ function renderDerived(derived) {
   ];
   els.derivedGrid.innerHTML = cards.map(([label, value]) => `
     <div class="derived-card">
-      <span>${label}</span>
+      <span>${label} · ${derivedInfo[label] || ''}</span>
       <strong>${value}</strong>
     </div>
   `).join('');
@@ -792,8 +808,7 @@ function renderCharacteristicInputs(sheet) {
 }
 
 function getOccupationSkills() {
-  const occ = els.occupationSelect.value;
-  return occupationTemplates[occ] || [];
+  return occupationSkillsForName(els.occupationSelect.value);
 }
 
 function calculateSkillPoints(chars) {
@@ -902,13 +917,46 @@ function inferSkillAllocations(sheet, sortedSkills, occSkills) {
   return allocations;
 }
 
+function normalizeSkillAllocation(allocation, base, score, isOccupationSkill) {
+  const maxSpent = Math.max(0, numberInRange(score, base, 0, skillCreationMax) - base);
+  let occupation = numberInRange(allocation?.occupation, 0, 0, maxSpent);
+  let interest = numberInRange(allocation?.interest, 0, 0, maxSpent);
+
+  if (occupation + interest > maxSpent) {
+    interest = Math.max(0, maxSpent - occupation);
+    occupation = Math.min(occupation, maxSpent);
+  }
+
+  if (!isOccupationSkill && occupation > 0) {
+    interest = Math.min(maxSpent, interest + occupation);
+    occupation = 0;
+  }
+
+  return { occupation, interest };
+}
+
+function buildSkillAllocationMap(sheet, sortedSkills, occSkills) {
+  const inferred = inferSkillAllocations(sheet, sortedSkills, occSkills);
+  const saved = sheet.skillAllocations || {};
+  const allocations = new Map();
+
+  for (const [name, score] of sortedSkills) {
+    const base = defaultSkills[name] || 0;
+    const isOccupationSkill = occSkills.includes(name);
+    const source = saved[name] || inferred.get(name) || {};
+    allocations.set(name, normalizeSkillAllocation(source, base, score, isOccupationSkill));
+  }
+
+  return allocations;
+}
+
 function renderSkills(sheet) {
   if (!els.skillsTable) return;
   els.skillsTable.innerHTML = '';
   const occSkills = getOccupationSkills();
   const skills = Object.entries({ ...defaultSkills, ...(sheet.skills || {}) })
     .sort(([left], [right]) => left.localeCompare(right, 'zh-Hans-CN'));
-  const allocations = inferSkillAllocations(sheet, skills, occSkills);
+  const allocations = buildSkillAllocationMap(sheet, skills, occSkills);
 
   const header = document.createElement('div');
   header.className = 'skill-row skill-row-header';
@@ -973,6 +1021,60 @@ function collectSkillsFromTable() {
   return skills;
 }
 
+function collectSkillAllocationsFromTable() {
+  const allocations = {};
+  if (!els.skillsTable) return allocations;
+  els.skillsTable.querySelectorAll('.skill-row[data-skill-name]').forEach((row) => {
+    const values = skillRowValues(row);
+    if (values.occupation > 0 || values.interest > 0) {
+      allocations[row.dataset.skillName] = {
+        occupation: values.occupation,
+        interest: values.interest
+      };
+    }
+  });
+  return allocations;
+}
+
+function skillRowsForSheet(sheet) {
+  const occupationName = matchOccupationTemplate(sheet.investigator?.occupation || '');
+  const occSkills = occupationSkillsForName(occupationName);
+  const skills = Object.entries({ ...defaultSkills, ...(sheet.skills || {}) })
+    .sort(([left], [right]) => left.localeCompare(right, 'zh-Hans-CN'));
+  const allocations = buildSkillAllocationMap(sheet, skills, occSkills);
+
+  return skills.map(([name, score]) => {
+    const base = defaultSkills[name] || 0;
+    const allocation = allocations.get(name) || { occupation: 0, interest: 0 };
+    const total = numberInRange(score, base, 0, skillCreationMax);
+    return {
+      name,
+      base,
+      occupation: allocation.occupation,
+      interest: allocation.interest,
+      total,
+      half: Math.floor(total / 2),
+      fifth: Math.floor(total / 5),
+      isOccupationSkill: occSkills.includes(name)
+    };
+  });
+}
+
+function skillPointUsageForSheet(sheet, rows = skillRowsForSheet(sheet)) {
+  const pools = calculateSkillPoints(sheet.characteristics || {});
+  const usedOcc = rows.reduce((sum, row) => sum + row.occupation, 0);
+  const usedInt = rows.reduce((sum, row) => sum + row.interest, 0);
+  const occupationName = matchOccupationTemplate(sheet.investigator?.occupation || '');
+  return {
+    ...pools,
+    usedOcc,
+    usedInt,
+    occupationName,
+    remainingOcc: pools.occupationPoints - usedOcc,
+    remainingInt: pools.interestPoints - usedInt
+  };
+}
+
 function renderStatusPanel() {
   if (!state.participant) {
     els.statusPanel.hidden = true;
@@ -990,31 +1092,78 @@ function renderStatusPanel() {
     ['Luck', derived.currentLuck],
     ['MOV', derived.mov],
     ['DB', derived.damageBonus],
-    ['Build', derived.build],
-    ['准备', state.participant.isReady ? '是' : '否']
+    ['Build', derived.build]
   ];
   els.statusCards.innerHTML = cards.map(([label, value]) => `
     <div class="status-card">
-      <span>${label}</span>
+      <span>${label}${derivedInfo[label] ? ` · ${derivedInfo[label]}` : ''}</span>
       <strong>${value}</strong>
     </div>
-  `).join('');
+  `).join('') + `
+    <button class="status-card status-action-card" type="button" data-open-skill-allocations>
+      <span>技能加点</span>
+      <strong>查看</strong>
+    </button>
+  `;
 
   // 角色状态大弹窗
   els.btnCharSheet.hidden = !state.participant;
   renderCharSheetOverlay();
 }
 
-function renderCharSheetOverlay() {
+function skillAllocationSummaryHtml(usage) {
+  return `
+    <div class="skill-allocation-summary">
+      <span>职业：<strong>${usage.occupationName || '自定义'}</strong></span>
+      <span>职业点：<strong>${usage.remainingOcc}/${usage.occupationPoints}</strong></span>
+      <span>兴趣点：<strong>${usage.remainingInt}/${usage.interestPoints}</strong></span>
+    </div>
+  `;
+}
+
+function skillAllocationGridHtml(rows) {
+  return `
+    <div class="char-skill-allocation-grid">
+      <div class="char-skill-allocation-row allocation-header">
+        <span>技能</span><span>初始</span><span>职业+</span><span>兴趣+</span><span>合计</span>
+      </div>
+      ${rows.map((row) => `
+        <div class="char-skill-allocation-row${row.isOccupationSkill ? ' occupation-skill' : ''}">
+          <span>${row.isOccupationSkill ? '★ ' : ''}${row.name}</span>
+          <span>${row.base}</span>
+          <span>${row.occupation}</span>
+          <span>${row.interest}</span>
+          <strong>${row.total}</strong>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderCharSheetOverlay(options = {}) {
   if (!state.participant) return;
   const sheet = currentSheet();
   const derived = calculateDerived(sheet.characteristics, sheet.status);
   const inv = sheet.investigator || {};
   const chars = sheet.characteristics || {};
   const st = sheet.status || {};
-  const skills = Object.entries(sheet.skills || {}).sort((a, b) => a[0].localeCompare(b[0], 'zh-Hans-CN'));
+  const skillRows = skillRowsForSheet(sheet);
+  const skillUsage = skillPointUsageForSheet(sheet, skillRows);
 
-  els.charSheetTitle.textContent = inv.name || state.participant.characterName || '调查员';
+  els.charSheetTitle.textContent = options.focusSkills
+    ? `${inv.name || state.participant.characterName || '调查员'} · 技能加点`
+    : inv.name || state.participant.characterName || '调查员';
+
+  if (options.focusSkills) {
+    els.charSheetBody.innerHTML = [
+      '<div class="char-overview">',
+      inv.occupation ? `<p><strong>职业：</strong>${inv.occupation}</p>` : '',
+      '</div>',
+      skillAllocationSummaryHtml(skillUsage),
+      skillAllocationGridHtml(skillRows)
+    ].join('\n');
+    return;
+  }
 
   const html = [
     '<div class="char-overview">',
@@ -1032,18 +1181,16 @@ function renderCharSheetOverlay() {
     `<div>MP <strong>${st.mp ?? derived.currentMp}/${derived.mp}</strong></div>`,
     `<div>SAN <strong>${st.san ?? derived.currentSan}/${derived.san}</strong></div>`,
     `<div>Luck <strong>${st.luck ?? derived.currentLuck}</strong></div>`,
-    `<div>MOV <strong>${derived.mov}</strong></div>`,
-    `<div>DB <strong>${derived.damageBonus}</strong></div>`,
-    `<div>Build <strong>${derived.build}</strong></div>`,
+    `<div>MOV · ${derivedInfo.MOV} <strong>${derived.mov}</strong></div>`,
+    `<div>DB · ${derivedInfo.DB} <strong>${derived.damageBonus}</strong></div>`,
+    `<div>Build · ${derivedInfo.Build} <strong>${derived.build}</strong></div>`,
     '</div>',
     '<h3>技能</h3>',
+    skillAllocationSummaryHtml(skillUsage),
     '<div class="char-skills-grid">',
-    ...skills.map(([name, val]) => {
-      const score = numberInRange(val, 0, 0, 100);
-      const half = Math.floor(score / 2);
-      const fifth = Math.floor(score / 5);
-      return `<div class="char-skill-row"><span>${name}</span><strong>${val}</strong><span class="skill-levels">/ ${half} / ${fifth}</span></div>`;
-    }),
+    ...skillRows.map((row) =>
+      `<div class="char-skill-row"><span>${row.name}</span><strong>${row.total}</strong><span class="skill-levels">/ ${row.half} / ${row.fifth}</span></div>`
+    ),
     '</div>',
     sheet.weapons?.length ? `<h3>武器</h3><div class="char-weapons">${sheet.weapons.map(w => `<div>${w.name} · ${w.damage}${w.range ? ' · '+w.range : ''}</div>`).join('')}</div>` : '',
     sheet.equipment ? `<h3>装备</h3><p>${sheet.equipment}</p>` : '',
@@ -1089,6 +1236,7 @@ function collectCharacterSheet() {
   const status = readStatus();
   const derived = calculateDerived(characteristics, status);
   const skills = collectSkillsFromTable();
+  const skillAllocations = collectSkillAllocationsFromTable();
 
   const sheet = {
     version: 1,
@@ -1109,6 +1257,7 @@ function collectCharacterSheet() {
       luck: derived.currentLuck
     },
     skills,
+    skillAllocations,
     weapons: parseWeaponLines(els.profileForm.elements.weaponsText?.value),
     assets: existing.assets || ''
   };
@@ -1145,8 +1294,7 @@ function renderProfileForm() {
       els.occupationSelect.append(opt);
     }
     const currentOcc = sheet.investigator?.occupation || '';
-    const matched = Object.keys(occupationTemplates).find(o => o === currentOcc || currentOcc.includes(o));
-    els.occupationSelect.value = matched || '';
+    els.occupationSelect.value = matchOccupationTemplate(currentOcc);
   } catch (e) { return toast('职业下拉失败: ' + e.message); }
 
   try { setTextField('investigator.name', sheet.investigator?.name || state.participant.characterName || ''); } catch (e) { return toast('name失败: ' + e.message); }
@@ -1174,7 +1322,8 @@ if (els.occupationSelect) {
       renderSkills({
         ...currentSheet(),
         characteristics: readCharacteristics(),
-        skills: collectSkillsFromTable()
+        skills: collectSkillsFromTable(),
+        skillAllocations: collectSkillAllocationsFromTable()
       });
     } catch (e) {
       console.error('occupation change error:', e);
@@ -1513,6 +1662,13 @@ document.querySelector('#closeCharacterDialog').addEventListener('click', () => 
 els.characterDialog.addEventListener('click', (e) => { if (e.target === els.characterDialog) els.characterDialog.close(); });
 els.rollCharacteristics?.addEventListener('click', rollAllCharacteristics);
 els.resetCharacteristics?.addEventListener('click', resetCharacteristics);
+
+els.statusCards?.addEventListener('click', (event) => {
+  const trigger = event.target.closest('[data-open-skill-allocations]');
+  if (!trigger) return;
+  renderCharSheetOverlay({ focusSkills: true });
+  els.charSheetDialog.showModal();
+});
 
 els.readyCharacter.addEventListener('click', async () => {
   if (!state.room || !state.participant) return;

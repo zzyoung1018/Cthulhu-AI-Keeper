@@ -27,11 +27,15 @@ const DEFAULT_SKILLS = {
   电气维修: 10,
   话术: 5,
   急救: 30,
+  驾驶: 1,
   历史: 5,
+  化学: 1,
   恐吓: 15,
   跳跃: 20,
   母语: 50,
   法律: 5,
+  格斗: 25,
+  工艺: 5,
   图书馆使用: 20,
   聆听: 20,
   锁匠: 1,
@@ -45,10 +49,15 @@ const DEFAULT_SKILLS = {
   心理学: 10,
   骑术: 5,
   妙手: 10,
+  摄影: 5,
+  射击: 20,
   侦查: 25,
   潜行: 20,
   游泳: 20,
   投掷: 20,
+  外语: 1,
+  物理学: 1,
+  药学: 1,
   追踪: 10
 };
 
@@ -114,6 +123,33 @@ function normalizeSkills(value = {}) {
   return Object.fromEntries(Object.entries(skills).sort(([left], [right]) => left.localeCompare(right, 'zh-Hans-CN')));
 }
 
+function normalizeSkillAllocations(value = {}, skills = {}) {
+  const allocations = {};
+  if (!value || typeof value !== 'object') return allocations;
+
+  for (const [name, allocation] of Object.entries(value)) {
+    const skillName = trimText(name, 80);
+    if (!skillName || !allocation || typeof allocation !== 'object') continue;
+
+    const base = DEFAULT_SKILLS[skillName] ?? 0;
+    const total = numberInRange(skills[skillName], base, 0, 100);
+    const maxSpent = Math.max(0, total - base);
+    let occupation = numberInRange(allocation.occupation, 0, 0, maxSpent);
+    let interest = numberInRange(allocation.interest, 0, 0, maxSpent);
+
+    if (occupation + interest > maxSpent) {
+      interest = Math.max(0, maxSpent - occupation);
+      occupation = Math.min(occupation, maxSpent);
+    }
+
+    if (occupation > 0 || interest > 0) {
+      allocations[skillName] = { occupation, interest };
+    }
+  }
+
+  return Object.fromEntries(Object.entries(allocations).sort(([left], [right]) => left.localeCompare(right, 'zh-Hans-CN')));
+}
+
 function normalizeWeapons(value = []) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 12).map((weapon) => ({
@@ -175,13 +211,15 @@ export function normalizeCharacterSheet(source, fallback = {}) {
   const input = parseSource(source);
   const characteristics = normalizeCharacteristics(input.characteristics);
   const status = normalizeStatus(input.status, characteristics);
+  const skills = normalizeSkills(input.skills);
   const sheet = {
     version: 1,
     ruleset: 'coc7e',
     investigator: normalizeInvestigator(input.investigator, fallback),
     characteristics,
     status,
-    skills: normalizeSkills(input.skills),
+    skills,
+    skillAllocations: normalizeSkillAllocations(input.skillAllocations, skills),
     weapons: normalizeWeapons(input.weapons)
   };
 
