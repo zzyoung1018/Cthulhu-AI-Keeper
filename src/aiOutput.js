@@ -178,11 +178,144 @@ const ACTION_DETECTION_RULES = [
 
 const REQUIRED_CHECK_DETECTION_RULES = [
   {
+    skill: '会计',
+    difficulty: 'REGULAR',
+    reason: '玩家检查账本、流水或财务异常',
+    playerHint: '你开始核对账目，数字背后的异常需要靠检定确认。',
+    pattern: /会计|账本|账目|账册|流水|收支|发票|凭据|账单|财务|对账|查账/
+  },
+  {
     skill: '图书馆使用',
     difficulty: 'REGULAR',
     reason: '玩家查阅资料、档案或文献寻找信息',
     playerHint: '你开始翻阅资料，信息是否足够有用取决于检定结果。',
     pattern: /图书馆使用|查资料|查阅|翻阅|检索|资料|档案|卷宗|文献|书架|书籍|报纸|报刊|记录|名册|登记簿|县志|族谱/
+  },
+  {
+    skill: '锁匠',
+    difficulty: 'REGULAR',
+    reason: '玩家试图开锁、撬锁或处理锁具机关',
+    playerHint: '锁芯细微地卡住，能否打开取决于检定结果。',
+    pattern: /锁匠|开锁|撬锁|撬开.*锁|解锁|撬门|撬开|万能钥匙|铁丝.*锁|发卡.*锁/
+  },
+  {
+    skill: '急救',
+    difficulty: 'REGULAR',
+    reason: '玩家进行紧急处理、止血或包扎',
+    playerHint: '你迅速处理伤势，效果取决于检定结果。',
+    pattern: /急救|包扎|止血|处理伤口|救治|简单治疗|应急处理|按压伤口|固定夹板/
+  },
+  {
+    skill: '医学',
+    difficulty: 'REGULAR',
+    reason: '玩家进行医学诊断、尸检或判断病理伤势',
+    playerHint: '你从医学角度检查，能否判断关键细节取决于检定结果。',
+    pattern: /医学|诊断|验尸|尸检|检查尸体|病因|死因|伤势|药物治疗|病理|中毒|处方|药量/
+  },
+  {
+    skill: '驾驶汽车',
+    difficulty: 'REGULAR',
+    reason: '玩家进行危险驾驶、追车或复杂车辆操作',
+    playerHint: '车辆在路面上颠簸，能否稳住局面取决于检定结果。',
+    pattern: /驾驶汽车|开车|驾车|发动车|倒车|追车|甩开|急转|急刹|冲过|开.*车|驾.*车/
+  },
+  {
+    skill: '攀爬',
+    difficulty: 'REGULAR',
+    reason: '玩家攀爬、翻越或从高处移动',
+    playerHint: '你寻找落脚点，能否顺利通过取决于检定结果。',
+    pattern: /攀爬|爬上|爬下|爬墙|爬窗|爬到|翻墙|翻越|攀上|攀过|顺着.*爬/
+  },
+  {
+    skill: '跳跃',
+    difficulty: 'REGULAR',
+    reason: '玩家跳过障碍或从高低差处跃过',
+    playerHint: '你估算距离和落点，能否跳过取决于检定结果。',
+    pattern: /跳跃|跳过|跃过|跳下|跳上|纵身|跨过|飞身|助跑.*跳/
+  },
+  {
+    skill: '投掷',
+    difficulty: 'REGULAR',
+    reason: '玩家投掷物品命中特定目标',
+    playerHint: '你掂量手里的东西，命中与否取决于检定结果。',
+    pattern: /投掷|扔向|丢向|掷向|抛向|砸向|扔过去|丢过去|投过去/
+  },
+  {
+    skill: '追踪',
+    difficulty: 'REGULAR',
+    reason: '玩家根据脚印、痕迹或路线追踪目标',
+    playerHint: '你沿着细碎痕迹判断方向，能否追上取决于检定结果。',
+    pattern: /追踪|脚印|足迹|踪迹|痕迹.*追|沿着.*痕迹|跟着.*痕迹|车辙|拖痕/
+  },
+  {
+    skill: '神秘学',
+    difficulty: 'REGULAR',
+    reason: '玩家辨认神秘符号、仪式或民俗禁忌',
+    playerHint: '这些符号似曾相识，能否理解含义取决于检定结果。',
+    pattern: /神秘学|仪式|符号|咒文|邪教|护符|祭祀|禁忌|民俗|神秘图案|怪异图案/
+  },
+  {
+    skill: '法律',
+    difficulty: 'REGULAR',
+    reason: '玩家判断法律、流程或官方文书问题',
+    playerHint: '你回想相关条文和流程，判断是否准确取决于检定结果。',
+    pattern: /法律|法规|法条|条例|搜查令|调查令|许可|拘留|逮捕|立案|警局流程|司法/
+  },
+  {
+    skill: '估价',
+    difficulty: 'REGULAR',
+    reason: '玩家评估物品价值、真伪或成色',
+    playerHint: '你检查材质和做工，判断是否准确取决于检定结果。',
+    pattern: /估价|鉴定价值|值多少钱|价格|价钱|古董|成色|真伪|赝品|年代|材质/
+  },
+  {
+    skill: '导航',
+    difficulty: 'REGULAR',
+    reason: '玩家辨认路线、地图或方位',
+    playerHint: '你对照方向和地形，能否找到正确路线取决于检定结果。',
+    pattern: /导航|辨认方向|找路|路线|地图|迷路|方位|坐标|抄近路|绕路/
+  },
+  {
+    skill: '博物学',
+    difficulty: 'REGULAR',
+    reason: '玩家判断自然、植物、动物或环境痕迹',
+    playerHint: '你观察自然细节，能否辨认来源取决于检定结果。',
+    pattern: /博物学|植物|动物|昆虫|草药|菌类|土壤|自然|树叶|花粉|羽毛|粪便/
+  },
+  {
+    skill: '机械维修',
+    difficulty: 'REGULAR',
+    reason: '玩家修理或判断机械装置',
+    playerHint: '机械结构传来细小摩擦声，能否修好取决于检定结果。',
+    pattern: /机械维修|修理机器|修机器|发动机|齿轮|发电机|机械|机器|马达|传动|零件/
+  },
+  {
+    skill: '电气维修',
+    difficulty: 'REGULAR',
+    reason: '玩家修理电路、电灯或电气设备',
+    playerHint: '线路和接点需要仔细判断，能否恢复取决于检定结果。',
+    pattern: /电气维修|电路|电线|电灯|保险丝|电闸|开关|发电|短路|接线|配电/
+  },
+  {
+    skill: '化学',
+    difficulty: 'REGULAR',
+    reason: '玩家分析化学物质、气味或反应',
+    playerHint: '你谨慎分辨气味和残留，结论取决于检定结果。',
+    pattern: /化学|试剂|化学品|酸|碱|粉末|残留物|反应|腐蚀|气味.*刺鼻/
+  },
+  {
+    skill: '物理学',
+    difficulty: 'REGULAR',
+    reason: '玩家判断力学、结构或物理现象',
+    playerHint: '你估算受力和结构，判断是否准确取决于检定结果。',
+    pattern: /物理学|受力|结构|承重|杠杆|滑轮|轨迹|弹道|速度|压力/
+  },
+  {
+    skill: '药学',
+    difficulty: 'REGULAR',
+    reason: '玩家辨认药物、毒物或剂量',
+    playerHint: '你辨认药性和剂量，能否判断准确取决于检定结果。',
+    pattern: /药学|药物|毒物|毒药|剂量|药瓶|药片|药粉|麻醉|镇静剂/
   },
   {
     skill: '侦查',
@@ -394,6 +527,74 @@ function normalizeText(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
 }
 
+function normalizeDifficulty(value) {
+  const difficulty = String(value || 'REGULAR').trim().toUpperCase();
+  if (difficulty === 'NORMAL') return 'REGULAR';
+  if (difficulty === '困难') return 'HARD';
+  if (difficulty === '极难') return 'EXTREME';
+  if (difficulty === '常规' || difficulty === '普通') return 'REGULAR';
+  return ['REGULAR', 'HARD', 'EXTREME'].includes(difficulty) ? difficulty : 'REGULAR';
+}
+
+function cjkBigrams(text) {
+  const grams = [];
+  for (const match of String(text || '').matchAll(/[\p{Script=Han}]{2,}/gu)) {
+    const value = match[0];
+    for (let index = 0; index < value.length - 1; index += 1) {
+      grams.push(value.slice(index, index + 2));
+    }
+  }
+  return [...new Set(grams)];
+}
+
+function detectionMeta({ source, kind, ruleId, confidence, matchedText = '', notes = [] }) {
+  return {
+    source,
+    kind,
+    ruleId,
+    confidence: Math.max(0, Math.min(1, Math.round(Number(confidence || 0) * 100) / 100)),
+    matchedText,
+    notes
+  };
+}
+
+function currentSceneIds(roomState = {}) {
+  const ids = new Set();
+  const raw = roomState.room?.sceneState;
+  let sceneState = {};
+  if (raw && typeof raw === 'object') sceneState = raw;
+  else if (raw) {
+    try { sceneState = JSON.parse(raw); } catch { sceneState = {}; }
+  }
+
+  for (const key of ['currentScene', 'currentSceneId', 'sceneId', 'currentLocation']) {
+    if (sceneState[key]) ids.add(String(sceneState[key]));
+  }
+  for (const participant of roomState.participants || []) {
+    if (participant.stateSceneId) ids.add(String(participant.stateSceneId));
+    if (participant.stateSceneName) ids.add(String(participant.stateSceneName));
+  }
+  return ids;
+}
+
+function isNpcOnlyObservation(text, roomState) {
+  const source = normalizeText(text);
+  if (!/(看|看看|查看|观察|打量|盯着|端详)/.test(source)) return false;
+  if (/(房间|现场|周围|地面|墙|门|窗|桌|柜|抽屉|床|包|箱|登记簿|账本|线索|痕迹|脚印|血迹|物品|尸体)/.test(source)) {
+    return false;
+  }
+  const candidates = npcCandidates(roomState);
+  return Boolean(findExplicitNpc(source, candidates) || /(?:他|她|对方|那人|那个人).{0,8}(?:表情|脸色|反应|眼神|神情|动作)?/.test(source));
+}
+
+function withRequiredMeta(rule, meta) {
+  return {
+    ...rule,
+    difficulty: normalizeDifficulty(rule.difficulty),
+    detection: meta
+  };
+}
+
 function classifyOpposedAction(actionText) {
   const text = normalizeText(actionText);
   if (!text) return null;
@@ -403,24 +604,139 @@ function classifyOpposedAction(actionText) {
       const passiveSkill = rule.type === 'stealth' && /听|声音|脚步|响|聆听/.test(text)
         ? '聆听'
         : rule.passiveSkill;
-      return { ...rule, passiveSkill };
+      return {
+        ...rule,
+        passiveSkill,
+        detection: detectionMeta({
+          source: 'generic',
+          kind: 'opposed',
+          ruleId: `${rule.type}:${rule.activeSkill}`,
+          confidence: 0.82,
+          matchedText: String(rule.pattern)
+        })
+      };
     }
   }
 
   return null;
 }
 
-function classifyRequiredAction(actionText) {
+function classifyRequiredAction(actionText, roomState = {}) {
   const text = normalizeText(actionText);
   if (!text) return null;
+  if (isNpcOnlyObservation(text, roomState)) return null;
 
   for (const rule of REQUIRED_CHECK_DETECTION_RULES) {
     if (rule.pattern.test(text)) {
-      return { ...rule };
+      return withRequiredMeta(rule, detectionMeta({
+        source: 'generic',
+        kind: 'required',
+        ruleId: `generic:${rule.skill}`,
+        confidence: 0.74,
+        matchedText: String(rule.pattern)
+      }));
     }
   }
 
   return null;
+}
+
+function moduleCheckText(check) {
+  return [
+    check.check_id,
+    check.skill,
+    check.trigger,
+    check.ai_dm_instruction,
+    check.success,
+    check.failure
+  ].filter(Boolean).join(' ');
+}
+
+function scoreModuleCheck(actionText, check, roomState) {
+  const action = normalizeText(actionText);
+  const trigger = normalizeText(check.trigger);
+  const checkText = normalizeText(moduleCheckText(check));
+  if (!action || !checkText || !check.skill) return { score: 0, notes: [] };
+
+  let score = 0;
+  const notes = [];
+  let anchored = false;
+  if (trigger && (action.includes(trigger) || trigger.includes(action))) {
+    score += 8;
+    notes.push('trigger-exact');
+    anchored = true;
+  }
+
+  if (action.includes(String(check.skill))) {
+    score += 4;
+    notes.push('skill-mentioned');
+    anchored = true;
+  }
+
+  const genericRule = classifyRequiredAction(action, roomState);
+  if (genericRule?.skill === check.skill) {
+    score += 4;
+    notes.push('generic-same-skill');
+    anchored = true;
+  }
+
+  const sceneIds = currentSceneIds(roomState);
+  if (check.scene_id && sceneIds.has(String(check.scene_id))) {
+    score += 2;
+    notes.push('scene-match');
+  }
+
+  let triggerOverlap = 0;
+  for (const gram of cjkBigrams(action)) {
+    if (trigger.includes(gram)) triggerOverlap += 1;
+  }
+  if (triggerOverlap >= 2) {
+    score += Math.min(6, triggerOverlap);
+    notes.push(`trigger-overlap:${triggerOverlap}`);
+    anchored = true;
+  }
+
+  let overlap = 0;
+  for (const gram of cjkBigrams(action)) {
+    if (checkText.includes(gram)) overlap += 1;
+  }
+  if (overlap > 0) {
+    score += Math.min(3, overlap);
+    notes.push(`overlap:${overlap}`);
+  }
+
+  return { score: anchored ? score : 0, notes };
+}
+
+function classifyModuleRequiredAction(actionText, roomState = {}) {
+  const checks = Array.isArray(roomState.moduleJson?.checks) ? roomState.moduleJson.checks : [];
+  if (checks.length === 0) return null;
+  if (isNpcOnlyObservation(actionText, roomState)) return null;
+
+  let best = null;
+  for (const check of checks) {
+    const { score, notes } = scoreModuleCheck(actionText, check, roomState);
+    if (score < 5) continue;
+    if (!best || score > best.score) best = { check, score, notes };
+  }
+
+  if (!best) return null;
+  const { check, score, notes } = best;
+  return withRequiredMeta({
+    skill: String(check.skill || '').trim(),
+    difficulty: normalizeDifficulty(check.difficulty),
+    reason: check.trigger ? `模组检定：${check.trigger}` : `模组检定：${check.check_id || check.skill}`,
+    playerHint: '这一行动命中了模组预设检定，结果由服务器骰点决定。',
+    moduleCheckId: check.check_id || '',
+    moduleSceneId: check.scene_id || ''
+  }, detectionMeta({
+    source: 'module',
+    kind: 'required',
+    ruleId: `module:${check.check_id || check.skill}`,
+    confidence: Math.min(0.95, 0.58 + score * 0.04),
+    matchedText: normalizeText(check.trigger || check.ai_dm_instruction || check.check_id || ''),
+    notes
+  }));
 }
 
 function npcCandidates(roomState = {}) {
@@ -512,46 +828,93 @@ function inferOpposedChecks({ events, narrative, roomState }) {
   const action = latestPlayerAction(roomState);
   const rule = action ? classifyOpposedAction(action.content) : null;
   if (!action || !rule) {
-    return { checks: [], reason: '', action: null };
+    return { checks: [], reason: '', action: null, detection: null };
   }
 
   const existing = Array.isArray(events.opposed_checks) ? events.opposed_checks.filter(isCompleteOpposedCheck) : [];
   if (existing.length > 0) {
-    return { checks: [], reason: 'model-provided', action };
+    return {
+      checks: [],
+      reason: 'model-provided',
+      action,
+      detection: detectionMeta({
+        source: 'model',
+        kind: 'opposed',
+        ruleId: 'model-provided',
+        confidence: 0.9,
+        notes: ['model-provided']
+      })
+    };
   }
 
   const npcName = inferNpcName({ actionText: action.content, narrative, roomState });
   return {
     checks: [buildInferredOpposedCheck({ action, rule, npcName })],
     reason: `backend-${rule.type}`,
-    action
+    action,
+    detection: {
+      ...rule.detection,
+      target: npcName || '附近NPC',
+      skill: rule.activeSkill,
+      passiveSkill: rule.passiveSkill
+    }
   };
 }
 
 function inferRequiredChecks({ events, roomState }) {
   const action = latestPlayerAction(roomState);
   if (!action) {
-    return { checks: [], reason: '', action: null };
+    return { checks: [], reason: '', action: null, detection: null };
   }
 
   if (classifyOpposedAction(action.content)) {
-    return { checks: [], reason: 'opposed-action', action };
+    return {
+      checks: [],
+      reason: 'opposed-action',
+      action,
+      detection: detectionMeta({
+        source: 'backend',
+        kind: 'required',
+        ruleId: 'skipped:opposed-action',
+        confidence: 1,
+        notes: ['opposed-action-priority']
+      })
+    };
   }
 
   const existing = Array.isArray(events.required_checks) ? events.required_checks.filter(isCompleteRequiredCheck) : [];
   if (existing.length > 0) {
-    return { checks: [], reason: 'model-provided', action };
+    return {
+      checks: [],
+      reason: 'model-provided',
+      action,
+      detection: detectionMeta({
+        source: 'model',
+        kind: 'required',
+        ruleId: 'model-provided',
+        confidence: 0.9,
+        notes: ['model-provided']
+      })
+    };
   }
 
-  const rule = classifyRequiredAction(action.content);
+  const rule = classifyModuleRequiredAction(action.content, roomState) ||
+    classifyRequiredAction(action.content, roomState);
   if (!rule) {
-    return { checks: [], reason: '', action };
+    return { checks: [], reason: '', action, detection: null };
   }
 
   return {
     checks: [buildInferredRequiredCheck({ action, rule })],
-    reason: `backend-${rule.skill}`,
-    action
+    reason: `${rule.detection?.source || 'backend'}-${rule.skill}`,
+    action,
+    detection: {
+      ...rule.detection,
+      skill: rule.skill,
+      difficulty: rule.difficulty,
+      moduleCheckId: rule.moduleCheckId || '',
+      moduleSceneId: rule.moduleSceneId || ''
+    }
   };
 }
 
@@ -669,8 +1032,11 @@ export function enhanceStructuredEvents({ events, narrative, roomState } = {}) {
   const diagnostics = {
     inferredRequiredChecks: [],
     inferredRequiredReason: '',
+    inferredRequiredDetection: null,
     inferredOpposedChecks: [],
     inferredReason: '',
+    inferredOpposedDetection: null,
+    detectionNotes: [],
     droppedIncompleteRequiredChecks: 0,
     droppedIncompleteOpposedChecks: 0,
     droppedRequiredChecksForOpposedAction: 0,
@@ -694,6 +1060,8 @@ export function enhanceStructuredEvents({ events, narrative, roomState } = {}) {
   const inferred = inferOpposedChecks({ events: enhancedEvents, narrative, roomState });
   diagnostics.latestActionId = inferred.action?.id || null;
   diagnostics.inferredReason = inferred.reason;
+  diagnostics.inferredOpposedDetection = inferred.detection;
+  if (inferred.detection) diagnostics.detectionNotes.push(inferred.detection);
 
   if (inferred.checks.length > 0) {
     enhancedEvents.opposed_checks = [
@@ -711,6 +1079,8 @@ export function enhanceStructuredEvents({ events, narrative, roomState } = {}) {
   const inferredRequired = inferRequiredChecks({ events: enhancedEvents, roomState });
   diagnostics.latestActionId = diagnostics.latestActionId || inferredRequired.action?.id || null;
   diagnostics.inferredRequiredReason = inferredRequired.reason;
+  diagnostics.inferredRequiredDetection = inferredRequired.detection;
+  if (inferredRequired.detection) diagnostics.detectionNotes.push(inferredRequired.detection);
 
   if (inferredRequired.checks.length > 0) {
     enhancedEvents.required_checks = [

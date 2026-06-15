@@ -1176,6 +1176,97 @@ dialog::backdrop {
   max-height: 90vh;
 }
 
+#aiLogDialog {
+  max-width: 760px;
+  width: 86vw;
+  max-height: 86vh;
+}
+
+.ai-log-overlay {
+  max-height: 82vh;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.ai-log-body {
+  min-height: 280px;
+  max-height: 70vh;
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.compact-empty {
+  margin: 20px auto;
+  max-width: none;
+}
+
+.ai-log-entry {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(19, 22, 26, 0.72);
+}
+
+.ai-log-head,
+.ai-log-meta,
+.ai-log-detection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-log-head {
+  justify-content: space-between;
+}
+
+.ai-log-head strong {
+  color: var(--gold);
+}
+
+.ai-log-head time,
+.ai-log-meta,
+.ai-log-detection {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.ai-log-meta {
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.ai-log-detections {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.ai-log-detection {
+  align-items: flex-start;
+  padding: 6px 8px;
+  border: 1px solid rgba(111, 145, 184, 0.28);
+  border-radius: 6px;
+  background: rgba(111, 145, 184, 0.07);
+  overflow-wrap: anywhere;
+}
+
+.ai-log-snippet {
+  margin: 8px 0 0;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(215, 173, 95, 0.22);
+  border-radius: 6px;
+  background: #101317;
+  color: var(--muted);
+  padding: 8px;
+  font-size: 0.74rem;
+}
+
 .char-edit-overlay {
   max-height: 85vh;
   overflow-y: auto;

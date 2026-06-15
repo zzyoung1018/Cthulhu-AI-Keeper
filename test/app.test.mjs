@@ -395,3 +395,52 @@ test('continue endpoint queues AI without creating a visible player action', asy
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('AI log endpoint is only visible to the room owner', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
+  const app = createApp({
+    config: {
+      dbPath: join(dir, 'test.db'),
+      dataDir: dir,
+      publicDir: resolve('public'),
+      ai: { localFallback: true }
+    },
+    publicDir: resolve('public')
+  });
+
+  try {
+    const baseUrl = await new Promise((resolveListen) => {
+      app.server.listen(0, '127.0.0.1', () => {
+        const address = app.server.address();
+        resolveListen(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    const module = createModule(app.database, 'owner');
+    const created = await jsonRequest(baseUrl, '/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'owner',
+        displayName: 'Keeper',
+        roomName: 'Log Room',
+        moduleId: module.id
+      })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/join`, {
+      method: 'POST',
+      body: JSON.stringify({ playerId: 'player2', displayName: 'Player 2' })
+    });
+
+    const ownerPayload = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/ai-log?playerId=owner`);
+    assert.deepEqual(ownerPayload.logs, []);
+
+    const response = await fetch(`${baseUrl}/api/rooms/${created.room.code}/ai-log?playerId=player2`);
+    const body = await response.json();
+    assert.equal(response.status, 403);
+    assert.match(body.error, /Only the room owner/);
+  } finally {
+    await new Promise((resolveClose) => app.server.close(resolveClose));
+    app.database.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

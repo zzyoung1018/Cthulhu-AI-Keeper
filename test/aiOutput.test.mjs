@@ -393,6 +393,97 @@ test('regression: detects required checks for ordinary spot hidden and library u
   }
 });
 
+test('regression: detects expanded ordinary skill checks', () => {
+  const cases = [
+    ['会计', '我核对账本流水，看看收支有没有异常。'],
+    ['锁匠', '我用发卡试着撬开抽屉的锁。'],
+    ['医学', '我检查尸体伤口，判断真正死因。'],
+    ['驾驶汽车', '我猛踩油门开车甩开后面的车。'],
+    ['神秘学', '我辨认墙上那些怪异符号和仪式痕迹。']
+  ];
+
+  for (const [expectedSkill, action] of cases) {
+    const enhanced = enhanceStructuredEvents({
+      events: {},
+      narrative: '你开始处理眼前的问题。',
+      roomState: {
+        messages: [{
+          id: expectedSkill,
+          authorType: 'player',
+          messageType: 'ACTION',
+          playerId: 'player3',
+          content: action
+        }],
+        moduleJson: {}
+      }
+    });
+
+    assert.equal(enhanced.events.required_checks.length, 1, expectedSkill);
+    assert.equal(enhanced.events.required_checks[0].skill, expectedSkill, expectedSkill);
+    assert.equal(enhanced.diagnostics.inferredRequiredDetection.source, 'generic', expectedSkill);
+  }
+});
+
+test('does not infer spot hidden for observing only an NPC reaction', () => {
+  const enhanced = enhanceStructuredEvents({
+    events: {},
+    narrative: '陈友低头喝了一口水，手指仍搭在搪瓷杯边缘。',
+    roomState: {
+      messages: [{
+        id: 41,
+        authorType: 'player',
+        messageType: 'ACTION',
+        playerId: 'player1',
+        content: '我看看陈友的脸色和反应。'
+      }],
+      moduleJson: { npcs: [{ name: '陈友', npc_id: 'chenyou' }] }
+    }
+  });
+
+  assert.equal(enhanced.events.required_checks, undefined);
+  assert.equal(enhanced.events.opposed_checks, undefined);
+  assert.equal(enhanced.diagnostics.inferredRequiredDetection, null);
+});
+
+test('matches module JSON checks before generic required checks', () => {
+  const enhanced = enhanceStructuredEvents({
+    events: {},
+    narrative: '登记簿摊在柜台上，墨迹在灯光下泛着暗色。',
+    roomState: {
+      room: {
+        sceneState: { currentScene: 'lobby' }
+      },
+      messages: [{
+        id: 42,
+        authorType: 'player',
+        messageType: 'ACTION',
+        playerId: 'player1',
+        content: '我检查前台登记簿，尤其看王建国的房号有没有被改过。'
+      }],
+      moduleJson: {
+        checks: [{
+          check_id: 'spot_register',
+          scene_id: 'lobby',
+          skill: '侦查',
+          difficulty: 'HARD',
+          trigger: '调查员检查前台登记簿',
+          success: '发现王建国的房间号被涂改过',
+          failure: '登记簿看起来很普通',
+          ai_dm_instruction: '内部说明：不要直接告诉玩家秘密。'
+        }]
+      }
+    }
+  });
+
+  assert.equal(enhanced.events.required_checks.length, 1);
+  assert.equal(enhanced.events.required_checks[0].skill, '侦查');
+  assert.equal(enhanced.events.required_checks[0].difficulty, 'HARD');
+  assert.equal(enhanced.events.required_checks[0].playerHint, '这一行动命中了模组预设检定，结果由服务器骰点决定。');
+  assert.equal(enhanced.diagnostics.inferredRequiredDetection.source, 'module');
+  assert.equal(enhanced.diagnostics.inferredRequiredDetection.moduleCheckId, 'spot_register');
+  assert.ok(enhanced.diagnostics.inferredRequiredDetection.confidence >= 0.7);
+});
+
 test('strips trailing action suggestions from AI narrative', () => {
   const enhanced = enhanceStructuredEvents({
     events: {},

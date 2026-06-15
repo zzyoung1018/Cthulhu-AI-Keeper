@@ -976,8 +976,9 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       }
 
       if (request.method === 'GET' && parts[3] === 'ai-log') {
-        const playerId = url.searchParams.get('playerId');
-        if (playerId) database.getParticipant(code, playerId);
+        const playerId = assertString(url.searchParams.get('playerId'), 'playerId', 80);
+        const { room } = database.getParticipant(code, playerId);
+        if (room.ownerPlayerId !== playerId) throw new HttpError(403, 'Only the room owner can view AI logs');
         const logs = _aiLogs.get(code) || [];
         sendJson(response, 200, { logs: logs.slice(-30) });
         return;

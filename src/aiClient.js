@@ -31,6 +31,59 @@ async function* streamLocalFallback() {
   }
 }
 
+function summarizeRecentCheckRolls(diceRolls = []) {
+  const checks = diceRolls
+    .filter((roll) => {
+      const type = roll.result?.type || roll.rollType;
+      return ['skill_check', 'coc_check', 'contested_check', 'opposed_check', 'pushed_check', 'luck_spend'].includes(type);
+    })
+    .slice(-6)
+    .map((roll) => {
+      const result = roll.result || {};
+      if (result.type === 'contested_check') {
+        return {
+          id: roll.id,
+          createdAt: roll.createdAt,
+          rollType: result.type,
+          label: roll.label,
+          playerId: roll.playerId,
+          player: result.player,
+          npc: result.npc,
+          winner: result.winner,
+          reason: result.reason
+        };
+      }
+      if (result.type === 'opposed_check') {
+        return {
+          id: roll.id,
+          createdAt: roll.createdAt,
+          rollType: result.type,
+          label: roll.label,
+          playerId: roll.playerId,
+          active: result.active,
+          passive: result.passive,
+          winner: result.winner
+        };
+      }
+      return {
+        id: roll.id,
+        createdAt: roll.createdAt,
+        rollType: result.type || roll.rollType,
+        label: roll.label || result.skillName || '',
+        playerId: roll.playerId,
+        skillName: result.skillName || roll.label || '',
+        target: result.target,
+        difficulty: result.difficulty,
+        total: result.total,
+        successLevel: result.successLevel,
+        passed: result.passed,
+        consequence: result.consequence || ''
+      };
+    });
+
+  return checks.length > 0 ? JSON.stringify(checks, null, 2) : '';
+}
+
 export async function* streamChatCompletion(aiConfig, messages) {
   if (!isAiConfigured(aiConfig)) {
     if (aiConfig.localFallback) {
@@ -184,6 +237,7 @@ export function buildDmMessages({ room, participants, messages, diceRolls = [], 
     const label = roll.label || roll.rollType;
     return `${label}: ${roll.expression} => ${JSON.stringify(roll.result)}`;
   });
+  const recentChecks = summarizeRecentCheckRolls(diceRolls);
 
   const moduleContext = moduleSegments.slice(0, 6).map((segment, index) => [
     `片段 ${index + 1}：${segment.scene || segment.title}`,
@@ -194,6 +248,7 @@ export function buildDmMessages({ room, participants, messages, diceRolls = [], 
     room, roster,
     recent: recent.length > 0 ? recent.join('\n') : '暂无聊天',
     recentRolls: recentRolls.length > 0 ? recentRolls.join('\n') : '暂无骰子',
+    recentChecks,
     moduleContext,
     moduleJsonContext,
     playerStateJson: playerStateJson || ''

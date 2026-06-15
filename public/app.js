@@ -130,6 +130,9 @@ const els = {
   regenerateAiTask: document.querySelector('#regenerateAiTask'),
   rollbackRound: document.querySelector('#rollbackRound'),
   submitRound: document.querySelector('#submitRound'),
+  btnAiLog: document.querySelector('#btnAiLog'),
+  aiLogDialog: document.querySelector('#aiLogDialog'),
+  aiLogBody: document.querySelector('#aiLogBody'),
   exportGame: document.querySelector('#exportGame'),
   toast: document.querySelector('#toast')
 };
@@ -500,9 +503,95 @@ function renderAiTaskControls() {
   // Round submit: show in ROUND trigger mode when no active task
   const triggerMode = state.room?.aiConfig?.triggerMode || 'ACTION';
   els.submitRound.hidden = triggerMode !== 'ROUND';
+  els.btnAiLog.hidden = !owner || !state.room;
 
   // Export always visible when in room
   els.exportGame.hidden = !state.room;
+}
+
+function formatConfidence(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '--';
+  return `${Math.round(number * 100)}%`;
+}
+
+function renderAiLogEntries(logs = []) {
+  els.aiLogBody.innerHTML = '';
+  if (logs.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty compact-empty';
+    empty.textContent = '暂无 AI 检测日志';
+    els.aiLogBody.append(empty);
+    return;
+  }
+
+  for (const entry of [...logs].reverse()) {
+    const item = document.createElement('article');
+    item.className = 'ai-log-entry';
+
+    const head = document.createElement('div');
+    head.className = 'ai-log-head';
+    const title = document.createElement('strong');
+    title.textContent = entry.stage || 'log';
+    const time = document.createElement('time');
+    time.textContent = entry.time ? new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    head.append(title, time);
+    item.append(head);
+
+    const meta = document.createElement('div');
+    meta.className = 'ai-log-meta';
+    const detection = entry.detection || {};
+    const notes = Array.isArray(detection.detectionNotes) ? detection.detectionNotes : [];
+    const metaLines = [
+      entry.taskUid ? `任务 ${String(entry.taskUid).slice(0, 8)}` : '',
+      entry.validKeys?.length ? `事件 ${entry.validKeys.join(', ')}` : '',
+      entry.rejectedKeys?.length ? `拒绝 ${entry.rejectedKeys.join(', ')}` : '',
+      detection.droppedRequiredChecksForOpposedAction ? `丢弃 required_checks ${detection.droppedRequiredChecksForOpposedAction} 个` : ''
+    ].filter(Boolean);
+    meta.textContent = metaLines.join(' · ') || '无结构化事件';
+    item.append(meta);
+
+    if (notes.length > 0) {
+      const list = document.createElement('div');
+      list.className = 'ai-log-detections';
+      for (const note of notes) {
+        const row = document.createElement('div');
+        row.className = 'ai-log-detection';
+        row.textContent = [
+          note.kind || 'check',
+          note.source || '',
+          note.ruleId || '',
+          note.skill ? `技能 ${note.skill}` : '',
+          note.target ? `目标 ${note.target}` : '',
+          `置信度 ${formatConfidence(note.confidence)}`,
+          Array.isArray(note.notes) && note.notes.length ? `依据 ${note.notes.join('/')}` : ''
+        ].filter(Boolean).join(' · ');
+        list.append(row);
+      }
+      item.append(list);
+    }
+
+    if (entry.rawResponseSnippet) {
+      const snippet = document.createElement('pre');
+      snippet.className = 'ai-log-snippet';
+      snippet.textContent = entry.rawResponseSnippet;
+      item.append(snippet);
+    }
+
+    els.aiLogBody.append(item);
+  }
+}
+
+async function openAiLogDialog() {
+  if (!state.room || !isOwner()) return;
+  els.aiLogBody.textContent = '读取中...';
+  els.aiLogDialog.showModal();
+  try {
+    const payload = await api(`/api/rooms/${state.room.code}/ai-log?playerId=${encodeURIComponent(state.playerId)}`);
+    renderAiLogEntries(payload.logs || []);
+  } catch (error) {
+    els.aiLogBody.textContent = error.message;
+  }
 }
 
 function setConnection(status, text) {
@@ -1579,9 +1668,11 @@ async function restoreLastRoom() {
 els.btnCreateRoom.addEventListener('click', openCreateDialog);
 els.btnJoinRoom.addEventListener('click', openJoinDialog);
 els.btnSettings.addEventListener('click', openSettingsDialog);
+els.btnAiLog.addEventListener('click', openAiLogDialog);
 document.querySelector('#closeCreateDialog').addEventListener('click', closeCreateDialog);
 document.querySelector('#closeJoinDialog').addEventListener('click', closeJoinDialog);
 document.querySelector('#closeSettingsDialog').addEventListener('click', closeSettingsDialog);
+document.querySelector('#closeAiLogDialog').addEventListener('click', () => els.aiLogDialog.close());
 
 // 房间码点击复制
 els.codeRow.addEventListener('click', async () => {
@@ -2004,6 +2095,7 @@ restoreLastRoom();
 els.createRoomDialog.addEventListener('click', (e) => { if (e.target === els.createRoomDialog) closeCreateDialog(); });
 els.joinRoomDialog.addEventListener('click', (e) => { if (e.target === els.joinRoomDialog) closeJoinDialog(); });
 els.settingsDialog.addEventListener('click', (e) => { if (e.target === els.settingsDialog) closeSettingsDialog(); });
+els.aiLogDialog.addEventListener('click', (e) => { if (e.target === els.aiLogDialog) els.aiLogDialog.close(); });
 
 // 角色状态弹窗
 els.btnCharSheet.addEventListener('click', () => {

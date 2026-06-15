@@ -84,6 +84,7 @@
               <button class="ghost" id="regenerateAiTask" type="button" hidden>重生成</button>
               <button class="ghost" id="rollbackRound" type="button" hidden>撤回</button>
               <button class="ghost" id="submitRound" type="button" hidden>提交回合</button>
+              <button class="ghost" id="btnAiLog" type="button" hidden>检测日志</button>
               <button class="ghost" id="exportGame" type="button">导出</button>
               <button class="ghost" id="btnSettings" type="button" title="设置">⚙</button>
             </div>
@@ -258,6 +259,17 @@
       </div>
     </dialog>
 
+    <!-- AI 检测日志弹窗 -->
+    <dialog id="aiLogDialog">
+      <div class="dialog-content ai-log-overlay">
+        <div class="dialog-header">
+          <h2>AI 检测日志</h2>
+          <button class="ghost dialog-close" id="closeAiLogDialog" type="button">✕</button>
+        </div>
+        <div class="ai-log-body" id="aiLogBody"></div>
+      </div>
+    </dialog>
+
     <!-- 角色状态大弹窗 -->
     <dialog id="charSheetDialog">
       <div class="dialog-content char-sheet-overlay">
@@ -270,6 +282,6 @@
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/app.js?v=20260614-coc7e"></script>
+    <script type="module" src="/app.js?v=20260615-ai-detect"></script>
   </body>
 </html>

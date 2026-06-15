@@ -56,7 +56,7 @@ export function buildDmSystemPrompt(aiConfig = {}) {
 // ============================================================
 export function buildDmUserContext({
   room, roster, recent, recentRolls, moduleContext,
-  moduleJsonContext, playerStateJson
+  moduleJsonContext, playerStateJson, recentChecks
 }) {
   const parts = [
     `房间：${room.name} (${room.code})`,
@@ -79,12 +79,13 @@ export function buildDmUserContext({
 
   parts.push(
     `角色摘要：\n${roster || '暂无角色'}`,
+    recentChecks ? `最近检定结果（JSON，继续叙事必须依据这些结果，不要重复同一检定）：\n${recentChecks}` : '',
     `最近骰子：\n${recentRolls || '暂无骰子'}`,
     `最近聊天：\n${recent || '暂无聊天'}`,
     '请根据以上模组数据和调查员状态，生成下一段 DM 回复。'
   );
 
-  return parts.join('\n\n');
+  return parts.filter(Boolean).join('\n\n');
 }
 
 // ============================================================
@@ -217,7 +218,7 @@ export function buildStructuredOutputPrompt() {
     '规则：',
     '- 只包含确实发生或确实需要后端执行的字段',
     '- targetPlayerId / activePlayerId 必须来自调查员状态 JSON；不确定时用最近正式行动的玩家',
-    '- required_checks 用于无主动 NPC 对手的技能/属性检定，例如侦查、聆听、图书馆使用、锁匠、急救、医学、驾驶汽车、攀爬、DEX、POW',
+    '- required_checks 用于无主动 NPC 对手的技能/属性检定，例如侦查、聆听、图书馆使用、锁匠、急救、医学、驾驶汽车、攀爬、跳跃、投掷、追踪、神秘学、法律、会计、估价、导航、博物学、机械维修、电气维修、化学、物理学、药学、DEX、POW',
     '- required_checks.skill 可以是技能名，也可以是属性名 STR/CON/SIZ/DEX/APP/INT/POW/EDU/Luck 或对应中文',
     '- proposed_state_changes 只允许修改 status.hp, status.mp, status.san, status.luck, characteristics.*',
     '- 必须经过后端规则验证才会生效',
@@ -226,6 +227,7 @@ export function buildStructuredOutputPrompt() {
     '- 社交 opposed_checks.activeSkill 用话术/恐吓/魅惑/说服，passiveSkill 通常用 NPC 的心理学',
     '- 潜行/偷窃 opposed_checks.activeSkill 用潜行/妙手/乔装，passiveSkill 用 NPC 的侦查或聆听',
     '- 攻击 opposed_checks.activeSkill 用格斗或射击，passiveSkill 用闪避或侦查',
+    '- 如果最近正式行动是“继续”，必须读取“最近检定结果（JSON）”，按 passed/winner 推进剧情；成功时可揭示对应线索或改变 NPC 态度，失败时给出合理后果，不要重复同一 required_checks/opposed_checks',
     '- clues_revealed 中 privateTo 为空表示所有玩家可见',
     '- 如果没有某个类型的事件，可以省略该字段'
   ].join('\n');
