@@ -355,6 +355,8 @@ async function main() {
       summary: '审计房间已创建，队伍准备进行一次短行动验证。'
     })
   });
+  const summarizedRoom = await jsonRequest(`/api/rooms/${created.room.code}?playerId=${ownerId}`);
+  assert.ok(summarizedRoom.room.summary.includes('审计房间'));
 
   const activeRoom = await jsonRequest(`/api/rooms/${created.room.code}/status`, {
     method: 'PATCH',
@@ -380,7 +382,7 @@ async function main() {
 
   const finalRoom = await jsonRequest(`/api/rooms/${created.room.code}?playerId=${ownerId}`);
   assert.ok(finalRoom.messages.some((message) => message.id === dmMessage.id));
-  assert.ok(finalRoom.room.summary.includes('审计房间'));
+  assert.ok(finalRoom.room.summary);
   assert.ok(finalRoom.aiTasks.some((task) => task.dmMessageId === dmMessage.id && task.status === 'COMPLETED'));
   assert.equal(finalRoom.activeAiTask, null);
 
