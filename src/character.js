@@ -212,6 +212,11 @@ export function normalizeCharacterSheet(source, fallback = {}) {
   const characteristics = normalizeCharacteristics(input.characteristics);
   const status = normalizeStatus(input.status, characteristics);
   const skills = normalizeSkills(input.skills);
+  const hasSkillAllocations = input &&
+    typeof input === 'object' &&
+    Object.hasOwn(input, 'skillAllocations') &&
+    input.skillAllocations &&
+    typeof input.skillAllocations === 'object';
   const sheet = {
     version: 1,
     ruleset: 'coc7e',
@@ -219,7 +224,7 @@ export function normalizeCharacterSheet(source, fallback = {}) {
     characteristics,
     status,
     skills,
-    skillAllocations: normalizeSkillAllocations(input.skillAllocations, skills),
+    skillAllocations: hasSkillAllocations ? normalizeSkillAllocations(input.skillAllocations, skills) : null,
     weapons: normalizeWeapons(input.weapons)
   };
 

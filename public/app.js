@@ -936,14 +936,15 @@ function normalizeSkillAllocation(allocation, base, score, isOccupationSkill) {
 }
 
 function buildSkillAllocationMap(sheet, sortedSkills, occSkills) {
-  const inferred = inferSkillAllocations(sheet, sortedSkills, occSkills);
-  const saved = sheet.skillAllocations || {};
+  const hasSavedAllocations = Boolean(sheet.skillAllocations && typeof sheet.skillAllocations === 'object');
+  const inferred = hasSavedAllocations ? new Map() : inferSkillAllocations(sheet, sortedSkills, occSkills);
+  const saved = hasSavedAllocations ? sheet.skillAllocations : {};
   const allocations = new Map();
 
   for (const [name, score] of sortedSkills) {
     const base = defaultSkills[name] || 0;
     const isOccupationSkill = occSkills.includes(name);
-    const source = saved[name] || inferred.get(name) || {};
+    const source = hasSavedAllocations ? (saved[name] || {}) : (inferred.get(name) || {});
     allocations.set(name, normalizeSkillAllocation(source, base, score, isOccupationSkill));
   }
 

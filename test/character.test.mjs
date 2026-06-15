@@ -38,6 +38,19 @@ test('normalizes CoC 7e character sheets and calculates derived values', () => {
   assert.deepEqual(sheet.skillAllocations.侦查, { occupation: 40, interest: 7 });
 });
 
+test('distinguishes legacy sheets without saved skill allocations', () => {
+  const legacy = normalizeCharacterSheet({
+    skills: { 侦查: 72 }
+  });
+  const saved = normalizeCharacterSheet({
+    skills: { 侦查: 72 },
+    skillAllocations: {}
+  });
+
+  assert.equal(legacy.skillAllocations, null);
+  assert.deepEqual(saved.skillAllocations, {});
+});
+
 test('diffs individual character fields for history records', () => {
   const before = normalizeCharacterSheet({
     investigator: { name: '旧名' },
