@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-16 18:09 CST
+Last updated: 2026-06-16 19:20 CST
 
 ## Current State
 
@@ -10,17 +10,20 @@ Last updated: 2026-06-16 18:09 CST
 - SSH endpoint: `root@8.153.147.137 -p 2233`
 - Service: `dm-online` managed by systemd
 - Reverse proxy: Nginx
-- Database: SQLite, server runtime data under `/opt/dm-online/data`
+- Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `3c3583a feat: clarify ai queue and log status`
-- Latest deployed app commit: `3c3583a feat: clarify ai queue and log status`
-- Deployment verified on 2026-06-16 18:08 CST: systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
+- Latest completed local app commit: `9a89c6a feat: add ai preflight check validation`
+- Latest deployed app commit: `9a89c6a feat: add ai preflight check validation`
+- Deployment verified on 2026-06-16 19:19 CST: systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
 - Local worktree is clean.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent Commits
 
+- `9a89c6a` feat: add ai preflight check validation
+- `158b688` chore: checkpoint before ai preflight checks
+- `e6efdf7` docs: update handoff after ai status ui
 - `3c3583a` feat: clarify ai queue and log status
 - `ae9c104` chore: checkpoint before ai status ui
 - `a9fc6aa` docs: update handoff after bug audit
@@ -36,9 +39,9 @@ Do not write server credentials into committed files. Use the conversation conte
 
 ```text
 src/
-  app.js           (1037 lines) — HTTP routes, room lifecycle, AI orchestration
-  aiOutput.js      (1211 lines) — AI JSON extraction, validation, detection inference
-  aiEvents.js       (535 lines) — applies AI structured events to rolls/state/summary
+  app.js           (1106 lines) — HTTP routes, room lifecycle, AI orchestration
+  aiOutput.js      (1553 lines) — AI JSON extraction, validation, detection inference
+  aiEvents.js       (551 lines) — applies AI structured events to rolls/state/summary
   aiClient.js       (430 lines) — streaming client and scene-aware AI context assembly
   prompts.js        (243 lines) — system/user/structured-output prompts
   db.js            (1350 lines) — SQLite schema, migrations, row mappers, queries
@@ -54,9 +57,9 @@ public/
 
 test/
   comprehensive-ai.test.mjs (765 lines) — full AI detection and event coverage
-  aiOutput.test.mjs         (594 lines) — parser/validator/inference regressions
+  aiOutput.test.mjs         (757 lines) — parser/validator/inference regressions
   frontend.e2e.mjs          (556 lines) — Playwright browser coverage for visible controls
-  app.test.mjs              (527 lines) — API integration tests
+  app.test.mjs              (731 lines) — API integration tests
   db.test.mjs               (774 lines) — persistence tests
   fixtures/
     comprehensive-test-module.json — reusable CoC 7e test module
@@ -254,15 +257,58 @@ Verification after `3c3583a`:
 - Public deployment audit — OK, room `PXUPGK`, `aiConfigured: true`
 - Confirmed public HTML/JS includes `#aiQueueSummary`, `#aiLogStats`, and `20260616-ai-status-ui`
 
+### AI Preflight Checks / Stronger Validation (`9a89c6a`)
+
+Implemented the latest requested AI reliability pass:
+
+- ACTION messages now run through `planPreflightCheck()` before an AI task is queued.
+- If the backend can confidently identify a required check or opposed check and it passes room-aware validation, the server rolls it immediately.
+- After a preflight roll, the AI task uses idempotency key `precheck:<actionMessageId>:<checkMessageId>` and `triggerMessageId` points to the system check message, not the original ACTION.
+- Preflight AI tasks receive the same "检定结果后的继续叙事" system instruction as manual `继续叙事`, plus an extra instruction not to repeat `required_checks` / `opposed_checks`.
+- The older post-AI inference path remains as a fallback when preflight is ambiguous, skipped, or when the model still emits useful structured events.
+- Preflight is intentionally skipped while another AI task is active, so deterministic rolls do not jump ahead of queued narration.
+
+Validation improvements:
+
+- `validateStructuredEvents()` now accepts `{ roomState, defaultPlayerId }`.
+- Required checks are rejected if the target player is missing or the skill/attribute cannot be resolved from the character sheet.
+- Opposed checks are rejected if the active player is missing, the active skill is invalid, or a hallucinated NPC is returned while a module/known/recent NPC context exists.
+- NPC references are canonicalized through module NPCs, scene `npcStates`, participant `knownNpcs`, static aliases, and recent chat context.
+- Private clue targets must be real room participants.
+- AI logs now include room-aware validation `warnings` along with `issues`.
+
+Regression coverage:
+
+- Added real playtest-derived cases from `reports/2026-06-14-test-report.md` / `dm-online-ZZL4KB`:
+  - "其实我祖上也是我们村的人" -> 话术 vs 陈友
+  - "老一辈就让我找您呀" -> 话术 vs 陈友
+  - "姓郑啊" -> 话术 vs 陈友
+  - "陈友让我们往北边去的" -> 话术 vs 老汉
+  - "回到房间 自己审查所有账册" -> 会计
+  - "仔细观察一下这个房间（过侦查检定）" -> 侦查
+  - "我们出门... (过聆听）" -> 聆听
+- Added HTTP integration coverage proving required and opposed preflight rolls happen before AI narration and that the AI continuation prompt is sent.
+- `applyStructuredEvents()` now returns applied check messages/rolls so the HTTP layer can chain preflight rolls into AI continuation tasks.
+
+Verification after `9a89c6a`:
+- Local `npm run check`
+- Local `npm test` — 111/111 passed
+- Local `npm run test:e2e` — 9/9 passed
+- Server `npm run check`
+- Server `npm test` — 111/111 passed
+- Server systemd/Nginx/health checks — OK
+- Public deployment audit — OK, room `TKUWBF`, `aiConfigured: true`
+
 ## 2026-06-16 Code Review Notes
 
 Historical review note retained for context. The old high-value items around structured clue/NPC persistence, explicit action lifecycle, scene-aware context, persistent AI logs, visible log tooling, and browser coverage have now been implemented.
 
 Current AI behavior detection is much stronger than the original playtest report described:
-- The model no longer needs to reliably emit JSON for common checks. Backend inference now recovers many missing `required_checks` and `opposed_checks`.
+- The model no longer needs to reliably emit JSON for common checks. Backend preflight and post-AI inference now recover many missing `required_checks` and `opposed_checks`.
 - Opposed checks are prioritized over ordinary required checks, preventing "lie to NPC" actions from becoming generic observation/search rolls.
 - The continuation loop caused by reusing the same player ACTION has been fixed by skipping already-processed actions.
 - AI-written check-marker text is stripped before backend marker injection, preventing duplicate visible prompts.
+- Common high-risk checks can now happen before AI narration, reducing cases where AI narrates a result before the server rolls.
 
 The remaining improvements are now mostly about deeper durability, UI ergonomics, and reducing future maintenance cost.
 
@@ -273,9 +319,10 @@ The remaining improvements are now mostly about deeper durability, UI ergonomics
    - Best first split: move character-sheet UI, AI log UI, and chat rendering into focused frontend modules.
    - Keep tests green between each extraction; avoid a big-bang refactor.
 
-2. Add owner-facing AI retry / cancel controls.
-   - Queue visibility exists, but owners still cannot cancel a stuck AI task or retry a failed task from the UI.
-   - Backend already tracks task status and idempotency keys, so this is a natural next UX improvement.
+2. Move preflight into queued task execution for busy rooms.
+   - Current preflight is skipped while another AI task is active to avoid out-of-order rolls.
+   - Next reliability improvement: store a pending "preflight candidate" on the AI task and execute it when that task reaches the front of the per-room queue.
+   - This preserves order while still giving queued actions the lower-error preflight path.
 
 3. Split `aiOutput.js` before more detection tuning.
    - It now mixes JSON extraction, validation, narrative cleanup, required-check inference, opposed-check inference, module matching, and NPC matching.
@@ -285,15 +332,14 @@ The remaining improvements are now mostly about deeper durability, UI ergonomics
      - `aiNarrativeSanitizer.js` for marker/action-suggestion cleanup.
    - Add tests before splitting so behavior stays stable.
 
-4. Tune module-defined check matching with real playtest logs.
+4. Continue tuning module-defined check matching with more playtest logs.
    - `classifyModuleRequiredAction()` already scores module checks using trigger overlap, skill mention, scene match, and CJK bigram overlap.
-   - Use `reports/dm-online-ZZL4KB.json` and `reports/dm-online-ZZL4KB-ai-log.json` to add targeted regression cases.
-   - Avoid over-broad keyword rules; prefer module-specific anchors so normal roleplay does not trigger excessive rolls.
+   - `ZZL4KB` report regressions are now covered for several social and required checks.
+   - Add future reports as fixtures before changing broad keyword rules; prefer module-specific anchors so normal roleplay does not trigger excessive rolls.
 
-5. Improve observability for skipped/invalid structured events.
-   - Most owner-facing AI logs are now readable, but some invalid or unresolved events are still only lightly summarized.
-   - Add owner-visible AI log entries for rejected check skills, missing NPC targets, and ignored state changes.
-   - This will make future playtest debugging faster than reading raw server logs.
+5. Surface preflight status in the UI.
+   - Backend logs `preflight-check` and `preflight-skipped`, but the UI currently only shows the resulting system check and AI task.
+   - A compact "服务器已预检定" marker in the AI log/status area would make this behavior easier to understand during playtests.
 
 6. Add export/import for a complete playtest session.
    - Chat, character cards, state, summary, AI logs, and module data are all persisted.
@@ -373,15 +419,15 @@ AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restore
 
 Local:
 ```bash
-npm run check     # passed on 2026-06-16 18:05 CST
-npm test          # 106/106 passed on 2026-06-16 18:05 CST
-npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-16 18:05 CST
+npm run check     # passed on 2026-06-16 19:17 CST
+npm test          # 111/111 passed on 2026-06-16 19:17 CST
+npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-16 19:17 CST
 ```
 
 Server:
 ```bash
 cd /opt/dm-online && npm run check
-cd /opt/dm-online && npm test                  # 106/106 passed
+cd /opt/dm-online && npm test                  # 111/111 passed
 systemctl restart dm-online
 curl -fsS http://127.0.0.1:4173/api/health     # ok: true, aiConfigured: true
 systemctl is-active dm-online                    # active
@@ -391,10 +437,7 @@ nginx -t                                         # successful
 Public deployment audit:
 ```bash
 npm run audit:deployment -- http://8.153.147.137
-# ok: true, aiConfigured: true, roomCode: PXUPGK
-
-npm run audit:deployment -- --require-ai http://8.153.147.137
-# ok: true, aiConfigured: true, strictAi: true
+# ok: true, aiConfigured: true, roomCode: TKUWBF
 ```
 
 ## Deployment Commands
