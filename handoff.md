@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-16 12:12 CST
+Last updated: 2026-06-16 12:40 CST
 
 ## Current State
 
@@ -12,36 +12,35 @@ Last updated: 2026-06-16 12:12 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/opt/dm-online/data`
 - Local branch: `main`
-- Latest local commit: `79bedf4 docs: refresh handoff with continue loop fix and duplicate marker fix`
+- Latest completed local code commit: `4716b92 test: add frontend e2e and readable ai logs`
 - Latest deployed code commit known from prior deployment: `0a94f99 fix: strip AI-generated check markers before injecting backend markers`
-- Note: `79bedf4` was docs-only. No app code changes are known after deployed commit `0a94f99`.
+- Note: local app code now has post-deployment changes after `0a94f99`; deploy before expecting the server to have these features.
 - Local worktree is clean.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent Commits
 
+- `4716b92` test: add frontend e2e and readable ai logs
+- `e426d16` feat: persist ai state and action lifecycle
+- `56ffb3c` chore: checkpoint before ai state and log upgrades
+- `4ad3c21` docs: update handoff with ai detection review
 - `79bedf4` docs: refresh handoff with continue loop fix and duplicate marker fix
 - `0a94f99` fix: strip AI-generated check markers before injecting backend markers
 - `652a60d` fix: skip processed actions in latestPlayerAction to prevent check re-inference loop
 - `0ec6d12` docs: refresh handoff after ai detection deployment
 - `6546044` fix: make deployment audit summary assertion stable
-- `e58f148` fix: expand ai detection diagnostics
-- `0a732a7` chore: checkpoint before ai detection expansion
-- `0c4067c` fix: stabilize continuation rollback and ai events
-- `3028b48` docs: update handoff notes with session refactor details
-- `2e1d80d` refactor: remove dead code, fix double normalization, extract aiEvents module
 
 ## Code Map
 
 ```text
 src/
-  app.js           (1026 lines) — HTTP routes, room lifecycle, AI orchestration
-  aiOutput.js      (~1200 lines) — AI JSON extraction, validation, detection inference
-  aiEvents.js       (381 lines) — applies AI structured events to rolls/state/summary
-  aiClient.js       (261 lines) — streaming client and AI context assembly
+  app.js           (1030 lines) — HTTP routes, room lifecycle, AI orchestration
+  aiOutput.js      (1211 lines) — AI JSON extraction, validation, detection inference
+  aiEvents.js       (535 lines) — applies AI structured events to rolls/state/summary
+  aiClient.js       (430 lines) — streaming client and scene-aware AI context assembly
   prompts.js        (243 lines) — system/user/structured-output prompts
-  db.js            (1246 lines) — SQLite schema, migrations, row mappers, queries
+  db.js            (1350 lines) — SQLite schema, migrations, row mappers, queries
   character.js      (368 lines) — CoC 7e sheet normalization and skill lookup
   dice.js           (441 lines) — CoC 7e dice, checks, opposed checks, luck/pushed rolls
   moduleParser.js   (347 lines) — JSON module validation and segment extraction
@@ -50,13 +49,14 @@ src/
   privateHub.js      (63 lines) — player-specific SSE delivery
 
 public/
-  app.js          (2106 lines) — main frontend logic
+  app.js          (2207 lines) — main frontend logic
 
 test/
-  comprehensive-ai.test.mjs (702 lines) — full AI detection and event coverage
-  aiOutput.test.mjs         (~560 lines) — parser/validator/inference regressions
+  comprehensive-ai.test.mjs (765 lines) — full AI detection and event coverage
+  aiOutput.test.mjs         (594 lines) — parser/validator/inference regressions
+  frontend.e2e.mjs          (287 lines) — Playwright browser coverage for visible controls
   app.test.mjs              (446 lines) — API integration tests
-  db.test.mjs               (735 lines) — persistence tests
+  db.test.mjs               (774 lines) — persistence tests
   fixtures/
     comprehensive-test-module.json — reusable CoC 7e test module
 ```
@@ -97,9 +97,65 @@ const AI_CHECK_MARKER = /（此处触发[^）]*?检定[^）]*?。）\s*/g;
 let text = String(narrative || '').replace(AI_CHECK_MARKER, '').trim();
 ```
 
+## 2026-06-16 Implementation Update
+
+The five high-value follow-ups from the previous review are now implemented locally.
+
+### 1. Structured Clue / NPC Persistence (`e426d16`)
+
+- `clues_revealed` still creates visible system/private messages, but now also writes structured records into participant `playerMeta.discoveredClues`.
+- Public clues are merged into every participant; private clues are merged only into `privateTo`.
+- `npc_state_changes` now writes structured records into each participant `knownNpcs` and into room `sceneState.npcStates`.
+- Prompt schema now supports `clueId` and `npcId`; `clueId` should use module `clues.clue_id` when available.
+- Regression coverage: `test/comprehensive-ai.test.mjs` verifies public/private clue persistence, NPC persistence, room scene-state update, and AI log entries.
+
+### 2. Explicit AI Action Lifecycle (`e426d16`)
+
+- `messages` has `ai_processed_task_uid` and `ai_processed_at`.
+- Completed AI tasks call `database.markAiTriggerProcessed({ taskUid })`.
+- `enhanceStructuredEvents()` now accepts `triggerMessageId` from `ai_tasks`, so detection uses the action that actually triggered the current task instead of blindly using the newest ACTION in the room.
+- `latestPlayerAction()` still keeps the old message-order fallback for legacy messages, but explicit task linkage is now the primary path.
+- Regression coverage: `test/aiOutput.test.mjs` verifies queued actions do not cross-contaminate detection.
+
+### 3. Scene-Aware AI Context (`e426d16`)
+
+- `buildDmMessages()` now ranks module scenes, NPCs, clues, and checks by:
+  - `room.sceneState.currentScene/currentSceneId/currentLocation`
+  - `sceneState.npcStates`
+  - recent chat terms
+  - player `knownNpcs` and `discoveredClues`
+- AI prompt now includes "模组结构化数据（已按当前场景排序）" plus current `sceneState` JSON.
+- Regression coverage: `test/aiClient.test.mjs` verifies the current scene is prioritized over earlier module scenes.
+
+### 4. Persistent AI Logs (`e426d16`)
+
+- `_aiLogs` in-memory map was replaced by SQLite table `ai_logs`.
+- `GET /api/rooms/:code/ai-log` now reads persisted logs, still owner-only.
+- Logs are no longer cleared when the owner leaves or the room ends, so playtest diagnostics survive restarts.
+- Regression coverage: `test/db.test.mjs` verifies AI logs persist and round-trip from SQLite.
+
+### 5. Frontend E2E Coverage (`4716b92`)
+
+- Added Playwright via `@playwright/test`.
+- New script: `npm run test:e2e`.
+- New test file: `test/frontend.e2e.mjs`.
+- Browser tests start a real app server, fake streaming AI server, and temporary SQLite database.
+- Covered flows:
+  - `继续叙事` button appears after a check result and queues AI without creating a visible player ACTION.
+  - AI detection log dialog displays readable Chinese summaries.
+  - rollback button appears and works.
+  - character status / skill allocation shortcuts open the expected dialogs.
+- This also caught and fixed a real frontend bug: `#btnCharSheet` was inside `#chatLog`, and `renderMessages()` removed it with `innerHTML = ''`. It is now reattached during message rendering.
+
+### AI Log Readability (`4716b92`)
+
+- Log dialog now shows Chinese stage names, event chips, summary paragraphs, detection rows, and collapsed raw snippets.
+- Added readable labels for `required_checks`, `opposed_checks`, `clues_revealed`, `scene_change`, `npc_state_changes`, and `summary_update`.
+- `window.onerror` now renders via DOM/textContent instead of HTML string injection.
+
 ## 2026-06-16 Code Review Notes
 
-No business code was changed during this review. Local `npm test` was run again and passed: 101/101 tests.
+Historical review note retained for context. The items marked as recommended below have mostly been implemented by `e426d16` and `4716b92`.
 
 Current AI behavior detection is much stronger than the original playtest report described:
 - The model no longer needs to reliably emit JSON for common checks. Backend inference now recovers many missing `required_checks` and `opposed_checks`.
@@ -212,9 +268,9 @@ Factory pattern: `createEventApplier({ database, hub, addAiLog })` returns `{ ap
 - required_checks → server-side skill/attribute rolls, system messages
 - opposed_checks → contested rolls (player vs NPC), NPC skill from `moduleJson.npcs` when available
 - proposed_state_changes → whitelisted status/characteristic paths only
-- clues_revealed → system messages (with optional privateTarget)
+- clues_revealed → system/private messages + participant `discoveredClues`
 - scene_change → scene state update + system message
-- npc_state_changes → NPC state messages (disposition, location, isPresent)
+- npc_state_changes → NPC state messages + participant `knownNpcs` + room `sceneState.npcStates`
 - summary_update → trusted as replacement summary
 
 ### Rollback
@@ -229,8 +285,9 @@ AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restore
 
 Local:
 ```bash
-npm run check   # passed
-npm test        # 101/101 passed locally again on 2026-06-16 12:12 CST
+npm run check     # passed on 2026-06-16 12:39 CST
+npm test          # 105/105 passed on 2026-06-16 12:39 CST
+npm run test:e2e  # 3/3 Playwright tests passed on 2026-06-16 12:39 CST
 ```
 
 Server:
@@ -271,6 +328,10 @@ Then on server:
 sshpass -e ssh -p 2233 -o StrictHostKeyChecking=no root@8.153.147.137 \
   'cd /opt/dm-online && npm install && npm test'
 
+# Optional on server if Playwright browsers are installed:
+sshpass -e ssh -p 2233 -o StrictHostKeyChecking=no root@8.153.147.137 \
+  'cd /opt/dm-online && npm run test:e2e'
+
 sshpass -e ssh -p 2233 -o StrictHostKeyChecking=no root@8.153.147.137 \
   'systemctl restart dm-online && sleep 2 && curl -fsS http://127.0.0.1:4173/api/health; echo; systemctl is-active dm-online; nginx -t'
 ```
@@ -283,24 +344,23 @@ DEPLOYMENT_AUDIT_AI_TIMEOUT_MS=180000 npm run audit:deployment -- --require-ai h
 ## Notes For Next Agent
 
 - User prefers autonomous implementation, testing, deployment, and log inspection.
-- Always run tests before and after changes (`npm test`).
+- Always run tests before and after changes (`npm test`; run `npm run test:e2e` for frontend-visible flows).
 - Keep doing checkpoint commits before substantial changes.
 - Do not overwrite unrelated user changes if the worktree is dirty.
 - Do not commit secrets.
 - Preserve server `.env`, `data/`, and runtime database during rsync.
+- Playwright browser binaries were installed locally via `npx playwright install chromium`; a new machine may need that command before `npm run test:e2e`.
 - The test fixture `test/fixtures/comprehensive-test-module.json` can be uploaded via the API to manually test AI detection in a real room.
 - If changing AI detection, add regression tests in `test/aiOutput.test.mjs` and/or `test/comprehensive-ai.test.mjs`.
 - When debugging game sessions, request the JSON export (`GET /api/rooms/:code/export?format=json`) to see messages, diceRolls, and aiTasks in context.
-- The AI detection log endpoint (`GET /api/rooms/:code/ai-log`) is owner-only and shows raw event parsing diagnostics.
-- `latestPlayerAction` now returns `null` for already-processed actions — if AI check inference stops working unexpectedly for new actions, check this function first.
+- The AI detection log endpoint (`GET /api/rooms/:code/ai-log`) is owner-only and now reads persistent SQLite `ai_logs`.
+- `latestPlayerAction` now prefers explicit `triggerMessageId` and skips `aiProcessedTaskUid` actions — if AI check inference stops working unexpectedly, inspect `ai_tasks.trigger_message_id` and `messages.ai_processed_task_uid` first.
 
 ## Potential Follow-Ups
 
-- Highest value: persist `clues_revealed` and `npc_state_changes` into structured player/room state, not only messages.
-- High value: add end-to-end frontend tests for `继续叙事`, `检测日志`, rollback controls, and character-card quick interactions.
-- High value: add explicit processed-action/task linkage instead of relying only on `latestPlayerAction()` message-order heuristics.
-- Medium value: tune module check matching with real playtest logs from `reports/`.
-- Medium value: persist or export `_aiLogs` diagnostics; add TTL eviction if keeping them memory-only.
-- Medium value: make AI context scene-aware so current scene/NPC/clue data is prioritized.
-- Medium value: cache NPC candidates per room/task (currently rebuilt every AI call in `npcCandidates()`).
-- Cleanup: split `aiOutput.js`, `db.js`, `app.js`, and `public/app.js` along existing boundaries when next touching those files.
+- Deploy local commits `e426d16` and `4716b92` to the server, then run server-side `npm test`, restart `dm-online`, and audit health.
+- Add AI log export into `GET /api/rooms/:code/export?format=json` if long playtests need portable diagnostics.
+- Tune module check matching with newer real playtest logs from `reports/` after another session.
+- Cache NPC candidates per room/task (currently rebuilt every AI call in `npcCandidates()`).
+- Split `aiOutput.js`, `db.js`, `app.js`, and `public/app.js` along existing boundaries when next touching those files.
+- Consider moving Playwright artifacts or traces to a CI-friendly path if this project gets CI later.
