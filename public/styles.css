@@ -1199,7 +1199,35 @@ dialog::backdrop {
   max-height: 82vh;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+}
+
+.ai-log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(16, 19, 23, 0.72);
+}
+
+.ai-log-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.ai-log-toolbar select {
+  min-width: 132px;
+}
+
+.ai-log-toolbar button {
+  margin-left: auto;
 }
 
 .ai-log-body {
@@ -1209,6 +1237,18 @@ dialog::backdrop {
   display: grid;
   gap: 10px;
   padding-right: 4px;
+}
+
+.ai-log-task-group {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-log-task-heading {
+  margin: 4px 0 0;
+  color: var(--gold);
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .compact-empty {

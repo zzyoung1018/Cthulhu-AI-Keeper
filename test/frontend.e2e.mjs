@@ -109,9 +109,9 @@ async function startFixture(responses = []) {
   };
 }
 
-function seedActiveRoom(database) {
-  const module = database.createModule({
-    ownerPlayerId: 'owner',
+function seedModule(database, ownerPlayerId = 'owner', title = 'E2E 模组') {
+  return database.createModule({
+    ownerPlayerId,
     title: 'E2E 模组',
     originalName: 'module.json',
     fileType: 'json',
@@ -122,6 +122,21 @@ function seedActiveRoom(database) {
     parseStatus: 'PARSED',
     segments: [{ title: '大厅', scene: 'lobby', content: '大厅里有一本登记簿。' }]
   });
+}
+
+function seedPreparingRoom(database, { ownerPlayerId = 'owner', displayName = 'Keeper', maxPlayers = 5 } = {}) {
+  const module = seedModule(database, ownerPlayerId);
+  return database.createRoom({
+    name: 'E2E Room',
+    playerId: ownerPlayerId,
+    displayName,
+    moduleId: module.id,
+    maxPlayers
+  });
+}
+
+function seedActiveRoom(database, extraPlayers = []) {
+  const module = seedModule(database, 'owner');
 
   const { room } = database.createRoom({
     name: 'E2E Room',
@@ -130,13 +145,30 @@ function seedActiveRoom(database) {
     moduleId: module.id
   });
 
-  database.updateCharacterSheet({
-    code: room.code,
-    playerId: 'owner',
-    displayName: 'Keeper',
-    characterSheet: characterSheet()
-  });
-  database.setParticipantReady({ code: room.code, playerId: 'owner', isReady: true });
+  for (const player of extraPlayers) {
+    database.joinRoom({
+      code: room.code,
+      playerId: player.playerId,
+      displayName: player.displayName
+    });
+  }
+
+  const players = [{ playerId: 'owner', displayName: 'Keeper' }, ...extraPlayers];
+  for (const player of players) {
+    database.updateCharacterSheet({
+      code: room.code,
+      playerId: player.playerId,
+      displayName: player.displayName,
+      characterSheet: {
+        ...characterSheet(),
+        investigator: {
+          ...characterSheet().investigator,
+          name: player.displayName === 'Keeper' ? '林娜' : player.displayName
+        }
+      }
+    });
+    database.setParticipantReady({ code: room.code, playerId: player.playerId, isReady: true });
+  }
   database.setRoomStatus({ code: room.code, playerId: 'owner', status: 'ACTIVE' });
 
   const action = database.createPlayerMessage({
@@ -213,19 +245,42 @@ function seedActiveRoom(database) {
       rawResponseSnippet: '你发现了登记簿。'
     }
   });
+  database.createAiLog({
+    code: room.code,
+    taskUid: task.uid,
+    stage: 'npc-skill-fallback',
+    entry: {
+      stage: 'npc-skill-fallback',
+      taskUid: task.uid,
+      npcName: '陈友',
+      passiveSkill: '心理学',
+      fallback: 50,
+      time: new Date().toISOString()
+    }
+  });
 
   return { room, checkMessage, task };
 }
 
-async function openSeededRoom(page, baseUrl, roomCode) {
-  await page.addInitScript(({ code }) => {
-    localStorage.setItem('dm-online-player-id', 'owner');
-    localStorage.setItem('dm-online-display-name', 'Keeper');
-    localStorage.setItem('dm-online-last-room-code', code);
-    localStorage.setItem('dm-online-last-room-name', 'E2E Room');
-  }, { code: roomCode });
+async function setIdentity(page, { playerId, displayName, roomCode = '', roomName = 'E2E Room' }) {
+  await page.addInitScript(({ id, name, code, lastRoomName }) => {
+    localStorage.setItem('dm-online-player-id', id);
+    localStorage.setItem('dm-online-display-name', name);
+    if (code) {
+      localStorage.setItem('dm-online-last-room-code', code);
+      localStorage.setItem('dm-online-last-room-name', lastRoomName);
+    }
+  }, { id: playerId, name: displayName, code: roomCode, lastRoomName: roomName });
+}
+
+async function openRoomAs(page, baseUrl, roomCode, { playerId = 'owner', displayName = 'Keeper' } = {}) {
+  await setIdentity(page, { playerId, displayName, roomCode });
   await page.goto(baseUrl);
   await expect(page.locator('#roomTitle')).toHaveText('E2E Room');
+}
+
+async function openSeededRoom(page, baseUrl, roomCode) {
+  await openRoomAs(page, baseUrl, roomCode);
 }
 
 test('continues narrative from a check result without creating a player action', async ({ page }) => {
@@ -262,6 +317,35 @@ test('renders readable AI detection logs for the owner', async ({ page }) => {
   }
 });
 
+test('filters, groups, and exports AI detection logs', async ({ page }) => {
+  const fixture = await startFixture();
+  try {
+    const { room } = seedActiveRoom(fixture.app.database);
+    await openSeededRoom(page, fixture.baseUrl, room.code);
+
+    await page.locator('#btnAiLog').click();
+    await page.locator('#aiLogWarningOnly').check();
+    await expect(page.locator('.ai-log-entry')).toHaveCount(1);
+    await expect(page.locator('.ai-log-entry')).toContainText('NPC 技能回退');
+
+    await page.locator('#aiLogWarningOnly').uncheck();
+    await page.locator('#aiLogStageFilter').selectOption('structured-events');
+    await expect(page.locator('.ai-log-entry')).toHaveCount(1);
+    await expect(page.locator('.ai-log-entry')).toContainText('结构化事件检测');
+
+    await page.locator('#aiLogStageFilter').selectOption('');
+    await page.locator('#aiLogGroupByTask').check();
+    await expect(page.locator('.ai-log-task-heading')).toContainText('任务');
+
+    const downloadPromise = page.waitForEvent('download');
+    await page.locator('#exportAiLog').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe(`dm-online-${room.code}-ai-log.json`);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('sends chat actions with Ctrl+Enter', async ({ page }) => {
   const fixture = await startFixture(['门缝里透出一线冷光。\n\n```json\n{}\n```']);
   try {
@@ -275,6 +359,124 @@ test('sends chat actions with Ctrl+Enter', async ({ page }) => {
     await expect(page.locator('.message.action').filter({ hasText: '我查看门缝。' })).toBeVisible();
     await expect(textarea).toHaveValue('');
     await expect(page.getByText('门缝里透出一线冷光')).toBeVisible();
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('creates and joins rooms through the UI while enforcing the player cap', async ({ browser }) => {
+  const fixture = await startFixture();
+  const pages = [];
+  try {
+    const module = seedModule(fixture.app.database, 'owner');
+    const owner = await browser.newPage();
+    pages.push(owner);
+    await setIdentity(owner, { playerId: 'owner', displayName: 'Keeper' });
+    await owner.goto(fixture.baseUrl);
+
+    await owner.locator('#btnCreateRoom').click();
+    await expect(owner.locator('#moduleSelect')).toContainText('E2E 模组');
+    await owner.locator('#createRoomForm input[name="displayName"]').fill('Keeper');
+    await owner.locator('#createRoomForm input[name="roomName"]').fill('Two Seat Room');
+    await owner.locator('#maxPlayersSelect').selectOption('2');
+    await owner.locator('#moduleSelect').selectOption(String(module.id));
+    await owner.locator('#createRoomForm button[type="submit"]').click();
+
+    await expect(owner.locator('#roomTitle')).toHaveText('Two Seat Room');
+    await expect(owner.locator('#playerCount')).toHaveText('1/2');
+    const roomCode = (await owner.locator('#roomCode').textContent()).trim();
+
+    const guest = await browser.newPage();
+    pages.push(guest);
+    await setIdentity(guest, { playerId: 'guest', displayName: 'Guest' });
+    await guest.goto(fixture.baseUrl);
+    await guest.locator('#btnJoinRoom').click();
+    await guest.locator('#joinRoomForm input[name="displayName"]').fill('Guest');
+    await guest.locator('#joinRoomForm input[name="roomCode"]').fill(roomCode);
+    await guest.locator('#joinRoomForm button[type="submit"]').click();
+
+    await expect(guest.locator('#roomTitle')).toHaveText('Two Seat Room');
+    await expect(owner.locator('#playerCount')).toHaveText('2/2');
+    await expect(owner.locator('#players')).toContainText('Guest');
+
+    const extra = await browser.newPage();
+    pages.push(extra);
+    await setIdentity(extra, { playerId: 'extra', displayName: 'Extra' });
+    await extra.goto(fixture.baseUrl);
+    await extra.locator('#btnJoinRoom').click();
+    await extra.locator('#joinRoomForm input[name="displayName"]').fill('Extra');
+    await extra.locator('#joinRoomForm input[name="roomCode"]').fill(roomCode);
+    await extra.locator('#joinRoomForm button[type="submit"]').click();
+    await expect(extra.locator('#toast')).toContainText('Room is full');
+  } finally {
+    await Promise.all(pages.map((page) => page.close().catch(() => undefined)));
+    await fixture.close();
+  }
+});
+
+test('syncs player messages in real time and keeps private messages scoped', async ({ browser }) => {
+  const fixture = await startFixture(['脚步声在走廊另一端停住。\n\n```json\n{}\n```']);
+  const pages = [];
+  try {
+    const { room } = seedActiveRoom(fixture.app.database, [
+      { playerId: 'guest', displayName: 'Guest' },
+      { playerId: 'bystander', displayName: 'Bystander' }
+    ]);
+
+    const owner = await browser.newPage();
+    const guest = await browser.newPage();
+    const bystander = await browser.newPage();
+    pages.push(owner, guest, bystander);
+
+    await openRoomAs(owner, fixture.baseUrl, room.code, { playerId: 'owner', displayName: 'Keeper' });
+    await openRoomAs(guest, fixture.baseUrl, room.code, { playerId: 'guest', displayName: 'Guest' });
+    await openRoomAs(bystander, fixture.baseUrl, room.code, { playerId: 'bystander', displayName: 'Bystander' });
+
+    await owner.locator('#messageForm textarea').fill('我轻轻敲门。');
+    await owner.keyboard.press('Control+Enter');
+    await expect(guest.locator('.message.action').filter({ hasText: '我轻轻敲门。' })).toBeVisible();
+
+    await owner.evaluate(async ({ code }) => {
+      const response = await fetch(`/api/rooms/${code}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerId: 'owner',
+          content: '只告诉 Guest 的线索。',
+          messageType: 'PRIVATE',
+          privateTarget: 'guest'
+        })
+      });
+      if (!response.ok) throw new Error(await response.text());
+    }, { code: room.code });
+
+    await expect(owner.locator('.message.private').filter({ hasText: '只告诉 Guest 的线索。' })).toBeVisible();
+    await expect(guest.locator('.message.private').filter({ hasText: '只告诉 Guest 的线索。' })).toBeVisible();
+    await expect(bystander.locator('.message.private').filter({ hasText: '只告诉 Guest 的线索。' })).toHaveCount(0);
+  } finally {
+    await Promise.all(pages.map((page) => page.close().catch(() => undefined)));
+    await fixture.close();
+  }
+});
+
+test('preserves character skill allocations after saving and reopening the sheet', async ({ page }) => {
+  const fixture = await startFixture();
+  try {
+    const { room } = seedPreparingRoom(fixture.app.database);
+    await openSeededRoom(page, fixture.baseUrl, room.code);
+
+    await page.locator('#btnEditCharacter').click();
+    await page.locator('input[name="investigator.name"]').fill('沈秋');
+    await page.locator('#occupationSelect').selectOption('记者');
+    await page.locator('.skill-row[data-skill-name="侦查"] [data-skill-kind="occupation"]').fill('40');
+    await page.locator('.skill-row[data-skill-name="侦查"] [data-skill-kind="interest"]').fill('5');
+    await page.locator('#profileForm button[type="submit"]').click();
+    await expect(page.locator('#toast')).toContainText('角色已保存');
+
+    await page.locator('#btnEditCharacter').click();
+    await expect(page.locator('input[name="investigator.name"]')).toHaveValue('沈秋');
+    await expect(page.locator('.skill-row[data-skill-name="侦查"] [data-skill-kind="occupation"]')).toHaveValue('40');
+    await expect(page.locator('.skill-row[data-skill-name="侦查"] [data-skill-kind="interest"]')).toHaveValue('5');
   } finally {
     await fixture.close();
   }

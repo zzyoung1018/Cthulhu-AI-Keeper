@@ -266,6 +266,12 @@
           <h2>AI 检测日志</h2>
           <button class="ghost dialog-close" id="closeAiLogDialog" type="button">✕</button>
         </div>
+        <div class="ai-log-toolbar">
+          <label>阶段 <select id="aiLogStageFilter"><option value="">全部</option></select></label>
+          <label class="inline-toggle"><input id="aiLogWarningOnly" type="checkbox"> 只看警告</label>
+          <label class="inline-toggle"><input id="aiLogGroupByTask" type="checkbox"> 按任务分组</label>
+          <button class="ghost" id="exportAiLog" type="button">导出 JSON</button>
+        </div>
         <div class="ai-log-body" id="aiLogBody"></div>
       </div>
     </dialog>
@@ -282,6 +288,6 @@
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/app.js?v=20260616-ai-state-log"></script>
+    <script type="module" src="/app.js?v=20260616-e2e-log-tools"></script>
   </body>
 </html>

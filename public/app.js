@@ -51,6 +51,7 @@ const state = {
   messages: [],
   aiTasks: [],
   activeAiTask: null,
+  aiLogEntries: [],
   events: null
 };
 
@@ -134,6 +135,10 @@ const els = {
   btnAiLog: document.querySelector('#btnAiLog'),
   aiLogDialog: document.querySelector('#aiLogDialog'),
   aiLogBody: document.querySelector('#aiLogBody'),
+  aiLogStageFilter: document.querySelector('#aiLogStageFilter'),
+  aiLogWarningOnly: document.querySelector('#aiLogWarningOnly'),
+  aiLogGroupByTask: document.querySelector('#aiLogGroupByTask'),
+  exportAiLog: document.querySelector('#exportAiLog'),
   exportGame: document.querySelector('#exportGame'),
   toast: document.querySelector('#toast')
 };
@@ -606,75 +611,139 @@ function aiLogSummaryLines(entry) {
   return lines.length > 0 ? lines : ['无额外摘要'];
 }
 
-function renderAiLogEntries(logs = []) {
-  els.aiLogBody.innerHTML = '';
+function isAiLogWarning(entry) {
+  return Boolean(entry.rejectedKeys?.length ||
+    entry.rejected?.length ||
+    entry.error ||
+    /failed|skipped|rejected|fallback/.test(entry.stage || ''));
+}
+
+function aiLogTaskLabel(taskUid) {
+  return taskUid ? `任务 ${String(taskUid).slice(0, 8)}` : '未关联任务';
+}
+
+function renderAiLogStageOptions(logs = []) {
+  if (!els.aiLogStageFilter) return;
+  const selected = els.aiLogStageFilter.value;
+  els.aiLogStageFilter.replaceChildren();
+  const all = document.createElement('option');
+  all.value = '';
+  all.textContent = '全部';
+  els.aiLogStageFilter.append(all);
+
+  const stages = [...new Set(logs.map((entry) => entry.stage).filter(Boolean))]
+    .sort((left, right) => (aiLogStageLabels[left] || left).localeCompare(aiLogStageLabels[right] || right, 'zh-Hans-CN'));
+  for (const stage of stages) {
+    const option = document.createElement('option');
+    option.value = stage;
+    option.textContent = aiLogStageLabels[stage] || stage;
+    els.aiLogStageFilter.append(option);
+  }
+  els.aiLogStageFilter.value = stages.includes(selected) ? selected : '';
+}
+
+function filteredAiLogs() {
+  const stage = els.aiLogStageFilter?.value || '';
+  const warningsOnly = Boolean(els.aiLogWarningOnly?.checked);
+  return state.aiLogEntries.filter((entry) =>
+    (!stage || entry.stage === stage) &&
+    (!warningsOnly || isAiLogWarning(entry))
+  );
+}
+
+function renderAiLogEntry(entry) {
+  const item = document.createElement('article');
+  item.className = `ai-log-entry${isAiLogWarning(entry) ? ' warning' : ''}`;
+
+  const head = document.createElement('div');
+  head.className = 'ai-log-head';
+  const title = document.createElement('strong');
+  title.textContent = aiLogStageLabels[entry.stage] || entry.stage || '日志';
+  const time = document.createElement('time');
+  time.textContent = entry.time ? new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  head.append(title, time);
+  item.append(head);
+
+  const chips = document.createElement('div');
+  chips.className = 'ai-log-chips';
+  if (entry.stage) chips.append(chip(entry.stage, 'muted'));
+  if (entry.taskUid) chips.append(chip(aiLogTaskLabel(entry.taskUid)));
+  for (const key of eventNames(entry.validKeys || entry.keys || [])) chips.append(chip(key, 'ok'));
+  for (const key of eventNames(entry.rejectedKeys || entry.rejected || [])) chips.append(chip(`拒绝 ${key}`, 'warn'));
+  item.append(chips);
+
+  const summary = document.createElement('div');
+  summary.className = 'ai-log-summary';
+  for (const line of aiLogSummaryLines(entry)) {
+    const row = document.createElement('p');
+    row.textContent = line;
+    summary.append(row);
+  }
+  item.append(summary);
+
+  const detection = entry.detection || {};
+  const notes = Array.isArray(detection.detectionNotes) ? detection.detectionNotes : [];
+
+  if (notes.length > 0) {
+    const list = document.createElement('div');
+    list.className = 'ai-log-detections';
+    for (const note of notes) {
+      const row = document.createElement('div');
+      row.className = 'ai-log-detection';
+      row.textContent = detectionLine(note);
+      list.append(row);
+    }
+    item.append(list);
+  }
+
+  if (entry.rawResponseSnippet) {
+    const details = document.createElement('details');
+    details.className = 'ai-log-raw';
+    const summaryNode = document.createElement('summary');
+    summaryNode.textContent = '查看原始回复片段';
+    const snippet = document.createElement('pre');
+    snippet.className = 'ai-log-snippet';
+    snippet.textContent = entry.rawResponseSnippet;
+    details.append(summaryNode, snippet);
+    item.append(details);
+  }
+
+  return item;
+}
+
+function renderAiLogEntries() {
+  els.aiLogBody.replaceChildren();
+  const logs = filteredAiLogs();
   if (logs.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty compact-empty';
-    empty.textContent = '暂无 AI 检测日志';
+    empty.textContent = state.aiLogEntries.length ? '没有匹配的 AI 检测日志' : '暂无 AI 检测日志';
     els.aiLogBody.append(empty);
     return;
   }
 
-  for (const entry of [...logs].reverse()) {
-    const item = document.createElement('article');
-    const isWarning = entry.rejectedKeys?.length || entry.rejected?.length || /failed|skipped|rejected|fallback/.test(entry.stage || '');
-    item.className = `ai-log-entry${isWarning ? ' warning' : ''}`;
+  const ordered = [...logs].reverse();
+  if (!els.aiLogGroupByTask?.checked) {
+    for (const entry of ordered) els.aiLogBody.append(renderAiLogEntry(entry));
+    return;
+  }
 
-    const head = document.createElement('div');
-    head.className = 'ai-log-head';
-    const title = document.createElement('strong');
-    title.textContent = aiLogStageLabels[entry.stage] || entry.stage || '日志';
-    const time = document.createElement('time');
-    time.textContent = entry.time ? new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-    head.append(title, time);
-    item.append(head);
+  const groups = new Map();
+  for (const entry of ordered) {
+    const key = entry.taskUid || '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
 
-    const chips = document.createElement('div');
-    chips.className = 'ai-log-chips';
-    if (entry.stage) chips.append(chip(entry.stage, 'muted'));
-    if (entry.taskUid) chips.append(chip(`任务 ${String(entry.taskUid).slice(0, 8)}`));
-    for (const key of eventNames(entry.validKeys || entry.keys || [])) chips.append(chip(key, 'ok'));
-    for (const key of eventNames(entry.rejectedKeys || entry.rejected || [])) chips.append(chip(`拒绝 ${key}`, 'warn'));
-    item.append(chips);
-
-    const summary = document.createElement('div');
-    summary.className = 'ai-log-summary';
-    for (const line of aiLogSummaryLines(entry)) {
-      const row = document.createElement('p');
-      row.textContent = line;
-      summary.append(row);
-    }
-    item.append(summary);
-
-    const detection = entry.detection || {};
-    const notes = Array.isArray(detection.detectionNotes) ? detection.detectionNotes : [];
-
-    if (notes.length > 0) {
-      const list = document.createElement('div');
-      list.className = 'ai-log-detections';
-      for (const note of notes) {
-        const row = document.createElement('div');
-        row.className = 'ai-log-detection';
-        row.textContent = detectionLine(note);
-        list.append(row);
-      }
-      item.append(list);
-    }
-
-    if (entry.rawResponseSnippet) {
-      const details = document.createElement('details');
-      details.className = 'ai-log-raw';
-      const summaryNode = document.createElement('summary');
-      summaryNode.textContent = '查看原始回复片段';
-      const snippet = document.createElement('pre');
-      snippet.className = 'ai-log-snippet';
-      snippet.textContent = entry.rawResponseSnippet;
-      details.append(summaryNode, snippet);
-      item.append(details);
-    }
-
-    els.aiLogBody.append(item);
+  for (const [taskUid, entries] of groups) {
+    const group = document.createElement('section');
+    group.className = 'ai-log-task-group';
+    const heading = document.createElement('h3');
+    heading.className = 'ai-log-task-heading';
+    heading.textContent = `${aiLogTaskLabel(taskUid)} · ${entries.length} 条`;
+    group.append(heading);
+    for (const entry of entries) group.append(renderAiLogEntry(entry));
+    els.aiLogBody.append(group);
   }
 }
 
@@ -684,10 +753,34 @@ async function openAiLogDialog() {
   els.aiLogDialog.showModal();
   try {
     const payload = await api(`/api/rooms/${state.room.code}/ai-log?playerId=${encodeURIComponent(state.playerId)}`);
-    renderAiLogEntries(payload.logs || []);
+    state.aiLogEntries = payload.logs || [];
+    renderAiLogStageOptions(state.aiLogEntries);
+    renderAiLogEntries();
   } catch (error) {
     els.aiLogBody.textContent = error.message;
   }
+}
+
+function exportFilteredAiLogs() {
+  if (!state.room) return;
+  const logs = filteredAiLogs();
+  const blob = new Blob([JSON.stringify({
+    roomCode: state.room.code,
+    exportedAt: new Date().toISOString(),
+    filters: {
+      stage: els.aiLogStageFilter?.value || '',
+      warningsOnly: Boolean(els.aiLogWarningOnly?.checked),
+      groupByTask: Boolean(els.aiLogGroupByTask?.checked)
+    },
+    logs
+  }, null, 2)], { type: 'application/json' });
+  const link = document.createElement('a');
+  const href = URL.createObjectURL(blob);
+  link.href = href;
+  link.download = `dm-online-${state.room.code}-ai-log.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(href), 0);
+  toast(`已导出 ${logs.length} 条 AI 检测日志`);
 }
 
 function setConnection(status, text) {
@@ -769,7 +862,11 @@ function applyRoomPayload(payload) {
 
 function renderModules() {
   const current = state.selectedModuleId || els.moduleSelect.value;
-  els.moduleSelect.innerHTML = '<option value="">先上传或选择模组</option>';
+  els.moduleSelect.replaceChildren();
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '先上传或选择模组';
+  els.moduleSelect.append(placeholder);
   for (const module of state.modules) {
     const option = document.createElement('option');
     option.value = String(module.id);
@@ -818,19 +915,20 @@ function disconnectEvents() {
 }
 
 function renderPlayers() {
-  els.players.innerHTML = '';
+  els.players.replaceChildren();
   for (const participant of state.participants) {
     const node = document.createElement('div');
     node.className = participant.playerId === state.playerId ? 'player self' : 'player';
-    node.innerHTML = `
-      <div class="player-name"></div>
-      <div class="player-meta"></div>
-    `;
-    node.querySelector('.player-name').textContent = participant.characterName || participant.displayName;
-    node.querySelector('.player-meta').textContent = [
+    const name = document.createElement('div');
+    name.className = 'player-name';
+    name.textContent = participant.characterName || participant.displayName;
+    const meta = document.createElement('div');
+    meta.className = 'player-meta';
+    meta.textContent = [
       participant.characterName ? `${participant.displayName} · 已填写角色` : '未填写角色名',
       participant.isReady ? '已准备' : '未准备'
     ].join(' · ');
+    node.append(name, meta);
     els.players.append(node);
   }
 }
@@ -843,15 +941,18 @@ function messageClass(message) {
 }
 
 function renderMessages() {
-  els.chatLog.innerHTML = '';
+  els.chatLog.replaceChildren();
   if (!state.room) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.innerHTML = `
-      <div class="empty-mark">D20</div>
-      <h3>等待开桌</h3>
-      <p>创建或加入房间后，聊天记录和 AI DM 的回应会出现在这里。</p>
-    `;
+    const mark = document.createElement('div');
+    mark.className = 'empty-mark';
+    mark.textContent = 'D20';
+    const title = document.createElement('h3');
+    title.textContent = '等待开桌';
+    const copy = document.createElement('p');
+    copy.textContent = '创建或加入房间后，聊天记录和 AI DM 的回应会出现在这里。';
+    empty.append(mark, title, copy);
     els.chatLog.append(empty);
     return;
   }
@@ -864,11 +965,14 @@ function renderMessages() {
   if (state.messages.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.innerHTML = `
-      <div class="empty-mark">D20</div>
-      <h3>桌面已准备好</h3>
-      <p>发出第一段行动，AI DM 会接住这一幕。</p>
-    `;
+    const mark = document.createElement('div');
+    mark.className = 'empty-mark';
+    mark.textContent = 'D20';
+    const title = document.createElement('h3');
+    title.textContent = '桌面已准备好';
+    const copy = document.createElement('p');
+    copy.textContent = '发出第一段行动，AI DM 会接住这一幕。';
+    empty.append(mark, title, copy);
     els.chatLog.append(empty);
     return;
   }
@@ -877,21 +981,23 @@ function renderMessages() {
     const node = document.createElement('article');
     node.className = messageClass(message);
     node.dataset.id = message.id;
-    node.innerHTML = `
-      <div class="message-head">
-        <strong></strong>
-        <span class="message-type"></span>
-        <time></time>
-      </div>
-      <div class="message-body"></div>
-    `;
-    node.querySelector('strong').textContent = message.displayName;
-    node.querySelector('.message-type').textContent = messageTypeLabels[message.messageType] || message.messageType || 'IC';
-    node.querySelector('time').textContent = new Date(message.createdAt).toLocaleTimeString([], {
+    const head = document.createElement('div');
+    head.className = 'message-head';
+    const name = document.createElement('strong');
+    name.textContent = message.displayName;
+    const type = document.createElement('span');
+    type.className = 'message-type';
+    type.textContent = messageTypeLabels[message.messageType] || message.messageType || 'IC';
+    const time = document.createElement('time');
+    time.textContent = new Date(message.createdAt).toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit'
     });
-    node.querySelector('.message-body').textContent = message.content;
+    head.append(name, type, time);
+    const body = document.createElement('div');
+    body.className = 'message-body';
+    body.textContent = message.content;
+    node.append(head, body);
     els.chatLog.append(node);
   }
 
@@ -899,11 +1005,12 @@ function renderMessages() {
   if (checkMessage) {
     const action = document.createElement('div');
     action.className = 'continue-action';
-    action.innerHTML = `
-      <button class="primary continue-button" type="button" data-continue-from-check="${checkMessage.id}">
-        继续叙事
-      </button>
-    `;
+    const button = document.createElement('button');
+    button.className = 'primary continue-button';
+    button.type = 'button';
+    button.dataset.continueFromCheck = String(checkMessage.id);
+    button.textContent = '继续叙事';
+    action.append(button);
     els.chatLog.append(action);
   }
 
@@ -950,12 +1057,17 @@ function renderDerived(derived) {
     ['DB', derived.damageBonus],
     ['Build', derived.build]
   ];
-  els.derivedGrid.innerHTML = cards.map(([label, value]) => `
-    <div class="derived-card">
-      <span>${label} · ${derivedInfo[label] || ''}</span>
-      <strong>${value}</strong>
-    </div>
-  `).join('');
+  els.derivedGrid.replaceChildren();
+  for (const [label, value] of cards) {
+    const card = document.createElement('div');
+    card.className = 'derived-card';
+    const labelNode = document.createElement('span');
+    labelNode.textContent = `${label} · ${derivedInfo[label] || ''}`;
+    const valueNode = document.createElement('strong');
+    valueNode.textContent = String(value);
+    card.append(labelNode, valueNode);
+    els.derivedGrid.append(card);
+  }
 }
 
 function renderResourceInputs(sheet, derived) {
@@ -965,15 +1077,20 @@ function renderResourceInputs(sheet, derived) {
     ['san', 'SAN', 99],
     ['luck', 'Luck', 100]
   ];
-  els.resourceGrid.innerHTML = '';
+  els.resourceGrid.replaceChildren();
   for (const [key, labelText, max] of resources) {
     const label = document.createElement('label');
     label.className = 'resource-input';
-    label.innerHTML = `
-      <span>${labelText}</span>
-      <input type="number" min="0" max="${max}" step="1" name="status.${key}">
-    `;
-    label.querySelector('input').value = sheet.status?.[key] ?? derived[labelText === 'Luck' ? 'luck' : key];
+    const span = document.createElement('span');
+    span.textContent = labelText;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.max = String(max);
+    input.step = '1';
+    input.name = `status.${key}`;
+    input.value = sheet.status?.[key] ?? derived[labelText === 'Luck' ? 'luck' : key];
+    label.append(span, input);
     els.resourceGrid.append(label);
   }
 }
@@ -1021,18 +1138,27 @@ function resetCharacteristics() {
 }
 
 function renderCharacteristicInputs(sheet) {
-  els.characteristicsGrid.innerHTML = '';
+  els.characteristicsGrid.replaceChildren();
   const derived = calculateDerived(sheet.characteristics, sheet.status);
   for (const key of characteristicKeys) {
     const info = characteristicInfo[key] || {};
     const label = document.createElement('label');
     label.className = 'stat-input';
-    label.innerHTML = `
-      <span><strong>${key}</strong><small>${info.label || ''} · ${info.formula || ''}</small></span>
-      <input type="number" min="0" max="100" step="1" name="characteristics.${key}">
-    `;
-    label.querySelector('input').value = sheet.characteristics?.[key] ?? defaultCharacteristics[key];
-    label.querySelector('input').addEventListener('input', refreshCharacterDerived);
+    const text = document.createElement('span');
+    const strong = document.createElement('strong');
+    strong.textContent = key;
+    const small = document.createElement('small');
+    small.textContent = `${info.label || ''} · ${info.formula || ''}`;
+    text.append(strong, small);
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.max = '100';
+    input.step = '1';
+    input.name = `characteristics.${key}`;
+    input.value = sheet.characteristics?.[key] ?? defaultCharacteristics[key];
+    input.addEventListener('input', refreshCharacterDerived);
+    label.append(text, input);
     els.characteristicsGrid.append(label);
   }
   if (els.characteristicRollSummary) {
@@ -1188,7 +1314,7 @@ function buildSkillAllocationMap(sheet, sortedSkills, occSkills) {
 
 function renderSkills(sheet) {
   if (!els.skillsTable) return;
-  els.skillsTable.innerHTML = '';
+  els.skillsTable.replaceChildren();
   const occSkills = getOccupationSkills();
   const skills = Object.entries({ ...defaultSkills, ...(sheet.skills || {}) })
     .sort(([left], [right]) => left.localeCompare(right, 'zh-Hans-CN'));
@@ -1196,7 +1322,11 @@ function renderSkills(sheet) {
 
   const header = document.createElement('div');
   header.className = 'skill-row skill-row-header';
-  header.innerHTML = '<span>技能</span><span>初始</span><span>职业+</span><span>兴趣+</span><span>合计</span>';
+  for (const text of ['技能', '初始', '职业+', '兴趣+', '合计']) {
+    const cell = document.createElement('span');
+    cell.textContent = text;
+    header.append(cell);
+  }
   els.skillsTable.append(header);
 
   for (const [name, score] of skills) {
@@ -1207,16 +1337,33 @@ function renderSkills(sheet) {
     const allocation = allocations.get(name) || { occupation: 0, interest: Math.max(0, score - base) };
     row.dataset.skillName = name;
     row.dataset.base = String(base);
-    row.innerHTML = `
-      <span class="skill-name">${isOccSkill ? '★ ' : ''}</span>
-      <span class="skill-base">${base}</span>
-      <input class="skill-add" type="number" min="0" max="${skillCreationMax}" step="1" data-skill-kind="occupation" ${isOccSkill ? '' : 'disabled'}>
-      <input class="skill-add" type="number" min="0" max="${skillCreationMax}" step="1" data-skill-kind="interest">
-      <strong class="skill-total" data-skill-total></strong>
-    `;
-    row.querySelector('.skill-name').textContent = (isOccSkill ? '★ ' : '') + name;
-    row.querySelector('[data-skill-kind="occupation"]').value = isOccSkill ? allocation.occupation : 0;
-    row.querySelector('[data-skill-kind="interest"]').value = allocation.interest;
+    const nameCell = document.createElement('span');
+    nameCell.className = 'skill-name';
+    nameCell.textContent = (isOccSkill ? '★ ' : '') + name;
+    const baseCell = document.createElement('span');
+    baseCell.className = 'skill-base';
+    baseCell.textContent = String(base);
+    const occupationInput = document.createElement('input');
+    occupationInput.className = 'skill-add';
+    occupationInput.type = 'number';
+    occupationInput.min = '0';
+    occupationInput.max = String(skillCreationMax);
+    occupationInput.step = '1';
+    occupationInput.dataset.skillKind = 'occupation';
+    occupationInput.disabled = !isOccSkill;
+    occupationInput.value = isOccSkill ? allocation.occupation : 0;
+    const interestInput = document.createElement('input');
+    interestInput.className = 'skill-add';
+    interestInput.type = 'number';
+    interestInput.min = '0';
+    interestInput.max = String(skillCreationMax);
+    interestInput.step = '1';
+    interestInput.dataset.skillKind = 'interest';
+    interestInput.value = allocation.interest;
+    const total = document.createElement('strong');
+    total.className = 'skill-total';
+    total.dataset.skillTotal = '';
+    row.append(nameCell, baseCell, occupationInput, interestInput, total);
     row.querySelectorAll('[data-skill-kind]').forEach((input) => {
       input.addEventListener('input', () => {
         clampSkillAllocation(input);
@@ -1330,50 +1477,98 @@ function renderStatusPanel() {
     ['DB', derived.damageBonus],
     ['Build', derived.build]
   ];
-  els.statusCards.innerHTML = cards.map(([label, value]) => `
-    <div class="status-card">
-      <span>${label}${derivedInfo[label] ? ` · ${derivedInfo[label]}` : ''}</span>
-      <strong>${value}</strong>
-    </div>
-  `).join('') + `
-    <button class="status-card status-action-card" type="button" data-open-skill-allocations>
-      <span>技能加点</span>
-      <strong>查看</strong>
-    </button>
-  `;
+  els.statusCards.replaceChildren();
+  for (const [label, value] of cards) {
+    const card = document.createElement('div');
+    card.className = 'status-card';
+    const labelNode = document.createElement('span');
+    labelNode.textContent = `${label}${derivedInfo[label] ? ` · ${derivedInfo[label]}` : ''}`;
+    const valueNode = document.createElement('strong');
+    valueNode.textContent = String(value);
+    card.append(labelNode, valueNode);
+    els.statusCards.append(card);
+  }
+  const action = document.createElement('button');
+  action.className = 'status-card status-action-card';
+  action.type = 'button';
+  action.dataset.openSkillAllocations = '';
+  const actionLabel = document.createElement('span');
+  actionLabel.textContent = '技能加点';
+  const actionValue = document.createElement('strong');
+  actionValue.textContent = '查看';
+  action.append(actionLabel, actionValue);
+  els.statusCards.append(action);
 
   // 角色状态大弹窗
   els.btnCharSheet.hidden = !state.participant;
   renderCharSheetOverlay();
 }
 
-function skillAllocationSummaryHtml(usage) {
-  return `
-    <div class="skill-allocation-summary">
-      <span>职业：<strong>${usage.occupationName || '自定义'}</strong></span>
-      <span>职业点：<strong>${usage.remainingOcc}/${usage.occupationPoints}</strong></span>
-      <span>兴趣点：<strong>${usage.remainingInt}/${usage.interestPoints}</strong></span>
-    </div>
-  `;
+function labeledParagraph(label, value) {
+  const paragraph = document.createElement('p');
+  const strong = document.createElement('strong');
+  strong.textContent = `${label}：`;
+  paragraph.append(strong, document.createTextNode(value));
+  return paragraph;
 }
 
-function skillAllocationGridHtml(rows) {
-  return `
-    <div class="char-skill-allocation-grid">
-      <div class="char-skill-allocation-row allocation-header">
-        <span>技能</span><span>初始</span><span>职业+</span><span>兴趣+</span><span>合计</span>
-      </div>
-      ${rows.map((row) => `
-        <div class="char-skill-allocation-row${row.isOccupationSkill ? ' occupation-skill' : ''}">
-          <span>${row.isOccupationSkill ? '★ ' : ''}${row.name}</span>
-          <span>${row.base}</span>
-          <span>${row.occupation}</span>
-          <span>${row.interest}</span>
-          <strong>${row.total}</strong>
-        </div>
-      `).join('')}
-    </div>
-  `;
+function appendHeading(container, text) {
+  const heading = document.createElement('h3');
+  heading.textContent = text;
+  container.append(heading);
+}
+
+function renderSkillAllocationSummary(usage) {
+  const summary = document.createElement('div');
+  summary.className = 'skill-allocation-summary';
+  const entries = [
+    ['职业', usage.occupationName || '自定义'],
+    ['职业点', `${usage.remainingOcc}/${usage.occupationPoints}`],
+    ['兴趣点', `${usage.remainingInt}/${usage.interestPoints}`]
+  ];
+  for (const [label, value] of entries) {
+    const item = document.createElement('span');
+    item.append(document.createTextNode(`${label}：`));
+    const strong = document.createElement('strong');
+    strong.textContent = value;
+    item.append(strong);
+    summary.append(item);
+  }
+  return summary;
+}
+
+function renderSkillAllocationGrid(rows) {
+  const grid = document.createElement('div');
+  grid.className = 'char-skill-allocation-grid';
+  const header = document.createElement('div');
+  header.className = 'char-skill-allocation-row allocation-header';
+  for (const text of ['技能', '初始', '职业+', '兴趣+', '合计']) {
+    const cell = document.createElement('span');
+    cell.textContent = text;
+    header.append(cell);
+  }
+  grid.append(header);
+
+  for (const row of rows) {
+    const node = document.createElement('div');
+    node.className = `char-skill-allocation-row${row.isOccupationSkill ? ' occupation-skill' : ''}`;
+    const name = document.createElement('span');
+    name.textContent = `${row.isOccupationSkill ? '★ ' : ''}${row.name}`;
+    for (const value of [name, row.base, row.occupation, row.interest]) {
+      if (value instanceof Node) {
+        node.append(value);
+      } else {
+        const cell = document.createElement('span');
+        cell.textContent = String(value);
+        node.append(cell);
+      }
+    }
+    const total = document.createElement('strong');
+    total.textContent = String(row.total);
+    node.append(total);
+    grid.append(node);
+  }
+  return grid;
 }
 
 function renderCharSheetOverlay(options = {}) {
@@ -1390,51 +1585,101 @@ function renderCharSheetOverlay(options = {}) {
     ? `${inv.name || state.participant.characterName || '调查员'} · 技能加点`
     : inv.name || state.participant.characterName || '调查员';
 
+  els.charSheetBody.replaceChildren();
   if (options.focusSkills) {
-    els.charSheetBody.innerHTML = [
-      '<div class="char-overview">',
-      inv.occupation ? `<p><strong>职业：</strong>${inv.occupation}</p>` : '',
-      '</div>',
-      skillAllocationSummaryHtml(skillUsage),
-      skillAllocationGridHtml(skillRows)
-    ].join('\n');
+    const overview = document.createElement('div');
+    overview.className = 'char-overview';
+    if (inv.occupation) overview.append(labeledParagraph('职业', inv.occupation));
+    els.charSheetBody.append(
+      overview,
+      renderSkillAllocationSummary(skillUsage),
+      renderSkillAllocationGrid(skillRows)
+    );
     return;
   }
 
-  const html = [
-    '<div class="char-overview">',
-    inv.occupation ? `<p><strong>职业：</strong>${inv.occupation}</p>` : '',
-    inv.age ? `<p><strong>年龄：</strong>${inv.age}</p>` : '',
-    inv.residence ? `<p><strong>居住地：</strong>${inv.residence}</p>` : '',
-    '</div>',
-    '<div class="char-stats-grid">',
-    ...['STR','CON','SIZ','DEX','APP','INT','POW','EDU','Luck'].map(k =>
-      `<div class="char-stat"><span>${characteristicDisplayName(k)}</span><strong>${chars[k] ?? '-'}</strong></div>`
-    ),
-    '</div>',
-    '<div class="char-resources">',
-    `<div>HP <strong>${st.hp ?? derived.currentHp}/${derived.hp}</strong></div>`,
-    `<div>MP <strong>${st.mp ?? derived.currentMp}/${derived.mp}</strong></div>`,
-    `<div>SAN <strong>${st.san ?? derived.currentSan}/${derived.san}</strong></div>`,
-    `<div>Luck <strong>${st.luck ?? derived.currentLuck}</strong></div>`,
-    `<div>MOV · ${derivedInfo.MOV} <strong>${derived.mov}</strong></div>`,
-    `<div>DB · ${derivedInfo.DB} <strong>${derived.damageBonus}</strong></div>`,
-    `<div>Build · ${derivedInfo.Build} <strong>${derived.build}</strong></div>`,
-    '</div>',
-    '<h3>技能</h3>',
-    skillAllocationSummaryHtml(skillUsage),
-    '<div class="char-skills-grid">',
-    ...skillRows.map((row) =>
-      `<div class="char-skill-row"><span>${row.name}</span><strong>${row.total}</strong><span class="skill-levels">/ ${row.half} / ${row.fifth}</span></div>`
-    ),
-    '</div>',
-    sheet.weapons?.length ? `<h3>武器</h3><div class="char-weapons">${sheet.weapons.map(w => `<div>${w.name} · ${w.damage}${w.range ? ' · '+w.range : ''}</div>`).join('')}</div>` : '',
-    sheet.equipment ? `<h3>装备</h3><p>${sheet.equipment}</p>` : '',
-    sheet.relationships ? `<h3>人际关系</h3><p>${sheet.relationships}</p>` : '',
-    sheet.beliefs ? `<h3>思想与信念</h3><p>${sheet.beliefs}</p>` : '',
-  ].join('\n');
+  const overview = document.createElement('div');
+  overview.className = 'char-overview';
+  if (inv.occupation) overview.append(labeledParagraph('职业', inv.occupation));
+  if (inv.age) overview.append(labeledParagraph('年龄', inv.age));
+  if (inv.residence) overview.append(labeledParagraph('居住地', inv.residence));
 
-  els.charSheetBody.innerHTML = html;
+  const stats = document.createElement('div');
+  stats.className = 'char-stats-grid';
+  for (const key of ['STR','CON','SIZ','DEX','APP','INT','POW','EDU','Luck']) {
+    const stat = document.createElement('div');
+    stat.className = 'char-stat';
+    const label = document.createElement('span');
+    label.textContent = characteristicDisplayName(key);
+    const value = document.createElement('strong');
+    value.textContent = String(chars[key] ?? '-');
+    stat.append(label, value);
+    stats.append(stat);
+  }
+
+  const resources = document.createElement('div');
+  resources.className = 'char-resources';
+  const resourceRows = [
+    ['HP', `${st.hp ?? derived.currentHp}/${derived.hp}`],
+    ['MP', `${st.mp ?? derived.currentMp}/${derived.mp}`],
+    ['SAN', `${st.san ?? derived.currentSan}/${derived.san}`],
+    ['Luck', st.luck ?? derived.currentLuck],
+    [`MOV · ${derivedInfo.MOV}`, derived.mov],
+    [`DB · ${derivedInfo.DB}`, derived.damageBonus],
+    [`Build · ${derivedInfo.Build}`, derived.build]
+  ];
+  for (const [label, value] of resourceRows) {
+    const row = document.createElement('div');
+    row.append(document.createTextNode(`${label} `));
+    const strong = document.createElement('strong');
+    strong.textContent = String(value);
+    row.append(strong);
+    resources.append(row);
+  }
+
+  const skillGrid = document.createElement('div');
+  skillGrid.className = 'char-skills-grid';
+  for (const row of skillRows) {
+    const node = document.createElement('div');
+    node.className = 'char-skill-row';
+    const name = document.createElement('span');
+    name.textContent = row.name;
+    const total = document.createElement('strong');
+    total.textContent = String(row.total);
+    const levels = document.createElement('span');
+    levels.className = 'skill-levels';
+    levels.textContent = `/ ${row.half} / ${row.fifth}`;
+    node.append(name, total, levels);
+    skillGrid.append(node);
+  }
+
+  els.charSheetBody.append(overview, stats, resources);
+  appendHeading(els.charSheetBody, '技能');
+  els.charSheetBody.append(renderSkillAllocationSummary(skillUsage), skillGrid);
+
+  if (sheet.weapons?.length) {
+    appendHeading(els.charSheetBody, '武器');
+    const weapons = document.createElement('div');
+    weapons.className = 'char-weapons';
+    for (const weapon of sheet.weapons) {
+      const row = document.createElement('div');
+      row.textContent = [weapon.name, weapon.damage, weapon.range].filter(Boolean).join(' · ');
+      weapons.append(row);
+    }
+    els.charSheetBody.append(weapons);
+  }
+
+  for (const [label, value] of [
+    ['装备', sheet.equipment],
+    ['人际关系', sheet.relationships],
+    ['思想与信念', sheet.beliefs]
+  ]) {
+    if (!value) continue;
+    appendHeading(els.charSheetBody, label);
+    const paragraph = document.createElement('p');
+    paragraph.textContent = value;
+    els.charSheetBody.append(paragraph);
+  }
 }
 
 function setTextField(name, value) {
@@ -1522,7 +1767,11 @@ function renderProfileForm() {
 
   try {
     if (!els.occupationSelect) return toast('缺少 #occupationSelect');
-    els.occupationSelect.innerHTML = '<option value="">自定义</option>';
+    els.occupationSelect.replaceChildren();
+    const custom = document.createElement('option');
+    custom.value = '';
+    custom.textContent = '自定义';
+    els.occupationSelect.append(custom);
     for (const [name] of Object.entries(occupationTemplates)) {
       if (!name) continue;
       const opt = document.createElement('option');
@@ -1774,6 +2023,10 @@ document.querySelector('#closeCreateDialog').addEventListener('click', closeCrea
 document.querySelector('#closeJoinDialog').addEventListener('click', closeJoinDialog);
 document.querySelector('#closeSettingsDialog').addEventListener('click', closeSettingsDialog);
 document.querySelector('#closeAiLogDialog').addEventListener('click', () => els.aiLogDialog.close());
+els.aiLogStageFilter?.addEventListener('change', renderAiLogEntries);
+els.aiLogWarningOnly?.addEventListener('change', renderAiLogEntries);
+els.aiLogGroupByTask?.addEventListener('change', renderAiLogEntries);
+els.exportAiLog?.addEventListener('click', exportFilteredAiLogs);
 
 // 房间码点击复制
 els.codeRow.addEventListener('click', async () => {
