@@ -479,6 +479,11 @@ test('persists AI task lifecycle, idempotency, and cancellation permissions', ()
     assert.ok(completed.completedAt);
     assert.equal(database.getRoomState(room.code).activeAiTask, null);
 
+    const processedMessage = database.markAiTriggerProcessed({ taskUid: first.task.uid });
+    assert.equal(processedMessage.id, message.id);
+    assert.equal(processedMessage.aiProcessedTaskUid, first.task.uid);
+    assert.ok(processedMessage.aiProcessedAt);
+
     const regenerated = database.createRegenerationTask({
       code: room.code,
       playerId: 'keeper',
@@ -486,6 +491,40 @@ test('persists AI task lifecycle, idempotency, and cancellation permissions', ()
     });
     assert.equal(regenerated.created, true);
     assert.equal(regenerated.task.triggerMessageId, message.id);
+  } finally {
+    cleanup();
+  }
+});
+
+test('persists AI detection logs in SQLite', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const module = createModule(database, 'keeper');
+    const { room } = database.createRoom({
+      name: 'AI Logs',
+      playerId: 'keeper',
+      displayName: 'Keeper',
+      moduleId: module.id
+    });
+
+    const log = database.createAiLog({
+      code: room.code,
+      taskUid: 'task-1',
+      stage: 'structured-events',
+      entry: {
+        stage: 'structured-events',
+        taskUid: 'task-1',
+        validKeys: ['required_checks'],
+        detection: { inferredRequiredReason: 'generic-侦查' }
+      }
+    });
+
+    assert.ok(log.id > 0);
+    const logs = database.listAiLogs({ code: room.code });
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0].stage, 'structured-events');
+    assert.equal(logs[0].taskUid, 'task-1');
+    assert.deepEqual(logs[0].validKeys, ['required_checks']);
   } finally {
     cleanup();
   }

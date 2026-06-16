@@ -84,6 +84,208 @@ function summarizeRecentCheckRolls(diceRolls = []) {
   return checks.length > 0 ? JSON.stringify(checks, null, 2) : '';
 }
 
+function parseSceneState(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
+}
+
+function compactText(value, limit = 360) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
+function normalizeMatchText(value) {
+  return String(value || '').toLowerCase();
+}
+
+function collectContextTerms({ room, messages = [], playerStates = [] }) {
+  const sceneState = parseSceneState(room.sceneState);
+  const terms = new Set();
+  for (const value of [
+    sceneState.currentScene,
+    sceneState.currentSceneId,
+    sceneState.sceneId,
+    sceneState.currentLocation,
+    sceneState.description
+  ]) {
+    if (value) terms.add(normalizeMatchText(value));
+  }
+
+  for (const npc of Object.values(sceneState.npcStates || {})) {
+    for (const value of [npc.id, npc.npcId, npc.name, npc.location, npc.disposition]) {
+      if (value) terms.add(normalizeMatchText(value));
+    }
+  }
+
+  for (const state of playerStates || []) {
+    for (const npc of state.knownNpcs || []) {
+      for (const value of [npc.id, npc.npcId, npc.name, npc.location, npc.disposition]) {
+        if (value) terms.add(normalizeMatchText(value));
+      }
+    }
+    for (const clue of state.discoveredClues || []) {
+      for (const value of [clue.id, clue.clueId, clue.source, clue.content]) {
+        if (value) terms.add(normalizeMatchText(value));
+      }
+    }
+  }
+
+  for (const message of messages.slice(-10)) {
+    for (const match of String(message.content || '').matchAll(/[\p{Script=Han}\w]{2,16}/gu)) {
+      terms.add(normalizeMatchText(match[0]));
+    }
+  }
+
+  return { sceneState, terms: [...terms].filter(Boolean) };
+}
+
+function relevanceScore(parts, terms) {
+  const text = normalizeMatchText(parts.filter(Boolean).join(' '));
+  if (!text) return 0;
+  let score = 0;
+  for (const term of terms) {
+    if (term && text.includes(term)) score += Math.min(20, Math.max(2, term.length));
+  }
+  return score;
+}
+
+function pickRelevant(items, scoreItem, limit) {
+  return [...(items || [])]
+    .map((item, index) => ({ item, index, score: scoreItem(item) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, limit)
+    .map(({ item }) => item);
+}
+
+function buildModuleJsonContext({ room, messages, playerStates, moduleJson }) {
+  if (!moduleJson) return '';
+
+  const mi = moduleJson.module_info || {};
+  const ko = moduleJson.keeper_overview || {};
+  const rules = moduleJson.ai_dm_global_rules || {};
+  const { sceneState, terms } = collectContextTerms({ room, messages, playerStates });
+  const currentSceneText = [
+    sceneState.currentScene,
+    sceneState.currentSceneId,
+    sceneState.sceneId,
+    sceneState.currentLocation
+  ].filter(Boolean).map(normalizeMatchText);
+
+  const scenes = pickRelevant(moduleJson.scenes || [], (scene) => {
+    let score = relevanceScore([
+      scene.scene_id,
+      scene.name,
+      scene.player_visible_description,
+      scene.default_ai_dm_instruction,
+      scene.when_players_enter,
+      scene.when_players_search
+    ], terms);
+    if (currentSceneText.some((value) =>
+      value && [scene.scene_id, scene.name].some((field) => {
+        const normalized = normalizeMatchText(field);
+        return normalized && (normalized.includes(value) || value.includes(normalized));
+      })
+    )) {
+      score += 120;
+    }
+    return score;
+  }, 4);
+
+  const npcs = pickRelevant(moduleJson.npcs || [], (npc) => {
+    let score = relevanceScore([
+      npc.npc_id,
+      npc.name,
+      npc.role,
+      npc.player_visible_info,
+      npc.first_impression,
+      npc.personality,
+      npc.dialogue_style
+    ], terms);
+    const known = Object.values(sceneState.npcStates || {}).some((stateNpc) =>
+      (normalizeMatchText(npc.name) && normalizeMatchText(stateNpc.name || stateNpc.id).includes(normalizeMatchText(npc.name))) ||
+      (normalizeMatchText(npc.npc_id) && normalizeMatchText(stateNpc.id || stateNpc.npcId).includes(normalizeMatchText(npc.npc_id)))
+    );
+    if (known) score += 100;
+    return score;
+  }, 6);
+
+  const clues = pickRelevant(moduleJson.clues || [], (clue) => {
+    let score = relevanceScore([
+      clue.clue_id,
+      clue.name,
+      clue.scene_id,
+      clue.reveal_condition,
+      clue.player_visible_text
+    ], terms);
+    if (currentSceneText.some((value) => {
+      const sceneId = normalizeMatchText(clue.scene_id);
+      return value && sceneId && sceneId.includes(value);
+    })) score += 80;
+    return score;
+  }, 6);
+
+  const checks = pickRelevant(moduleJson.checks || [], (check) => {
+    let score = relevanceScore([
+      check.check_id,
+      check.scene_id,
+      check.skill,
+      check.trigger,
+      check.ai_dm_instruction,
+      check.success,
+      check.failure
+    ], terms);
+    if (currentSceneText.some((value) => {
+      const sceneId = normalizeMatchText(check.scene_id);
+      return value && sceneId && sceneId.includes(value);
+    })) score += 80;
+    return score;
+  }, 6);
+
+  const sceneStateJson = Object.keys(sceneState).length > 0 ? JSON.stringify(sceneState, null, 2) : '';
+
+  return [
+    '=== 模组结构化数据（已按当前场景排序） ===',
+    `标题：${mi.title || room.moduleTitle}`,
+    `时代：${mi.time_period || ''}`,
+    `地点：${mi.location || ''}`,
+    `主题：${(mi.themes || []).join('、')}`,
+    `氛围：${mi.tone || ''}`,
+    '',
+    `调查目标：${ko.investigation_goal || ''}`,
+    `主要冲突：${ko.main_conflict || ''}`,
+    sceneStateJson ? `当前房间场景状态（JSON）：\n${sceneStateJson}` : '',
+    '',
+    '相关场景：',
+    ...scenes.map((scene) =>
+      `[${scene.scene_id}] ${scene.name}: ${compactText(scene.player_visible_description || scene.default_ai_dm_instruction)}`
+    ),
+    '',
+    '相关 NPC：',
+    ...npcs.map((npc) =>
+      `[${npc.npc_id}] ${npc.name} (${npc.role || ''}): ${compactText(npc.player_visible_info || npc.first_impression)}`
+    ),
+    '',
+    '相关线索：',
+    ...clues.map((clue) =>
+      `[${clue.clue_id}] ${clue.name || ''}: ${compactText(clue.player_visible_text || clue.reveal_condition)}`
+    ),
+    '',
+    '相关检定：',
+    ...checks.map((check) =>
+      `[${check.check_id || check.skill}] ${check.skill || ''} ${check.difficulty || ''}: ${compactText(check.trigger || check.ai_dm_instruction)}`
+    ),
+    '',
+    'AI DM 规则：',
+    ...(rules.must_follow || []).map((rule, index) => `${index + 1}. ${rule}`),
+    rules.style ? `叙述：${rules.style.narration_length || ''}, 语气：${rules.style.tone || ''}` : ''
+  ].filter(Boolean).join('\n');
+}
+
 export async function* streamChatCompletion(aiConfig, messages) {
   if (!isAiConfigured(aiConfig)) {
     if (aiConfig.localFallback) {
@@ -189,40 +391,7 @@ export function buildDmMessages({ room, participants, messages, diceRolls = [], 
     })), null, 2);
   }
 
-  // 模组 JSON 摘要（提取关键字段）
-  let moduleJsonContext = '';
-  if (moduleJson) {
-    const mi = moduleJson.module_info || {};
-    const ko = moduleJson.keeper_overview || {};
-    const rules = moduleJson.ai_dm_global_rules || {};
-
-    moduleJsonContext = [
-      '=== 模组结构化数据 ===',
-      `标题：${mi.title || room.moduleTitle}`,
-      `时代：${mi.time_period || ''}`,
-      `地点：${mi.location || ''}`,
-      `主题：${(mi.themes || []).join('、')}`,
-      `氛围：${mi.tone || ''}`,
-      '',
-      `调查目标：${ko.investigation_goal || ''}`,
-      `主要冲突：${ko.main_conflict || ''}`,
-      '',
-      '当前场景数据：',
-      // Include current active scenes
-      ...(moduleJson.scenes || []).slice(0, 3).map((s) =>
-        `[${s.scene_id}] ${s.name}: ${s.player_visible_description || ''}`
-      ),
-      '',
-      '当前 NPC：',
-      ...(moduleJson.npcs || []).slice(0, 5).map((n) =>
-        `[${n.npc_id}] ${n.name} (${n.role || ''}): ${n.player_visible_info || ''}`
-      ),
-      '',
-      'AI DM 规则：',
-      ...(rules.must_follow || []).map((r, i) => `${i + 1}. ${r}`),
-      rules.style ? `叙述：${rules.style.narration_length || ''}, 语气：${rules.style.tone || ''}` : ''
-    ].filter(Boolean).join('\n');
-  }
+  const moduleJsonContext = buildModuleJsonContext({ room, messages, playerStates, moduleJson });
 
   const recent = messages
     .filter((message) => !['OOC', 'PRIVATE'].includes(message.messageType))

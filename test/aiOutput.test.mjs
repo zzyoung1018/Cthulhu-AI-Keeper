@@ -189,6 +189,43 @@ test('infers social opposed check when AI omits structured events for deception'
   assert.match(enhanced.narrative, /触发社交检定/);
 });
 
+test('uses AI task triggerMessageId instead of the latest queued action', () => {
+  const roomState = {
+    messages: [
+      {
+        id: 30,
+        authorType: 'player',
+        messageType: 'ACTION',
+        playerId: 'player1',
+        content: '我骗陈友说自己是远房亲戚。'
+      },
+      {
+        id: 31,
+        authorType: 'player',
+        messageType: 'ACTION',
+        playerId: 'player2',
+        content: '我搜索柜台下面有没有暗格。'
+      }
+    ],
+    moduleJson: {
+      npcs: [{ name: '陈友', npc_id: 'npc_chen_you' }]
+    }
+  };
+
+  const enhanced = enhanceStructuredEvents({
+    events: {},
+    narrative: '陈友眯起眼睛看着你。',
+    roomState,
+    triggerMessageId: 30
+  });
+
+  assert.equal(enhanced.diagnostics.latestActionId, 30);
+  assert.equal(enhanced.events.opposed_checks.length, 1);
+  assert.equal(enhanced.events.opposed_checks[0].activePlayerId, 'player1');
+  assert.equal(enhanced.events.opposed_checks[0].activeSkill, '话术');
+  assert.equal(enhanced.events.required_checks, undefined);
+});
+
 test('strips decisive outcome when model provides opposed checks', () => {
   const roomState = {
     messages: [

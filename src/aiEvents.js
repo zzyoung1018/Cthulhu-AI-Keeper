@@ -61,6 +61,140 @@ export function createEventApplier({ database, hub, addAiLog }) {
     }
   }
 
+  function normalizeRecordKey(value) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^\p{Letter}\p{Number}_:-]+/gu, '')
+      .slice(0, 96);
+  }
+
+  function generatedClueId(clue) {
+    if (clue.clueId) return normalizeRecordKey(clue.clueId);
+    return normalizeRecordKey([
+      clue.source,
+      String(clue.content || '').slice(0, 80)
+    ].filter(Boolean).join(':')) || `clue-${Date.now()}`;
+  }
+
+  function clueKey(item) {
+    if (typeof item === 'string') return normalizeRecordKey(item);
+    return normalizeRecordKey(item?.id || item?.clueId || [item?.source, item?.content].filter(Boolean).join(':'));
+  }
+
+  function npcKey(item) {
+    if (typeof item === 'string') return normalizeRecordKey(item);
+    return normalizeRecordKey(item?.id || item?.npcId || item?.name || item?.npcName);
+  }
+
+  function mergeRecord(list, record, keyFn, limit = 100) {
+    const current = Array.isArray(list) ? list : [];
+    const key = keyFn(record);
+    const kept = current.filter((item) => keyFn(item) !== key);
+    return [...kept, record].slice(-limit);
+  }
+
+  function mergePlayerMeta(code, playerId, updater) {
+    const { participant } = database.getParticipant(code, playerId);
+    const meta = { ...(participant.playerMeta || {}) };
+    updater(meta, participant);
+    database.updatePlayerMeta({ code, playerId, meta });
+  }
+
+  function persistClue(code, clue, message, participants) {
+    const targets = clue.privateTo
+      ? participants.filter((participant) => participant.playerId === clue.privateTo)
+      : participants;
+    if (targets.length === 0) {
+      addAiLog(code, {
+        stage: 'clue-state-skipped',
+        reason: 'target-not-found',
+        privateTo: clue.privateTo || '',
+        source: clue.source || ''
+      });
+      return;
+    }
+
+    const record = {
+      id: generatedClueId(clue),
+      source: clue.source || '',
+      content: String(clue.content || '').trim(),
+      privateTo: clue.privateTo || '',
+      messageId: message?.id || null,
+      revealedAt: new Date().toISOString()
+    };
+
+    for (const target of targets) {
+      mergePlayerMeta(code, target.playerId, (meta) => {
+        meta.discoveredClues = mergeRecord(meta.discoveredClues, record, clueKey, 160);
+      });
+    }
+
+    addAiLog(code, {
+      stage: 'clue-state-updated',
+      clueId: record.id,
+      targets: targets.map((target) => target.playerId),
+      source: record.source
+    });
+  }
+
+  function npcRecordFromChange(npc) {
+    return {
+      id: normalizeRecordKey(npc.npcId || npc.npcName),
+      npcId: npc.npcId || '',
+      name: npc.npcName,
+      disposition: npc.disposition || '',
+      location: npc.location || '',
+      notes: npc.notes || '',
+      isPresent: typeof npc.isPresent === 'boolean' ? npc.isPresent : true,
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  function persistNpcState(code, npc, participants) {
+    const record = npcRecordFromChange(npc);
+    if (!record.id || !record.name) return;
+
+    for (const participant of participants) {
+      mergePlayerMeta(code, participant.playerId, (meta) => {
+        meta.knownNpcs = mergeRecord(meta.knownNpcs, record, npcKey, 160);
+      });
+    }
+
+    try {
+      const room = database.getRoomByCode(code);
+      const current = parseSceneState(room.sceneState);
+      const npcStates = { ...(current.npcStates || {}) };
+      const previous = npcStates[record.id] || {};
+      npcStates[record.id] = {
+        ...previous,
+        ...Object.fromEntries(Object.entries(record).filter(([, value]) => value !== '')),
+        updatedAt: record.updatedAt
+      };
+      database.forceUpdateSceneState(room.id, {
+        ...current,
+        npcStates,
+        updatedAt: record.updatedAt
+      });
+    } catch (error) {
+      addAiLog(code, {
+        stage: 'npc-state-scene-skipped',
+        npcName: npc.npcName,
+        error: error.message
+      });
+    }
+
+    addAiLog(code, {
+      stage: 'npc-state-updated',
+      npcId: record.id,
+      npcName: record.name,
+      disposition: record.disposition,
+      location: record.location,
+      isPresent: record.isPresent
+    });
+  }
+
   function applyRequiredCheck(code, check, defaultPlayerId) {
     const targetPlayerId = check.targetPlayerId || defaultPlayerId;
     if (!targetPlayerId) return;
@@ -279,19 +413,29 @@ export function createEventApplier({ database, hub, addAiLog }) {
     // Reveal clues as system messages
     if (Array.isArray(events.clues_revealed)) {
       for (const clue of events.clues_revealed) {
-        const clueMsg = database.createMessage({
-          code,
-          authorType: 'system',
-          messageType: 'SYSTEM',
-          displayName: '线索',
-          content: `🔍 ${clue.source ? `[${clue.source}] ` : ''}${clue.content}`,
-          status: 'complete',
-          privateTarget: clue.privateTo || ''
-        });
-        if (clue.privateTo) {
-          hub.sendTo(code, clue.privateTo, 'message_created', { message: clueMsg });
-        } else {
-          hub.broadcast(code, 'message_created', { message: clueMsg });
+        try {
+          const clueMsg = database.createMessage({
+            code,
+            authorType: 'system',
+            messageType: 'SYSTEM',
+            displayName: '线索',
+            content: `🔍 ${clue.source ? `[${clue.source}] ` : ''}${clue.content}`,
+            status: 'complete',
+            privateTarget: clue.privateTo || ''
+          });
+          if (clue.privateTo) {
+            hub.sendTo(code, clue.privateTo, 'message_created', { message: clueMsg });
+          } else {
+            hub.broadcast(code, 'message_created', { message: clueMsg });
+          }
+          persistClue(code, clue, clueMsg, state.participants || []);
+        } catch (clueError) {
+          console.error('[ai-output] clue reveal failed:', clueError.message);
+          addAiLog(code, {
+            stage: 'clue-state-failed',
+            source: clue.source || '',
+            error: clueError.message
+          });
         }
       }
     }
@@ -354,21 +498,31 @@ export function createEventApplier({ database, hub, addAiLog }) {
     // NPC state changes
     if (Array.isArray(events.npc_state_changes) && events.npc_state_changes.length > 0) {
       for (const npc of events.npc_state_changes) {
-        const npcMsg = database.createMessage({
-          code,
-          authorType: 'system',
-          messageType: 'SYSTEM',
-          displayName: 'NPC',
-          content: [
-            `👤 ${npc.npcName}`,
-            npc.disposition ? `态度：${npc.disposition}` : '',
-            npc.location ? `位置：${npc.location}` : '',
-            npc.isPresent === false ? '（已离场）' : '',
-            npc.notes || ''
-          ].filter(Boolean).join(' · '),
-          status: 'complete'
-        });
-        hub.broadcast(code, 'message_created', { message: npcMsg });
+        try {
+          const npcMsg = database.createMessage({
+            code,
+            authorType: 'system',
+            messageType: 'SYSTEM',
+            displayName: 'NPC',
+            content: [
+              `👤 ${npc.npcName}`,
+              npc.disposition ? `态度：${npc.disposition}` : '',
+              npc.location ? `位置：${npc.location}` : '',
+              npc.isPresent === false ? '（已离场）' : '',
+              npc.notes || ''
+            ].filter(Boolean).join(' · '),
+            status: 'complete'
+          });
+          hub.broadcast(code, 'message_created', { message: npcMsg });
+          persistNpcState(code, npc, state.participants || []);
+        } catch (npcError) {
+          console.error('[ai-output] npc state failed:', npc.npcName, npcError.message);
+          addAiLog(code, {
+            stage: 'npc-state-failed',
+            npcName: npc.npcName || '',
+            error: npcError.message
+          });
+        }
       }
     }
 

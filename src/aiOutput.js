@@ -58,6 +58,7 @@ const EVENT_SCHEMAS = {
       type: 'object',
       required: ['content'],
       properties: {
+        clueId: 'string',
         content: 'string',
         privateTo: 'string',
         source: 'string'
@@ -80,6 +81,7 @@ const EVENT_SCHEMAS = {
       type: 'object',
       required: ['npcName'],
       properties: {
+        npcId: 'string',
         npcName: 'string',
         disposition: 'string',
         location: 'string',
@@ -788,11 +790,25 @@ function inferNpcName({ actionText, narrative, roomState }) {
   return '';
 }
 
-function latestPlayerAction(roomState = {}) {
+function latestPlayerAction(roomState = {}, { triggerMessageId = null } = {}) {
   const messages = roomState.messages || [];
+  if (triggerMessageId) {
+    const triggered = messages.find((message) => Number(message.id) === Number(triggerMessageId));
+    if (!triggered || triggered.authorType !== 'player' || triggered.messageType !== 'ACTION' || !triggered.playerId) {
+      return null;
+    }
+    if (triggered.aiProcessedTaskUid) return null;
+    return triggered;
+  }
+
   const action = [...messages]
     .reverse()
-    .find((message) => message.authorType === 'player' && message.messageType === 'ACTION' && message.playerId);
+    .find((message) =>
+      message.authorType === 'player' &&
+      message.messageType === 'ACTION' &&
+      message.playerId &&
+      !message.aiProcessedTaskUid
+    );
   if (!action) return null;
 
   // 如果这条 ACTION 之后已经有 DM 回复或检定系统消息，
@@ -837,8 +853,8 @@ function buildInferredRequiredCheck({ action, rule }) {
   };
 }
 
-function inferOpposedChecks({ events, narrative, roomState }) {
-  const action = latestPlayerAction(roomState);
+function inferOpposedChecks({ events, narrative, roomState, triggerMessageId = null }) {
+  const action = latestPlayerAction(roomState, { triggerMessageId });
   const rule = action ? classifyOpposedAction(action.content) : null;
   if (!action || !rule) {
     return { checks: [], reason: '', action: null, detection: null };
@@ -874,8 +890,8 @@ function inferOpposedChecks({ events, narrative, roomState }) {
   };
 }
 
-function inferRequiredChecks({ events, roomState }) {
-  const action = latestPlayerAction(roomState);
+function inferRequiredChecks({ events, roomState, triggerMessageId = null }) {
+  const action = latestPlayerAction(roomState, { triggerMessageId });
   if (!action) {
     return { checks: [], reason: '', action: null, detection: null };
   }
@@ -1045,7 +1061,7 @@ function sanitizeNarrative(narrative, inferredOpposedChecks, inferredRequiredChe
   };
 }
 
-export function enhanceStructuredEvents({ events, narrative, roomState } = {}) {
+export function enhanceStructuredEvents({ events, narrative, roomState, triggerMessageId = null } = {}) {
   const enhancedEvents = { ...(events || {}) };
   const diagnostics = {
     inferredRequiredChecks: [],
@@ -1075,7 +1091,7 @@ export function enhanceStructuredEvents({ events, narrative, roomState } = {}) {
     diagnostics.droppedIncompleteRequiredChecks = before - enhancedEvents.required_checks.length;
   }
 
-  const inferred = inferOpposedChecks({ events: enhancedEvents, narrative, roomState });
+  const inferred = inferOpposedChecks({ events: enhancedEvents, narrative, roomState, triggerMessageId });
   diagnostics.latestActionId = inferred.action?.id || null;
   diagnostics.inferredReason = inferred.reason;
   diagnostics.inferredOpposedDetection = inferred.detection;
@@ -1094,7 +1110,7 @@ export function enhanceStructuredEvents({ events, narrative, roomState } = {}) {
     delete enhancedEvents.required_checks;
   }
 
-  const inferredRequired = inferRequiredChecks({ events: enhancedEvents, roomState });
+  const inferredRequired = inferRequiredChecks({ events: enhancedEvents, roomState, triggerMessageId });
   diagnostics.latestActionId = diagnostics.latestActionId || inferredRequired.action?.id || null;
   diagnostics.inferredRequiredReason = inferredRequired.reason;
   diagnostics.inferredRequiredDetection = inferredRequired.detection;

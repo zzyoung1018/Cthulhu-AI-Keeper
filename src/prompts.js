@@ -200,7 +200,7 @@ export function buildStructuredOutputPrompt() {
         { targetPlayerId: '<playerId>', fieldPath: 'status.san', newValue: 55, reason: '目睹恐怖场景' }
       ],
       clues_revealed: [
-        { content: '壁炉后方有一个暗格', privateTo: '', source: '侦查成功' }
+        { clueId: 'fireplace_hidden_compartment', content: '壁炉后方有一个暗格', privateTo: '', source: '侦查成功' }
       ],
       scene_change: {
         newScene: '阁楼',
@@ -228,7 +228,8 @@ export function buildStructuredOutputPrompt() {
     '- 潜行/偷窃 opposed_checks.activeSkill 用潜行/妙手/乔装，passiveSkill 用 NPC 的侦查或聆听',
     '- 攻击 opposed_checks.activeSkill 用格斗或射击，passiveSkill 用闪避或侦查',
     '- 如果最近正式行动是“继续”，必须读取“最近检定结果（JSON）”，按 passed/winner 推进剧情；成功时可揭示对应线索或改变 NPC 态度，失败时给出合理后果，不要重复同一 required_checks/opposed_checks',
-    '- clues_revealed 中 privateTo 为空表示所有玩家可见',
+    '- clues_revealed 中 clueId 优先使用模组 clues.clue_id；privateTo 为空表示所有玩家可见。成功检定揭示线索时必须返回 clues_revealed，后端会写入调查员 discoveredClues',
+    '- npc_state_changes 用于记录 NPC 态度、位置、是否离场；后端会写入 knownNpcs 和场景 npcStates',
     '- 如果没有某个类型的事件，可以省略该字段'
   ].join('\n');
 }

@@ -65,16 +65,19 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     hub.broadcast(code, 'ai_task_updated', { task });
   }
 
-  // 每房间 AI 诊断日志
-  const _aiLogs = new Map();
-
   function addAiLog(code, entry) {
-    const logs = _aiLogs.get(code) || [];
-    logs.push({ ...entry, time: new Date().toISOString() });
-    if (logs.length > 50) logs.shift();
-    _aiLogs.set(code, logs);
-    // 同时输出到 console
-    console.error(`[ai-log ${code}] ${entry.stage}: ${JSON.stringify(entry.summary || entry)}`);
+    const payload = { ...entry, time: new Date().toISOString() };
+    try {
+      database.createAiLog({
+        code,
+        taskUid: payload.taskUid || '',
+        stage: payload.stage || 'log',
+        entry: payload
+      });
+    } catch (logError) {
+      console.error('[ai-log] failed to persist:', logError.message);
+    }
+    console.error(`[ai-log ${code}] ${payload.stage}: ${JSON.stringify(payload.summary || payload)}`);
   }
 
   const { applyStructuredEvents } = createEventApplier({ database, hub, addAiLog });
@@ -189,7 +192,12 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
       // Parse and validate structured events
       const { narrative, events } = extractStructuredEvents(content);
-      const enhanced = enhanceStructuredEvents({ events, narrative, roomState: state });
+      const enhanced = enhanceStructuredEvents({
+        events,
+        narrative,
+        roomState: state,
+        triggerMessageId: task?.triggerMessageId || null
+      });
       const { valid, rejected, issues } = validateStructuredEvents(enhanced.events);
 
       // 诊断日志
@@ -239,6 +247,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         console.error('[ai-output] round record failed:', roundError.message);
       }
 
+      database.markAiTriggerProcessed({ taskUid });
       addAiLog(code, { stage: 'dm-completed', taskUid });
       setAiTaskStatus(code, taskUid, 'COMPLETED');
       hub.broadcast(code, 'message_completed', { message: completed });
@@ -578,7 +587,6 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         // 房主离开 → 房间结束
         if (room.ownerPlayerId === playerId) {
           const ended = database.setRoomStatus({ code, playerId, status: 'ENDED' });
-          _aiLogs.delete(code);
           const msg = createSystemMessage(code, '房主离开了，房间已结束。');
           const state = database.getRoomState(code);
           hub.broadcast(code, 'room_state', state);
@@ -605,10 +613,6 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
           playerId,
           status: assertString(body.status, 'status', 20)
         });
-        // 房间结束或归档时清理诊断日志
-        if (room.status === 'ENDED' || room.status === 'ARCHIVED') {
-          _aiLogs.delete(code);
-        }
         const message = createSystemMessage(code, `房间状态变更为：${STATUS_LABELS[room.status] || room.status}`);
         const state = database.getRoomState(code);
         hub.broadcast(code, 'room_state', state);
@@ -979,8 +983,8 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         const playerId = assertString(url.searchParams.get('playerId'), 'playerId', 80);
         const { room } = database.getParticipant(code, playerId);
         if (room.ownerPlayerId !== playerId) throw new HttpError(403, 'Only the room owner can view AI logs');
-        const logs = _aiLogs.get(code) || [];
-        sendJson(response, 200, { logs: logs.slice(-30) });
+        const logs = database.listAiLogs({ code, limit: 80 });
+        sendJson(response, 200, { logs: logs.slice(-50) });
         return;
       }
 

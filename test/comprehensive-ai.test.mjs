@@ -611,6 +611,69 @@ test('事件应用：scene_change 不覆盖 summary_update，并写入 sceneStat
   }
 });
 
+test('事件应用：线索和 NPC 状态写入结构化玩家/房间状态', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const { room, task } = createTestRoom(database);
+    database.joinRoom({ code: room.code, playerId: 'p2', displayName: 'Player 2' });
+    const logs = [];
+    const hubEvents = [];
+    const hub = {
+      broadcast: (code, event, payload) => hubEvents.push({ code, event, payload }),
+      sendTo: (code, playerId, event, payload) => hubEvents.push({ code, playerId, event, payload })
+    };
+    const { applyStructuredEvents } = createEventApplier({
+      database,
+      hub,
+      addAiLog: (_code, entry) => logs.push(entry)
+    });
+
+    applyStructuredEvents(room.code, task.uid, {
+      clues_revealed: [
+        {
+          clueId: 'register_alteration',
+          source: '侦查成功',
+          content: '登记簿上王建国的房间号被涂改过。'
+        },
+        {
+          clueId: 'private_whisper',
+          source: '心理学成功',
+          content: '顾振兴说到三楼时明显停顿。',
+          privateTo: 'p1'
+        }
+      ],
+      npc_state_changes: [
+        {
+          npcId: 'guzhenxing',
+          npcName: '顾振兴',
+          disposition: '紧张',
+          location: '招待所大厅',
+          isPresent: true,
+          notes: '频繁擦汗'
+        }
+      ]
+    }, null, MODULE_JSON);
+
+    const p1 = database.getParticipant(room.code, 'p1').participant;
+    const p2 = database.getParticipant(room.code, 'p2').participant;
+    assert.ok(p1.discoveredClues.some((clue) => clue.id === 'register_alteration'));
+    assert.ok(p1.discoveredClues.some((clue) => clue.id === 'private_whisper'));
+    assert.ok(p2.discoveredClues.some((clue) => clue.id === 'register_alteration'));
+    assert.equal(p2.discoveredClues.some((clue) => clue.id === 'private_whisper'), false);
+    assert.ok(p1.knownNpcs.some((npc) => npc.id === 'guzhenxing' && npc.disposition === '紧张'));
+    assert.ok(p2.knownNpcs.some((npc) => npc.id === 'guzhenxing' && npc.location === '招待所大厅'));
+
+    const sceneState = JSON.parse(database.getRoomByCode(room.code).sceneState);
+    assert.equal(sceneState.npcStates.guzhenxing.name, '顾振兴');
+    assert.equal(sceneState.npcStates.guzhenxing.disposition, '紧张');
+    assert.ok(logs.some((entry) => entry.stage === 'clue-state-updated' && entry.clueId === 'register_alteration'));
+    assert.ok(logs.some((entry) => entry.stage === 'npc-state-updated' && entry.npcId === 'guzhenxing'));
+    assert.ok(hubEvents.some((entry) => entry.event === 'message_created' && entry.payload.message.displayName === '线索'));
+  } finally {
+    cleanup();
+  }
+});
+
 test('事件应用：NPC 技能非法时回退角色默认值并继续对抗检定', () => {
   const { database, cleanup } = withDb();
   try {

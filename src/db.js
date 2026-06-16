@@ -159,6 +159,8 @@ function rowToMessage(row) {
     status: row.status,
     privateTarget: row.private_target || '',
     isRolledBack: Boolean(row.is_rolled_back),
+    aiProcessedTaskUid: row.ai_processed_task_uid || '',
+    aiProcessedAt: row.ai_processed_at || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -197,6 +199,24 @@ function rowToAiTask(row) {
     updatedAt: row.updated_at,
     startedAt: row.started_at || '',
     completedAt: row.completed_at || ''
+  };
+}
+
+function rowToAiLog(row) {
+  if (!row) return null;
+  let entry = {};
+  try {
+    entry = JSON.parse(row.summary_json || '{}');
+  } catch {
+    entry = {};
+  }
+  return {
+    id: row.id,
+    roomId: row.room_id,
+    taskUid: row.task_uid || entry.taskUid || '',
+    stage: row.stage || entry.stage || 'log',
+    time: entry.time || row.created_at,
+    ...entry
   };
 }
 
@@ -317,6 +337,8 @@ export function createDatabase(dbPath) {
       display_name TEXT NOT NULL,
       content TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'complete',
+      ai_processed_task_uid TEXT NOT NULL DEFAULT '',
+      ai_processed_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -371,6 +393,15 @@ export function createDatabase(dbPath) {
       UNIQUE(room_id, idempotency_key)
     );
 
+    CREATE TABLE IF NOT EXISTS ai_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+      task_uid TEXT NOT NULL DEFAULT '',
+      stage TEXT NOT NULL,
+      summary_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS round_states (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -391,6 +422,7 @@ export function createDatabase(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_character_history_participant ON character_history(participant_id, created_at, id);
     CREATE INDEX IF NOT EXISTS idx_ai_tasks_room_created ON ai_tasks(room_id, created_at, id);
     CREATE INDEX IF NOT EXISTS idx_ai_tasks_status ON ai_tasks(room_id, status, id);
+    CREATE INDEX IF NOT EXISTS idx_ai_logs_room_created ON ai_logs(room_id, created_at, id);
     CREATE INDEX IF NOT EXISTS idx_modules_owner ON modules(owner_player_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_module_segments_module ON module_segments(module_id, sort_order);
   `);
@@ -447,6 +479,12 @@ export function createDatabase(dbPath) {
   }
   if (!hasColumn('messages', 'is_rolled_back')) {
     db.exec('ALTER TABLE messages ADD COLUMN is_rolled_back INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!hasColumn('messages', 'ai_processed_task_uid')) {
+    db.exec("ALTER TABLE messages ADD COLUMN ai_processed_task_uid TEXT NOT NULL DEFAULT ''");
+  }
+  if (!hasColumn('messages', 'ai_processed_at')) {
+    db.exec('ALTER TABLE messages ADD COLUMN ai_processed_at TEXT');
   }
   if (!hasColumn('rooms', 'scene_state')) {
     db.exec("ALTER TABLE rooms ADD COLUMN scene_state TEXT NOT NULL DEFAULT '{}'");
@@ -544,6 +582,13 @@ export function createDatabase(dbPath) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     updateMessage: db.prepare('UPDATE messages SET content = ?, status = ?, updated_at = ? WHERE id = ?'),
+    markMessageAiProcessed: db.prepare(`
+      UPDATE messages
+      SET ai_processed_task_uid = ?,
+          ai_processed_at = ?,
+          updated_at = ?
+      WHERE id = ? AND message_type = 'ACTION'
+    `),
     getMessageById: db.prepare('SELECT * FROM messages WHERE id = ?'),
     listMessages: db.prepare(`
       SELECT * FROM messages
@@ -595,6 +640,17 @@ export function createDatabase(dbPath) {
       ORDER BY created_at DESC, id DESC
       LIMIT ?
     `),
+    createAiLog: db.prepare(`
+      INSERT INTO ai_logs (room_id, task_uid, stage, summary_json, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `),
+    listAiLogs: db.prepare(`
+      SELECT * FROM ai_logs
+      WHERE room_id = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `),
+    clearAiLogs: db.prepare('DELETE FROM ai_logs WHERE room_id = ?'),
     updateAiTaskStatus: db.prepare(`
       UPDATE ai_tasks
       SET status = ?,
@@ -1062,6 +1118,14 @@ export function createDatabase(dbPath) {
       return rowToMessage(statements.getMessageById.get(id));
     },
 
+    markAiTriggerProcessed({ taskUid }) {
+      const task = rowToAiTask(statements.getAiTaskByUid.get(taskUid));
+      if (!task?.triggerMessageId) return null;
+      const timestamp = now();
+      statements.markMessageAiProcessed.run(task.uid, timestamp, timestamp, task.triggerMessageId);
+      return rowToMessage(statements.getMessageById.get(task.triggerMessageId));
+    },
+
     createDiceRoll({ code, playerId, rollType, expression, label = '', isPrivate = false, result }) {
       const { room, participant } = this.getParticipant(code, playerId);
       const created = now();
@@ -1098,6 +1162,46 @@ export function createDatabase(dbPath) {
         created
       );
       return { task: rowToAiTask(statements.getAiTaskByUid.get(uid)), created: true };
+    },
+
+    createAiLog({ code, taskUid = '', stage = 'log', entry = {} }) {
+      const room = ensureRoom(code);
+      const created = entry.time || now();
+      const payload = {
+        ...entry,
+        stage,
+        taskUid: taskUid || entry.taskUid || '',
+        time: created
+      };
+      const result = statements.createAiLog.run(
+        room.id,
+        payload.taskUid,
+        stage,
+        JSON.stringify(payload),
+        created
+      );
+      return rowToAiLog({
+        id: Number(result.lastInsertRowid),
+        room_id: room.id,
+        task_uid: payload.taskUid,
+        stage,
+        summary_json: JSON.stringify(payload),
+        created_at: created
+      });
+    },
+
+    listAiLogs({ code, limit = 80 }) {
+      const room = ensureRoom(code);
+      const cappedLimit = Math.max(1, Math.min(Number(limit) || 80, 300));
+      return statements.listAiLogs
+        .all(room.id, cappedLimit)
+        .map(rowToAiLog)
+        .reverse();
+    },
+
+    clearAiLogs(code) {
+      const room = ensureRoom(code);
+      statements.clearAiLogs.run(room.id);
     },
 
     getAiTask(taskUid) {
