@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-16 19:20 CST
+Last updated: 2026-06-16 23:11 CST
 
 ## Current State
 
@@ -12,20 +12,20 @@ Last updated: 2026-06-16 19:20 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `9a89c6a feat: add ai preflight check validation`
-- Latest deployed app commit: `9a89c6a feat: add ai preflight check validation`
-- Deployment verified on 2026-06-16 19:19 CST: systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
+- Latest completed local app commit: `5055948 fix: harden ai checks and rollback side effects`
+- Latest deployed app commit: `5055948 fix: harden ai checks and rollback side effects`
+- Deployment verified on 2026-06-16 23:10 CST: systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
 - Local worktree is clean.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
-## Recent Commits
+## Recent App Commits
 
+- `5055948` fix: harden ai checks and rollback side effects
+- `da39b3e` chore: checkpoint before bug optimization pass
+- `3d3817f` docs: update handoff after ai preflight checks
 - `9a89c6a` feat: add ai preflight check validation
 - `158b688` chore: checkpoint before ai preflight checks
-- `e6efdf7` docs: update handoff after ai status ui
-- `3c3583a` feat: clarify ai queue and log status
-- `ae9c104` chore: checkpoint before ai status ui
 - `a9fc6aa` docs: update handoff after bug audit
 - `96d8f3d` fix: validate private message targets
 - `ee06284` chore: checkpoint before bug audit fixes
@@ -39,17 +39,17 @@ Do not write server credentials into committed files. Use the conversation conte
 
 ```text
 src/
-  app.js           (1106 lines) — HTTP routes, room lifecycle, AI orchestration
-  aiOutput.js      (1553 lines) — AI JSON extraction, validation, detection inference
-  aiEvents.js       (551 lines) — applies AI structured events to rolls/state/summary
+  app.js           (1147 lines) — HTTP routes, room lifecycle, AI orchestration
+  aiOutput.js      (1676 lines) — AI JSON extraction, validation, detection inference
+  aiEvents.js       (566 lines) — applies AI structured events to rolls/state/summary
   aiClient.js       (430 lines) — streaming client and scene-aware AI context assembly
-  prompts.js        (243 lines) — system/user/structured-output prompts
-  db.js            (1350 lines) — SQLite schema, migrations, row mappers, queries
+  prompts.js        (250 lines) — system/user/structured-output prompts
+  db.js            (1360 lines) — SQLite schema, migrations, row mappers, queries
   character.js      (368 lines) — CoC 7e sheet normalization and skill lookup
   dice.js           (441 lines) — CoC 7e dice, checks, opposed checks, luck/pushed rolls
   moduleParser.js   (347 lines) — JSON module validation and segment extraction
   playerState.js    (123 lines) — structured player state sent to AI
-  rounds.js          (77 lines) — AI round snapshots and rollback
+  rounds.js          (90 lines) — AI round snapshots and rollback
   privateHub.js      (63 lines) — player-specific SSE delivery
 
 public/
@@ -57,10 +57,10 @@ public/
 
 test/
   comprehensive-ai.test.mjs (765 lines) — full AI detection and event coverage
-  aiOutput.test.mjs         (757 lines) — parser/validator/inference regressions
+  aiOutput.test.mjs         (835 lines) — parser/validator/inference regressions
   frontend.e2e.mjs          (556 lines) — Playwright browser coverage for visible controls
-  app.test.mjs              (731 lines) — API integration tests
-  db.test.mjs               (774 lines) — persistence tests
+  app.test.mjs              (741 lines) — API integration tests
+  db.test.mjs               (797 lines) — persistence tests
   fixtures/
     comprehensive-test-module.json — reusable CoC 7e test module
 ```
@@ -299,6 +299,49 @@ Verification after `9a89c6a`:
 - Server systemd/Nginx/health checks — OK
 - Public deployment audit — OK, room `TKUWBF`, `aiConfigured: true`
 
+### AI Check Hardening / Rollback Side Effects (`5055948`)
+
+Implemented another reliability pass focused on lowering AI check mistakes during real play.
+
+AI structured-event validation:
+
+- `validateStructuredEvents()` now validates array events item by item. If one item is bad and another is valid, the valid item is kept and only the bad item is dropped.
+- This applies to schema errors, invalid state-change paths, invalid required-check difficulties, invalid opposed-check `contestType`, and room-aware failures such as missing players, unknown skills, invalid private clue targets, or hallucinated NPCs.
+- Bad array items are recorded in `issues`; partial recovery is recorded in `warnings`.
+- `required_checks.difficulty` now normalizes accepted variants (`NORMAL`, `REGULAR`, `HARD`, `EXTREME`, plus common Chinese labels). Invalid difficulties drop only that check.
+- `opposed_checks.contestType` is normalized to lowercase and inferred from the active skill when omitted.
+
+AI check inference:
+
+- Model-provided checks only count as "model-provided" if they are actually executable in the room.
+- If the model returns a complete but unusable check (for example a nonexistent skill or hallucinated NPC), backend inference can still add the correct required/opposed check from the latest ACTION.
+- Added regressions proving:
+  - Invalid model `opposed_checks` for a nonexistent NPC are dropped while backend infers the valid NPC opposed check.
+  - Invalid model `required_checks` with a nonexistent skill are dropped while backend infers the valid `侦查` check.
+
+Prompt hardening:
+
+- DM system prompt now states that all dice rolls, check results, and opposed winners are server-owned.
+- Structured-output prompt now explicitly forbids self-generated `d100` results, fixes the allowed JSON top-level keys, and tells the model not to invent unknown player IDs, NPC names, or skill names.
+- Check-continuation prompt now tells the model not to rewrite or reroll server dice, and to use `clues_revealed` / `npc_state_changes` when continuing from successful checks.
+
+Rollback side effects:
+
+- `applyStructuredEvents()` now returns applied side-effect message IDs and dice-roll IDs.
+- Preflight and AI-applied check rolls are stored in round `rollbackRefs`.
+- SQLite `dice_rolls` now has `is_rolled_back`; list/export state filters rolled-back dice.
+- `computeRollback()` now marks the DM message, structured-event system messages, preflight check messages, and related dice rolls as rolled back.
+- Regression coverage verifies that rolling back a preflight AI round removes the visible check message, DM message, and dice roll from room state.
+
+Verification after `5055948`:
+- Local `npm run check`
+- Local `npm test` — 114/114 passed
+- Local `npm run test:e2e` — 9/9 passed
+- Server `npm run check`
+- Server `npm test` — 114/114 passed
+- Server `systemctl restart dm-online`, `nginx -t`, `/api/health`, and `systemctl is-active dm-online` — OK
+- Public deployment audit — OK, room `YF9WQA`, `aiConfigured: true`
+
 ## 2026-06-16 Code Review Notes
 
 Historical review note retained for context. The old high-value items around structured clue/NPC persistence, explicit action lifecycle, scene-aware context, persistent AI logs, visible log tooling, and browser coverage have now been implemented.
@@ -309,6 +352,8 @@ Current AI behavior detection is much stronger than the original playtest report
 - The continuation loop caused by reusing the same player ACTION has been fixed by skipping already-processed actions.
 - AI-written check-marker text is stripped before backend marker injection, preventing duplicate visible prompts.
 - Common high-risk checks can now happen before AI narration, reducing cases where AI narrates a result before the server rolls.
+- If the model returns unusable structured checks, backend inference can now rescue the round instead of treating bad JSON as "model-provided".
+- AI rollback now hides related system check messages and dice rolls, not only the DM message.
 
 The remaining improvements are now mostly about deeper durability, UI ergonomics, and reducing future maintenance cost.
 
@@ -413,21 +458,21 @@ AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restore
 - Character snapshots (sheet + revision)
 - Story summary
 - Scene state
-- Marks round and messages as rolled back
+- Marks round, DM message, structured-event system messages, preflight check messages, and related dice rolls as rolled back
 
 ## Verification
 
 Local:
 ```bash
-npm run check     # passed on 2026-06-16 19:17 CST
-npm test          # 111/111 passed on 2026-06-16 19:17 CST
-npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-16 19:17 CST
+npm run check     # passed on 2026-06-16 23:09 CST
+npm test          # 114/114 passed on 2026-06-16 23:09 CST
+npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-16 23:10 CST
 ```
 
 Server:
 ```bash
 cd /opt/dm-online && npm run check
-cd /opt/dm-online && npm test                  # 111/111 passed
+cd /opt/dm-online && npm test                  # 114/114 passed
 systemctl restart dm-online
 curl -fsS http://127.0.0.1:4173/api/health     # ok: true, aiConfigured: true
 systemctl is-active dm-online                    # active
@@ -437,7 +482,7 @@ nginx -t                                         # successful
 Public deployment audit:
 ```bash
 npm run audit:deployment -- http://8.153.147.137
-# ok: true, aiConfigured: true, roomCode: TKUWBF
+# ok: true, aiConfigured: true, roomCode: YF9WQA
 ```
 
 ## Deployment Commands
@@ -490,7 +535,6 @@ DEPLOYMENT_AUDIT_AI_TIMEOUT_MS=180000 npm run audit:deployment -- --require-ai h
 
 ## Potential Follow-Ups
 
-- Deploy local commits `e426d16` and `4716b92` to the server, then run server-side `npm test`, restart `dm-online`, and audit health.
 - Add AI log export into `GET /api/rooms/:code/export?format=json` if long playtests need portable diagnostics.
 - Tune module check matching with newer real playtest logs from `reports/` after another session.
 - Cache NPC candidates per room/task (currently rebuilt every AI call in `npcCandidates()`).
