@@ -6,4 +6,5 @@ data/
 *.db-shm
 *.db-wal
 coverage/
+test-results/
 npm-debug.log*

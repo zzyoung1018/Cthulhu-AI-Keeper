@@ -31,6 +31,19 @@ body {
   color: var(--text);
 }
 
+.js-error-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 99999;
+  padding: 10px;
+  background: #8f1d1d;
+  color: #fff;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
 body::before {
   content: "";
   position: fixed;
@@ -1204,14 +1217,18 @@ dialog::backdrop {
 }
 
 .ai-log-entry {
-  padding: 10px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(19, 22, 26, 0.72);
 }
 
+.ai-log-entry.warning {
+  border-color: rgba(215, 173, 95, 0.42);
+  background: rgba(36, 31, 20, 0.72);
+}
+
 .ai-log-head,
-.ai-log-meta,
 .ai-log-detection {
   display: flex;
   align-items: center;
@@ -1227,15 +1244,56 @@ dialog::backdrop {
 }
 
 .ai-log-head time,
-.ai-log-meta,
 .ai-log-detection {
   color: var(--muted);
   font-size: 0.76rem;
 }
 
-.ai-log-meta {
+.ai-log-chips {
+  display: flex;
+  gap: 6px;
   margin-top: 6px;
   flex-wrap: wrap;
+}
+
+.ai-log-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid rgba(111, 145, 184, 0.32);
+  border-radius: 999px;
+  background: rgba(111, 145, 184, 0.1);
+  color: var(--text);
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.ai-log-chip.ok {
+  border-color: rgba(99, 184, 129, 0.34);
+  background: rgba(99, 184, 129, 0.11);
+}
+
+.ai-log-chip.warn {
+  border-color: rgba(215, 173, 95, 0.42);
+  background: rgba(215, 173, 95, 0.12);
+}
+
+.ai-log-chip.muted {
+  color: var(--muted);
+}
+
+.ai-log-summary {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.ai-log-summary p {
+  margin: 0;
 }
 
 .ai-log-detections {
@@ -1251,6 +1309,16 @@ dialog::backdrop {
   border-radius: 6px;
   background: rgba(111, 145, 184, 0.07);
   overflow-wrap: anywhere;
+}
+
+.ai-log-raw {
+  margin-top: 8px;
+}
+
+.ai-log-raw summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.76rem;
 }
 
 .ai-log-snippet {

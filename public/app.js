@@ -1,7 +1,8 @@
 window.onerror = function(msg, url, line) {
-  document.body.insertAdjacentHTML('beforeend',
-    '<div style=\"position:fixed;top:0;left:0;right:0;background:red;color:#fff;padding:10px;z-index:99999;font-size:14px\">' +
-    'JS错误: ' + msg + ' (行' + line + ')</div>');
+  const banner = document.createElement('div');
+  banner.className = 'js-error-banner';
+  banner.textContent = `JS错误: ${msg} (行${line})`;
+  document.body.append(banner);
 };
 
 function createPlayerId() {
@@ -167,6 +168,33 @@ const aiTaskLabels = {
   COMPLETED: 'AI 完成',
   FAILED: 'AI 失败',
   CANCELLED: 'AI 已取消'
+};
+
+const aiLogStageLabels = {
+  'structured-events': '结构化事件检测',
+  'apply-events': '执行结构化事件',
+  'rejected-events': '事件被拒绝',
+  'dm-completed': 'AI 回复完成',
+  'dm-failed': 'AI 回复失败',
+  'intro-completed': '开场介绍完成',
+  'intro-failed': '开场介绍失败',
+  'npc-skill-fallback': 'NPC 技能回退',
+  'clue-state-updated': '线索写入状态',
+  'clue-state-skipped': '线索未写入',
+  'clue-state-failed': '线索写入失败',
+  'npc-state-updated': 'NPC 状态写入',
+  'npc-state-scene-skipped': 'NPC 场景状态未写入',
+  'npc-state-failed': 'NPC 状态写入失败'
+};
+
+const aiLogEventLabels = {
+  required_checks: '必要检定',
+  opposed_checks: '对抗检定',
+  proposed_state_changes: '人物状态',
+  clues_revealed: '线索',
+  scene_change: '场景',
+  npc_state_changes: 'NPC',
+  summary_update: '摘要'
 };
 
 const activeAiStatuses = ['QUEUED', 'RETRIEVING', 'GENERATING', 'STREAMING', 'VALIDATING'];
@@ -515,6 +543,69 @@ function formatConfidence(value) {
   return `${Math.round(number * 100)}%`;
 }
 
+function eventNames(keys = []) {
+  return keys.map((key) => aiLogEventLabels[key] || key);
+}
+
+function chip(text, className = '') {
+  const node = document.createElement('span');
+  node.className = ['ai-log-chip', className].filter(Boolean).join(' ');
+  node.textContent = text;
+  return node;
+}
+
+function detectionLine(note) {
+  const source = {
+    model: '模型返回',
+    generic: '通用规则',
+    module: '模组规则',
+    backend: '后端规则'
+  }[note.source] || note.source || '检测';
+  const kind = note.kind === 'opposed' ? '对抗' : note.kind === 'required' ? '必要' : (note.kind || '事件');
+  return [
+    `${source} · ${kind}`,
+    note.skill ? `技能 ${note.skill}` : '',
+    note.passiveSkill ? `对手 ${note.passiveSkill}` : '',
+    note.target ? `目标 ${note.target}` : '',
+    note.difficulty ? `难度 ${note.difficulty}` : '',
+    note.ruleId ? `规则 ${note.ruleId}` : '',
+    `置信度 ${formatConfidence(note.confidence)}`,
+    Array.isArray(note.notes) && note.notes.length ? `依据 ${note.notes.join('/')}` : ''
+  ].filter(Boolean).join(' · ');
+}
+
+function aiLogSummaryLines(entry) {
+  const detection = entry.detection || {};
+  const lines = [];
+
+  if (entry.stage === 'structured-events') {
+    lines.push(`模型 JSON：${entry.hasJsonBlock ? '有' : '无'}；有效事件：${eventNames(entry.validKeys || []).join('、') || '无'}`);
+    if (entry.enhancedEventKeys?.length) lines.push(`后端增强后事件：${eventNames(entry.enhancedEventKeys).join('、')}`);
+    if (detection.inferredReason) lines.push(`后端补充对抗检定：${detection.inferredReason}`);
+    if (detection.inferredRequiredReason) lines.push(`后端补充必要检定：${detection.inferredRequiredReason}`);
+    if (detection.droppedRequiredChecksForOpposedAction) {
+      lines.push(`因对抗优先，丢弃 required_checks ${detection.droppedRequiredChecksForOpposedAction} 个`);
+    }
+    if (detection.strippedActionSuggestions) lines.push('已删除 AI 回复末尾的行动建议');
+    if (detection.strippedDecisiveOutcome) lines.push('已截断检定前不应提前宣布的结果');
+  } else if (entry.stage === 'apply-events') {
+    lines.push(`执行事件：${eventNames(entry.keys || []).join('、') || '无'}`);
+  } else if (entry.stage === 'rejected-events') {
+    lines.push(`拒绝事件：${eventNames(entry.rejected || []).join('、') || '无'}`);
+  } else if (entry.stage === 'clue-state-updated') {
+    lines.push(`线索 ${entry.clueId || '未命名'} 已写入：${(entry.targets || []).join('、') || '无目标'}`);
+  } else if (entry.stage === 'npc-state-updated') {
+    lines.push(`NPC ${entry.npcName || entry.npcId || '未命名'} 已更新：${[entry.disposition, entry.location, entry.isPresent === false ? '离场' : '在场'].filter(Boolean).join(' · ')}`);
+  } else if (entry.stage === 'npc-skill-fallback') {
+    lines.push(`${entry.npcName || 'NPC'} 的 ${entry.passiveSkill || '技能'} 无有效数值，使用 ${entry.fallback}`);
+  } else if (entry.error) {
+    lines.push(`错误：${entry.error}`);
+  }
+
+  if (entry.issues?.length) lines.push(`问题：${entry.issues.join('；')}`);
+  return lines.length > 0 ? lines : ['无额外摘要'];
+}
+
 function renderAiLogEntries(logs = []) {
   els.aiLogBody.innerHTML = '';
   if (logs.length === 0) {
@@ -527,29 +618,37 @@ function renderAiLogEntries(logs = []) {
 
   for (const entry of [...logs].reverse()) {
     const item = document.createElement('article');
-    item.className = 'ai-log-entry';
+    const isWarning = entry.rejectedKeys?.length || entry.rejected?.length || /failed|skipped|rejected|fallback/.test(entry.stage || '');
+    item.className = `ai-log-entry${isWarning ? ' warning' : ''}`;
 
     const head = document.createElement('div');
     head.className = 'ai-log-head';
     const title = document.createElement('strong');
-    title.textContent = entry.stage || 'log';
+    title.textContent = aiLogStageLabels[entry.stage] || entry.stage || '日志';
     const time = document.createElement('time');
     time.textContent = entry.time ? new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
     head.append(title, time);
     item.append(head);
 
-    const meta = document.createElement('div');
-    meta.className = 'ai-log-meta';
+    const chips = document.createElement('div');
+    chips.className = 'ai-log-chips';
+    if (entry.stage) chips.append(chip(entry.stage, 'muted'));
+    if (entry.taskUid) chips.append(chip(`任务 ${String(entry.taskUid).slice(0, 8)}`));
+    for (const key of eventNames(entry.validKeys || entry.keys || [])) chips.append(chip(key, 'ok'));
+    for (const key of eventNames(entry.rejectedKeys || entry.rejected || [])) chips.append(chip(`拒绝 ${key}`, 'warn'));
+    item.append(chips);
+
+    const summary = document.createElement('div');
+    summary.className = 'ai-log-summary';
+    for (const line of aiLogSummaryLines(entry)) {
+      const row = document.createElement('p');
+      row.textContent = line;
+      summary.append(row);
+    }
+    item.append(summary);
+
     const detection = entry.detection || {};
     const notes = Array.isArray(detection.detectionNotes) ? detection.detectionNotes : [];
-    const metaLines = [
-      entry.taskUid ? `任务 ${String(entry.taskUid).slice(0, 8)}` : '',
-      entry.validKeys?.length ? `事件 ${entry.validKeys.join(', ')}` : '',
-      entry.rejectedKeys?.length ? `拒绝 ${entry.rejectedKeys.join(', ')}` : '',
-      detection.droppedRequiredChecksForOpposedAction ? `丢弃 required_checks ${detection.droppedRequiredChecksForOpposedAction} 个` : ''
-    ].filter(Boolean);
-    meta.textContent = metaLines.join(' · ') || '无结构化事件';
-    item.append(meta);
 
     if (notes.length > 0) {
       const list = document.createElement('div');
@@ -557,25 +656,22 @@ function renderAiLogEntries(logs = []) {
       for (const note of notes) {
         const row = document.createElement('div');
         row.className = 'ai-log-detection';
-        row.textContent = [
-          note.kind || 'check',
-          note.source || '',
-          note.ruleId || '',
-          note.skill ? `技能 ${note.skill}` : '',
-          note.target ? `目标 ${note.target}` : '',
-          `置信度 ${formatConfidence(note.confidence)}`,
-          Array.isArray(note.notes) && note.notes.length ? `依据 ${note.notes.join('/')}` : ''
-        ].filter(Boolean).join(' · ');
+        row.textContent = detectionLine(note);
         list.append(row);
       }
       item.append(list);
     }
 
     if (entry.rawResponseSnippet) {
+      const details = document.createElement('details');
+      details.className = 'ai-log-raw';
+      const summaryNode = document.createElement('summary');
+      summaryNode.textContent = '查看原始回复片段';
       const snippet = document.createElement('pre');
       snippet.className = 'ai-log-snippet';
       snippet.textContent = entry.rawResponseSnippet;
-      item.append(snippet);
+      details.append(summaryNode, snippet);
+      item.append(details);
     }
 
     els.aiLogBody.append(item);
@@ -758,6 +854,11 @@ function renderMessages() {
     `;
     els.chatLog.append(empty);
     return;
+  }
+
+  if (els.btnCharSheet) {
+    els.btnCharSheet.hidden = !state.participant;
+    els.chatLog.append(els.btnCharSheet);
   }
 
   if (state.messages.length === 0) {

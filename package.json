@@ -9,8 +9,12 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test",
+    "test": "node --test test/*.test.mjs",
+    "test:e2e": "playwright test",
     "check": "node --check src/*.js && node --check public/app.js && node --check scripts/*.mjs",
     "audit:deployment": "node scripts/audit_deployment.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.0"
   }
 }
