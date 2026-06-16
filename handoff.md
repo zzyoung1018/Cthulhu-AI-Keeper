@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-16 12:40 CST
+Last updated: 2026-06-16 13:58 CST
 
 ## Current State
 
@@ -12,7 +12,7 @@ Last updated: 2026-06-16 12:40 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/opt/dm-online/data`
 - Local branch: `main`
-- Latest completed local code commit: `4716b92 test: add frontend e2e and readable ai logs`
+- Latest completed local code commit: `e38928d feat: add chat quick send shortcut`
 - Latest deployed code commit known from prior deployment: `0a94f99 fix: strip AI-generated check markers before injecting backend markers`
 - Note: local app code now has post-deployment changes after `0a94f99`; deploy before expecting the server to have these features.
 - Local worktree is clean.
@@ -21,6 +21,7 @@ Do not write server credentials into committed files. Use the conversation conte
 
 ## Recent Commits
 
+- `e38928d` feat: add chat quick send shortcut
 - `4716b92` test: add frontend e2e and readable ai logs
 - `e426d16` feat: persist ai state and action lifecycle
 - `56ffb3c` chore: checkpoint before ai state and log upgrades
@@ -49,12 +50,12 @@ src/
   privateHub.js      (63 lines) — player-specific SSE delivery
 
 public/
-  app.js          (2207 lines) — main frontend logic
+  app.js          (2214 lines) — main frontend logic
 
 test/
   comprehensive-ai.test.mjs (765 lines) — full AI detection and event coverage
   aiOutput.test.mjs         (594 lines) — parser/validator/inference regressions
-  frontend.e2e.mjs          (287 lines) — Playwright browser coverage for visible controls
+  frontend.e2e.mjs          (305 lines) — Playwright browser coverage for visible controls
   app.test.mjs              (446 lines) — API integration tests
   db.test.mjs               (774 lines) — persistence tests
   fixtures/
@@ -152,6 +153,17 @@ The five high-value follow-ups from the previous review are now implemented loca
 - Log dialog now shows Chinese stage names, event chips, summary paragraphs, detection rows, and collapsed raw snippets.
 - Added readable labels for `required_checks`, `opposed_checks`, `clues_revealed`, `scene_change`, `npc_state_changes`, and `summary_update`.
 - `window.onerror` now renders via DOM/textContent instead of HTML string injection.
+
+### Chat Quick Send (`e38928d`)
+
+- Added `Ctrl+Enter` quick send on the main chat textarea.
+- Also supports `Meta+Enter` for Mac keyboards while keeping the requested `Ctrl+Enter` behavior.
+- The shortcut uses `requestSubmit()`, so it goes through the existing submit handler, AI task queue, error handling, and input clearing path.
+- Added a Playwright regression test that opens a real room, fills the composer, presses `Control+Enter`, verifies the action appears, the textarea clears, and the fake streaming AI reply renders.
+- Verification after this change:
+  - `npm run check`
+  - `npm test` — 105/105 passed
+  - `npm run test:e2e` — 4/4 passed
 
 ## 2026-06-16 Code Review Notes
 
