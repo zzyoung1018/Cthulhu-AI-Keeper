@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-16 00:00 CST
+Last updated: 2026-06-16 12:12 CST
 
 ## Current State
 
@@ -12,13 +12,16 @@ Last updated: 2026-06-16 00:00 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/opt/dm-online/data`
 - Local branch: `main`
-- Latest deployed commit: `0a94f99 fix: strip AI-generated check markers before injecting backend markers`
+- Latest local commit: `79bedf4 docs: refresh handoff with continue loop fix and duplicate marker fix`
+- Latest deployed code commit known from prior deployment: `0a94f99 fix: strip AI-generated check markers before injecting backend markers`
+- Note: `79bedf4` was docs-only. No app code changes are known after deployed commit `0a94f99`.
 - Local worktree is clean.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent Commits
 
+- `79bedf4` docs: refresh handoff with continue loop fix and duplicate marker fix
 - `0a94f99` fix: strip AI-generated check markers before injecting backend markers
 - `652a60d` fix: skip processed actions in latestPlayerAction to prevent check re-inference loop
 - `0ec6d12` docs: refresh handoff after ai detection deployment
@@ -94,6 +97,70 @@ const AI_CHECK_MARKER = /（此处触发[^）]*?检定[^）]*?。）\s*/g;
 let text = String(narrative || '').replace(AI_CHECK_MARKER, '').trim();
 ```
 
+## 2026-06-16 Code Review Notes
+
+No business code was changed during this review. Local `npm test` was run again and passed: 101/101 tests.
+
+Current AI behavior detection is much stronger than the original playtest report described:
+- The model no longer needs to reliably emit JSON for common checks. Backend inference now recovers many missing `required_checks` and `opposed_checks`.
+- Opposed checks are prioritized over ordinary required checks, preventing "lie to NPC" actions from becoming generic observation/search rolls.
+- The continuation loop caused by reusing the same player ACTION has been fixed by skipping already-processed actions.
+- AI-written check-marker text is stripped before backend marker injection, preventing duplicate visible prompts.
+
+The remaining improvements are mostly about durability, edge cases, and making future tuning easier.
+
+### AI Behavior Detection: Recommended Next Work
+
+1. Persist clue and NPC state structurally.
+   - `src/aiEvents.js` currently turns `clues_revealed` into system/private messages only.
+   - `playerState.js` already exposes `discoveredClues` and `knownNpcs`, but AI events do not update those arrays.
+   - Best next feature: when a clue is revealed or an NPC state changes, merge it into participant `playerMeta` or room scene state, then include it in future AI context.
+   - This improves long-session memory more than another prompt-only tweak.
+
+2. Make check lifecycle explicit instead of heuristic.
+   - `latestPlayerAction()` now skips an ACTION if a later DM/system check message exists. This fixed the continue loop.
+   - Longer term, attach the triggering `messageId` or task context to `ai_tasks` and mark that action as processed.
+   - This would handle edge cases like manual system checks, interleaved players, retries, or future regeneration flows more cleanly.
+
+3. Split `aiOutput.js` before major detection tuning.
+   - It now mixes JSON extraction, validation, narrative cleanup, required-check inference, opposed-check inference, module matching, and NPC matching.
+   - Suggested split:
+     - `aiStructuredParser.js` for JSON extraction/validation.
+     - `aiDetection.js` for rule-based check inference.
+     - `aiNarrativeSanitizer.js` for marker/action-suggestion cleanup.
+   - Add tests before splitting so behavior stays stable.
+
+4. Tune module-defined check matching with real playtest logs.
+   - `classifyModuleRequiredAction()` already scores module checks using trigger overlap, skill mention, scene match, and CJK bigram overlap.
+   - Use `reports/dm-online-ZZL4KB.json` and `reports/dm-online-ZZL4KB-ai-log.json` to add targeted regression cases.
+   - Avoid over-broad keyword rules; prefer module-specific anchors so normal roleplay does not trigger excessive rolls.
+
+5. Improve observability for skipped/invalid structured events.
+   - Some invalid or unresolved events are skipped or logged only to server console.
+   - Add owner-visible AI log entries for rejected check skills, missing NPC targets, and ignored state changes.
+   - This will make future playtest debugging faster than reading raw server logs.
+
+6. Persist AI diagnostics if playtests become longer.
+   - `_aiLogs` in `src/app.js` is in-memory, capped per room, and lost on restart.
+   - For serious playtesting, store diagnostics in SQLite or include them in room export.
+   - If staying in memory, add time-based eviction as already noted below.
+
+7. Make AI context scene-aware.
+   - `buildDmMessages()` sends compact module JSON, but current selection still favors early scenes/NPCs.
+   - Use `sceneState.currentScene`, recent messages, and latest triggered check/clue IDs to include the most relevant scene/NPC/clue context first.
+   - This should improve narrative continuity and reduce hallucinated location/NPC details.
+
+8. Add browser/E2E coverage for visible AI controls.
+   - Current tests cover backend and parser behavior well, but not the actual chat UI.
+   - Add tests for `继续叙事`, AI detection log modal, rollback button visibility, and character-card quick status/actions.
+
+### Lower-Priority Cleanup
+
+- Harden `public/app.js` `window.onerror`; it currently injects raw error text via HTML. Use DOM nodes/textContent or disable it in production.
+- Broaden `AI_CHECK_MARKER` only if more duplicate marker variants appear. Current regex handles the observed Chinese full-width marker pattern.
+- Cache NPC candidates and module detection data per room/task if AI calls become CPU-heavy.
+- Split large files (`public/app.js`, `src/db.js`, `src/app.js`) when touching those areas next; do not refactor them all at once.
+
 ## Existing Features Reference
 
 ### Continue After Checks
@@ -163,7 +230,7 @@ AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restore
 Local:
 ```bash
 npm run check   # passed
-npm test        # 101/101 passed
+npm test        # 101/101 passed locally again on 2026-06-16 12:12 CST
 ```
 
 Server:
@@ -229,10 +296,11 @@ DEPLOYMENT_AUDIT_AI_TIMEOUT_MS=180000 npm run audit:deployment -- --require-ai h
 
 ## Potential Follow-Ups
 
-- Add end-to-end frontend tests for `继续叙事` button and `检测日志` dialog.
-- Cache NPC candidates per room (currently rebuilt every AI call in `npcCandidates()`).
-- Add TTL-based eviction for `_aiLogs` map.
-- Split `db.js` (1246 lines) into schema / row-mappers / queries.
-- Split `public/app.js` (2106 lines) into lobby / character / chat modules.
-- Add structured event support for clue-state updates so successful module checks can auto-mark clues discovered.
-- Tune module check matching with real playtest logs from `reports/`.
+- Highest value: persist `clues_revealed` and `npc_state_changes` into structured player/room state, not only messages.
+- High value: add end-to-end frontend tests for `继续叙事`, `检测日志`, rollback controls, and character-card quick interactions.
+- High value: add explicit processed-action/task linkage instead of relying only on `latestPlayerAction()` message-order heuristics.
+- Medium value: tune module check matching with real playtest logs from `reports/`.
+- Medium value: persist or export `_aiLogs` diagnostics; add TTL eviction if keeping them memory-only.
+- Medium value: make AI context scene-aware so current scene/NPC/clue data is prioritized.
+- Medium value: cache NPC candidates per room/task (currently rebuilt every AI call in `npcCandidates()`).
+- Cleanup: split `aiOutput.js`, `db.js`, `app.js`, and `public/app.js` along existing boundaries when next touching those files.
