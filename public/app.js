@@ -128,6 +128,7 @@ const els = {
   connectionDot: document.querySelector('#connectionDot'),
   // AI 控制
   aiPill: document.querySelector('#aiPill'),
+  aiQueueSummary: document.querySelector('#aiQueueSummary'),
   cancelAiTask: document.querySelector('#cancelAiTask'),
   regenerateAiTask: document.querySelector('#regenerateAiTask'),
   rollbackRound: document.querySelector('#rollbackRound'),
@@ -135,6 +136,7 @@ const els = {
   btnAiLog: document.querySelector('#btnAiLog'),
   aiLogDialog: document.querySelector('#aiLogDialog'),
   aiLogBody: document.querySelector('#aiLogBody'),
+  aiLogStats: document.querySelector('#aiLogStats'),
   aiLogStageFilter: document.querySelector('#aiLogStageFilter'),
   aiLogWarningOnly: document.querySelector('#aiLogWarningOnly'),
   aiLogGroupByTask: document.querySelector('#aiLogGroupByTask'),
@@ -510,8 +512,75 @@ function setAiBusy(isBusy) {
   els.aiPill.textContent = isBusy ? 'AI 正在写下一幕' : 'AI 待命';
 }
 
+function shortTaskUid(task) {
+  return task?.uid ? String(task.uid).slice(0, 8) : '';
+}
+
+function taskStatusLabel(task) {
+  if (!task) return '';
+  return aiTaskLabels[task.status] || task.status || '未知状态';
+}
+
+function formatClock(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function stateChip(label, value = '', className = '') {
+  const node = document.createElement('span');
+  node.className = ['ai-state-chip', className].filter(Boolean).join(' ');
+  node.append(document.createTextNode(`${label} `));
+  if (value) {
+    const strong = document.createElement('strong');
+    strong.textContent = value;
+    node.append(strong);
+  }
+  return node;
+}
+
+function completedAiTasks() {
+  return state.aiTasks.filter((task) => ['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status));
+}
+
 function latestFinishedAiTask() {
-  return [...state.aiTasks].reverse().find((task) => ['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status)) || null;
+  return [...completedAiTasks()].reverse()[0] || null;
+}
+
+function renderAiQueueSummary(activeTask) {
+  if (!els.aiQueueSummary) return;
+  els.aiQueueSummary.replaceChildren();
+  if (!state.room) {
+    els.aiQueueSummary.hidden = true;
+    return;
+  }
+  els.aiQueueSummary.hidden = false;
+
+  const waitingTasks = state.aiTasks.filter((task) =>
+    activeAiStatuses.includes(task.status) && task.uid !== activeTask?.uid
+  );
+  const failedTasks = state.aiTasks.filter((task) => task.status === 'FAILED');
+  const finished = latestFinishedAiTask();
+
+  if (activeTask) {
+    const status = taskStatusLabel(activeTask);
+    els.aiQueueSummary.append(stateChip('当前', `${status} #${shortTaskUid(activeTask)}`, 'busy'));
+    if (activeTask.startedAt || activeTask.updatedAt) {
+      els.aiQueueSummary.append(stateChip('更新', formatClock(activeTask.updatedAt || activeTask.startedAt)));
+    }
+  } else {
+    els.aiQueueSummary.append(stateChip('队列', '空闲', 'ok'));
+  }
+
+  els.aiQueueSummary.append(stateChip('等待', String(waitingTasks.length)));
+
+  if (failedTasks.length > 0) {
+    els.aiQueueSummary.append(stateChip('失败', String(failedTasks.length), 'error'));
+  } else if (finished) {
+    const finishedAt = formatClock(finished.completedAt || finished.updatedAt);
+    els.aiQueueSummary.append(stateChip('最近', `${taskStatusLabel(finished)}${finishedAt ? ` ${finishedAt}` : ''}`));
+  }
 }
 
 function renderAiTaskControls() {
@@ -521,6 +590,7 @@ function renderAiTaskControls() {
   const label = activeTask ? aiTaskLabels[activeTask.status] || activeTask.status : 'AI 待命';
   els.aiPill.classList.toggle('busy', busy);
   els.aiPill.textContent = activeTask ? `${label} · ${activeTask.uid.slice(0, 8)}` : label;
+  renderAiQueueSummary(activeTask);
 
   const owner = isOwner();
   els.cancelAiTask.hidden = !owner || !activeTask || !['QUEUED', 'RETRIEVING', 'GENERATING', 'STREAMING'].includes(activeTask.status);
@@ -651,6 +721,35 @@ function filteredAiLogs() {
   );
 }
 
+function uniqueTaskCount(logs = []) {
+  return new Set(logs.map((entry) => entry.taskUid || '').filter(Boolean)).size;
+}
+
+function renderAiLogStats(logs = filteredAiLogs()) {
+  if (!els.aiLogStats) return;
+  els.aiLogStats.replaceChildren();
+  if (!state.aiLogEntries.length) {
+    els.aiLogStats.append(stateChip('日志', '0'));
+    return;
+  }
+
+  const warnings = state.aiLogEntries.filter(isAiLogWarning).length;
+  const taskCount = uniqueTaskCount(state.aiLogEntries);
+  const latest = [...state.aiLogEntries]
+    .sort((left, right) => new Date(right.time || 0) - new Date(left.time || 0))[0];
+  const latestLabel = latest
+    ? `${aiLogStageLabels[latest.stage] || latest.stage || '日志'}${formatClock(latest.time) ? ` ${formatClock(latest.time)}` : ''}`
+    : '';
+
+  els.aiLogStats.append(
+    stateChip('总数', String(state.aiLogEntries.length)),
+    stateChip('命中', String(logs.length), logs.length ? 'ok' : ''),
+    stateChip('警告', String(warnings), warnings ? 'error' : ''),
+    stateChip('任务', String(taskCount))
+  );
+  if (latestLabel) els.aiLogStats.append(stateChip('最近', latestLabel));
+}
+
 function renderAiLogEntry(entry) {
   const item = document.createElement('article');
   item.className = `ai-log-entry${isAiLogWarning(entry) ? ' warning' : ''}`;
@@ -714,6 +813,7 @@ function renderAiLogEntry(entry) {
 function renderAiLogEntries() {
   els.aiLogBody.replaceChildren();
   const logs = filteredAiLogs();
+  renderAiLogStats(logs);
   if (logs.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty compact-empty';
@@ -750,6 +850,7 @@ function renderAiLogEntries() {
 async function openAiLogDialog() {
   if (!state.room || !isOwner()) return;
   els.aiLogBody.textContent = '读取中...';
+  els.aiLogStats?.replaceChildren(stateChip('状态', '读取中'));
   els.aiLogDialog.showModal();
   try {
     const payload = await api(`/api/rooms/${state.room.code}/ai-log?playerId=${encodeURIComponent(state.playerId)}`);
@@ -757,6 +858,8 @@ async function openAiLogDialog() {
     renderAiLogStageOptions(state.aiLogEntries);
     renderAiLogEntries();
   } catch (error) {
+    state.aiLogEntries = [];
+    els.aiLogStats?.replaceChildren(stateChip('状态', '读取失败', 'error'));
     els.aiLogBody.textContent = error.message;
   }
 }

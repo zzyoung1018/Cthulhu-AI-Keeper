@@ -698,6 +698,51 @@ select:focus {
   gap: 8px;
 }
 
+.ai-queue-summary {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: min(520px, 100%);
+}
+
+.ai-state-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid rgba(111, 145, 184, 0.28);
+  border-radius: 8px;
+  background: rgba(111, 145, 184, 0.08);
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.ai-state-chip strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.ai-state-chip.busy {
+  border-color: rgba(215, 173, 95, 0.42);
+  background: rgba(215, 173, 95, 0.12);
+  color: var(--gold);
+}
+
+.ai-state-chip.ok {
+  border-color: rgba(99, 184, 129, 0.34);
+  background: rgba(99, 184, 129, 0.1);
+}
+
+.ai-state-chip.error {
+  border-color: rgba(199, 91, 91, 0.38);
+  background: rgba(199, 91, 91, 0.1);
+  color: #e9a2a2;
+}
+
 .ai-task-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1199,7 +1244,7 @@ dialog::backdrop {
   max-height: 82vh;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -1237,6 +1282,13 @@ dialog::backdrop {
   display: grid;
   gap: 10px;
   padding-right: 4px;
+}
+
+.ai-log-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .ai-log-task-group {

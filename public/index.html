@@ -79,6 +79,7 @@
           </div>
           <div class="ai-controls">
             <div class="ai-pill" id="aiPill">AI 待命</div>
+            <div class="ai-queue-summary" id="aiQueueSummary" aria-live="polite"></div>
             <div class="ai-task-actions">
               <button class="ghost" id="cancelAiTask" type="button" hidden>取消</button>
               <button class="ghost" id="regenerateAiTask" type="button" hidden>重生成</button>
@@ -272,6 +273,7 @@
           <label class="inline-toggle"><input id="aiLogGroupByTask" type="checkbox"> 按任务分组</label>
           <button class="ghost" id="exportAiLog" type="button">导出 JSON</button>
         </div>
+        <div class="ai-log-stats" id="aiLogStats"></div>
         <div class="ai-log-body" id="aiLogBody"></div>
       </div>
     </dialog>
@@ -288,6 +290,6 @@
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/app.js?v=20260616-e2e-log-tools"></script>
+    <script type="module" src="/app.js?v=20260616-ai-status-ui"></script>
   </body>
 </html>

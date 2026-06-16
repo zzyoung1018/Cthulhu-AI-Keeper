@@ -262,6 +262,25 @@ function seedActiveRoom(database, extraPlayers = []) {
   return { room, checkMessage, task };
 }
 
+function seedBusyAiQueue(database, roomCode) {
+  const active = database.createAiTask({
+    code: roomCode,
+    playerId: 'owner',
+    triggerMessageId: null,
+    idempotencyKey: 'e2e:active-task'
+  }).task;
+  database.updateAiTaskStatus({ taskUid: active.uid, status: 'GENERATING' });
+
+  const queued = database.createAiTask({
+    code: roomCode,
+    playerId: 'owner',
+    triggerMessageId: null,
+    idempotencyKey: 'e2e:queued-task'
+  }).task;
+
+  return { active, queued };
+}
+
 async function setIdentity(page, { playerId, displayName, roomCode = '', roomName = 'E2E Room' }) {
   await page.addInitScript(({ id, name, code, lastRoomName }) => {
     localStorage.setItem('dm-online-player-id', id);
@@ -312,6 +331,36 @@ test('renders readable AI detection logs for the owner', async ({ page }) => {
     await expect(dialog).toContainText('后端补充必要检定：generic-侦查');
     await expect(dialog).toContainText('通用规则 · 必要');
     await expect(dialog.locator('summary')).toContainText('查看原始回复片段');
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('shows clear AI queue and log status summaries', async ({ page }) => {
+  const fixture = await startFixture();
+  try {
+    const { room } = seedActiveRoom(fixture.app.database);
+    seedBusyAiQueue(fixture.app.database, room.code);
+    await openSeededRoom(page, fixture.baseUrl, room.code);
+
+    const queue = page.locator('#aiQueueSummary');
+    await expect(queue).toContainText('当前');
+    await expect(queue).toContainText('生成中');
+    await expect(queue).toContainText('等待');
+    await expect(queue).toContainText('1');
+
+    await page.locator('#btnAiLog').click();
+    const stats = page.locator('#aiLogStats');
+    await expect(stats).toContainText('总数');
+    await expect(stats).toContainText('2');
+    await expect(stats).toContainText('命中');
+    await expect(stats).toContainText('警告');
+    await expect(stats).toContainText('1');
+    await expect(stats).toContainText('任务');
+
+    await page.locator('#aiLogWarningOnly').check();
+    await expect(stats).toContainText('命中');
+    await expect(stats).toContainText('1');
   } finally {
     await fixture.close();
   }
