@@ -39,6 +39,20 @@ AI DM 运行时会特别依赖：
 
 因此，转写时不要只写剧情摘要。必须把场景、NPC、线索、检定和推进关系拆出来。
 
+## 信息保真目标
+
+你的目标不是“摘要模组”，而是“先完整理解原模组，再把它压缩成可运行的结构化数据”。允许精简重复描写、氛围铺陈和长篇叙事句子，但不能让剧情缺失、流程跳跃或机械数值丢失。
+
+信息保真预算：
+
+1. 核心剧情节点、真相、反派动机、结局条件：目标丢失率 0%。
+2. 核心线索链、线索之间的指向关系、卡关兜底方法：目标丢失率 0%。
+3. NPC 数值、怪物/敌人能力、技能值、属性值、HP/MP/SAN、护甲、伤害、法术消耗、人数、日期、时间、地点编号、房间号、金钱、距离、数量、回合数、检定难度、SAN 损失、伤害骰：目标丢失率 0%。
+4. 地图连接关系、暗门、钥匙、锁、陷阱、handout 可见文字：目标丢失率 0%。
+5. 次要氛围描写可以压缩，但必须保留风格关键词和可用于现场叙事的关键感官细节。
+
+如果由于原文缺损、扫描不清、OCR 失败或图片无法辨认导致无法保证 0% 保真，必须在相关对象的 `uncertainty_notes` 和 `quality_control.detected_missing_parts` / `quality_control.image_understanding_limitations` 中明确标记。不要把无法确认的信息伪装成已确认。
+
 ## 输出硬规则
 
 1. 只输出 JSON。
@@ -53,6 +67,9 @@ AI DM 运行时会特别依赖：
 10. PDF 文字、表格、地图和图片冲突时，优先保留原文设定，并在 `uncertainty_notes` 或 `quality_control.possible_contradictions` 说明。
 11. Keeper 秘密绝不能写进 `player_visible_description`、`player_visible_info` 或 `player_visible_text`。
 12. 玩家可见信息和 Keeper 信息必须分层保存。
+13. 原文出现的关键数字必须原样保留，不要四舍五入、概括成“很多/少量/一段时间”，也不要把 `1D6` 改写成固定数字。
+14. 原文给出的 NPC/怪物/敌人属性和技能值必须写入对应对象；如果字段不够用，就增加额外字段保留原始数值。
+15. 每个重要对象尽量添加 `source_refs` 数组，记录来源页码、章节名、表格名、图片名或原文定位，便于之后回查。
 
 ## 与当前 AI 对话/检定流程的契合规则
 
@@ -76,13 +93,13 @@ AI DM 运行时会特别依赖：
 - 模组 `checks[*].difficulty` 必须使用 `REGULAR`、`HARD` 或 `EXTREME`。
 - `checks[*].skill` 使用当前角色卡/骰点系统能识别的技能或属性名，例如：`侦查`、`聆听`、`图书馆使用`、`会计`、`锁匠`、`急救`、`医学`、`驾驶汽车`、`攀爬`、`跳跃`、`投掷`、`追踪`、`神秘学`、`法律`、`估价`、`导航`、`博物学`、`机械维修`、`电气维修`、`化学`、`物理学`、`药学`、`话术`、`说服`、`恐吓`、`魅惑`、`潜行`、`妙手`、`乔装`、`格斗`、`射击`，或属性 `STR/CON/SIZ/DEX/APP/INT/POW/EDU/Luck`。
 
-NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
+NPC 技能和属性是关键数字信息，不能丢失。请尽量为重要 NPC 写 `skills` 和 `attributes`：
 
 - 社交对抗常用：`心理学`、`话术`、`说服`、`恐吓`、`魅惑`
 - 潜行/偷窃对抗常用：`侦查`、`聆听`
 - 战斗对抗常用：`闪避`、`格斗`、`射击`
 
-如果原文没有数值，可以给保守估计并在 `uncertainty_notes` 说明。例如普通村民 25-40，专业人员 50-70，强敌 70+。
+如果原文给了数值，必须原样保留。如果原文没有数值，可以给保守估计并在 `uncertainty_notes` 明确写出“原文未给出，按角色定位估计”。例如普通村民 25-40，专业人员 50-70，强敌 70+。估计值不能覆盖原文已有数值。
 
 状态变化只允许在运行时建议这些路径：
 
@@ -104,22 +121,24 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
 
 ## 转写流程
 
-按下面顺序处理材料：
+按下面顺序处理材料。不要一边读一边直接摘要；必须先建立完整盘点，再生成 JSON：
 
-1. 先通读全文，确认核心谜题、真相、主要威胁、推荐开场、结局范围。
-2. 建立全局 ID 表：场景、NPC、线索、物件、地图、handout、检定、危险事件、理智事件、结局。
-3. 把玩家开场能知道的信息写入 `player_opening`。
-4. 把 Keeper 才能知道的真相写入 `keeper_overview`。
-5. 按章节/地点拆分 `scenes`，每个场景只写该场景相关信息。
-6. 为所有重要人物建立 `npcs`，并补足可用于对抗检定的 `skills`。
-7. 把所有可发现信息拆成 `clues`，每条线索必须有 `reveal_condition`。
-8. 把需要骰点的静态障碍拆成 `checks`，每个检定应有清晰 `trigger`、`success`、`failure` 和相关 `reveals_clue_ids`。
-9. 把会伤害、追逐、感染、陷阱、怪物袭击等写入 `danger_events`。
-10. 把理智损失写入 `sanity_events`。
-11. 把地图、照片、信件、表格、剪报、手稿等写入 `maps` 或 `visual_assets`。
-12. 写 `story_progression`，说明推荐场景顺序、核心线索链、可选线索、卡关风险和兜底方法。
-13. 写 `endings`，结局必须基于玩家行动和证据，不要强制坏结局。
-14. 最后写 `quality_control`，列出缺失、矛盾、不确定和图片识别限制。
+1. 第一遍：通读全文，确认核心谜题、真相、主要威胁、推荐开场、结局范围。
+2. 第二遍：建立全局 ID 表，盘点所有场景、NPC、线索、物件、地图、handout、检定、危险事件、理智事件、结局。
+3. 第三遍：建立关键数字清单，逐项记录所有 NPC 数值、怪物数值、检定难度、SAN/伤害骰、时间日期、人数、数量、房间号、地图编号、距离、金钱、回合数、仪式/法术成本。
+4. 第四遍：建立剧情流程图，确认从开场到各结局的节点顺序、入口条件、出口条件、线索门槛和兜底路径。
+5. 第五遍：生成 JSON，把玩家开场能知道的信息写入 `player_opening`。
+6. 把 Keeper 才能知道的真相写入 `keeper_overview`。
+7. 按章节/地点拆分 `scenes`，每个场景只写该场景相关信息，并保留入口/出口条件，避免流程跳跃。
+8. 为所有重要人物建立 `npcs`，原样保留原文给出的 `skills`、`attributes`、HP、护甲、武器、法术、特殊能力和其他数值。
+9. 把所有可发现信息拆成 `clues`，每条线索必须有 `reveal_condition`，核心线索必须进入 `story_progression.required_core_clues`。
+10. 把需要骰点的静态障碍拆成 `checks`，每个检定应有清晰 `trigger`、`success`、`failure`、`difficulty` 和相关 `reveals_clue_ids`。
+11. 把会伤害、追逐、感染、陷阱、怪物袭击等写入 `danger_events`，原样保留伤害、护甲、回合、逃脱条件和失败后果。
+12. 把理智损失写入 `sanity_events`，原样保留 `0/1D3`、`1/1D6` 等 SAN 损失格式。
+13. 把地图、照片、信件、表格、剪报、手稿等写入 `maps` 或 `visual_assets`。
+14. 写 `story_progression`，说明推荐场景顺序、核心线索链、可选线索、卡关风险和兜底方法。
+15. 写 `endings`，结局必须基于玩家行动和证据，不要强制坏结局。
+16. 最后写 `quality_control`，列出缺失、矛盾、不确定、图片识别限制、关键数字盘点和可能被压缩的低风险信息。
 
 ## 字段模板
 
@@ -140,6 +159,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
     "tone": "",
     "content_warnings": [],
     "language": "Chinese",
+    "source_refs": [],
     "confidence": 1,
     "uncertainty_notes": []
   },
@@ -181,6 +201,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
     "investigation_goal": "",
     "default_opening": "",
     "possible_endings_summary": "",
+    "source_refs": [],
     "confidence": 1,
     "uncertainty_notes": []
   },
@@ -192,6 +213,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
     "known_npcs": [],
     "known_locations": [],
     "known_handouts": [],
+    "source_refs": [],
     "confidence": 1,
     "uncertainty_notes": []
   },
@@ -226,6 +248,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
           "description": ""
         }
       ],
+      "source_refs": [],
       "confidence": 1,
       "uncertainty_notes": []
     }
@@ -276,6 +299,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
       "hidden_information_on_map": [],
       "fog_of_war_suggestions": [],
       "ai_dm_instruction": "",
+      "source_refs": [],
       "confidence": 1,
       "uncertainty_notes": []
     }
@@ -296,6 +320,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
       "hidden_meaning": "",
       "reveal_condition": "",
       "ai_dm_instruction": "",
+      "source_refs": [],
       "confidence": 1,
       "uncertainty_notes": []
     }
@@ -341,8 +366,20 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
         "POW": 50,
         "EDU": 50
       },
+      "hp": null,
+      "mp": null,
+      "san": null,
+      "armor": "",
+      "damage_bonus": "",
+      "build": "",
+      "mov": null,
+      "weapons": [],
+      "spells": [],
+      "special_abilities": [],
+      "raw_stat_block": "",
       "combat_or_chase_notes": "",
       "ai_dm_instruction": "",
+      "source_refs": [],
       "confidence": 1,
       "uncertainty_notes": []
     }
@@ -365,6 +402,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
         }
       ],
       "ai_dm_instruction": "",
+      "source_refs": [],
       "confidence": 1,
       "uncertainty_notes": []
     }
@@ -390,6 +428,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
       "failure_if_missed": "",
       "fallback_reveal_method": "",
       "ai_dm_instruction": "",
+      "source_refs": [],
       "confidence": 1,
       "uncertainty_notes": []
     }
@@ -415,6 +454,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
       "state_changes_on_success": [],
       "state_changes_on_failure": [],
       "ai_dm_instruction": "",
+      "source_refs": [],
       "confidence": 1,
       "uncertainty_notes": []
     }
@@ -429,6 +469,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
       "san_loss_failure": "",
       "related_entity": "",
       "ai_dm_instruction": "",
+      "source_refs": [],
       "confidence": 1,
       "uncertainty_notes": []
     }
@@ -446,6 +487,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
       "avoidance": "",
       "check_ids": [],
       "ai_dm_instruction": "",
+      "source_refs": [],
       "confidence": 1,
       "uncertainty_notes": []
     }
@@ -460,6 +502,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
       "hidden_property": "",
       "reveal_condition": "",
       "ai_dm_instruction": "",
+      "source_refs": [],
       "confidence": 1,
       "uncertainty_notes": []
     }
@@ -474,6 +517,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
       "related_scene_ids": [],
       "related_npc_ids": [],
       "ai_dm_instruction": "",
+      "source_refs": [],
       "confidence": 1,
       "uncertainty_notes": []
     }
@@ -496,6 +540,7 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
       "related_scene_ids": [],
       "related_clue_ids": [],
       "ai_dm_instruction": "",
+      "source_refs": [],
       "confidence": 1,
       "uncertainty_notes": []
     }
@@ -537,6 +582,9 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
     "detected_missing_parts": [],
     "possible_contradictions": [],
     "high_uncertainty_objects": [],
+    "numeric_information_inventory": [],
+    "source_coverage_summary": "",
+    "compressed_low_risk_details": [],
     "image_understanding_limitations": [],
     "recommended_safe_defaults_for_ai_dm": []
   }
@@ -599,5 +647,11 @@ NPC 技能很重要。请尽量为重要 NPC 写 `skills`：
 15. 每个核心线索至少有一个发现条件或兜底方法。
 16. 每个场景至少说明玩家可见描述、关联 NPC、关联线索、关联检定。
 17. `quality_control` 记录了缺失、不确定和矛盾处。
+18. 原文出现的 NPC/怪物/敌人技能、属性、HP、MP、SAN、护甲、伤害、法术成本、移动、人数、日期、时间、地点编号、房间号、距离、金钱、数量、回合数、检定难度、SAN 损失都能在对应对象或 `quality_control.numeric_information_inventory` 中找到。
+19. `story_progression.recommended_scene_order` 能覆盖主线流程，不出现从 A 场景跳到 C 场景而缺少 B 线索/入口条件的情况。
+20. 每个核心剧情节点至少对应一个 scene、clue、check、danger_event、timeline 或 ending 对象，不只存在于 `keeper_overview` 摘要中。
+21. 所有估计数值都在 `uncertainty_notes` 中说明，且不得覆盖原文给出的明确数值。
+22. 每个核心线索的 `fallback_reveal_method` 或 `story_progression.fallback_methods` 中至少有一个卡关补救路径。
+23. 对已压缩或省略的低风险信息，写入 `quality_control.compressed_low_risk_details`，不得把关键剧情写进这个列表。
 
 现在开始处理上传材料，并只输出最终 JSON。
