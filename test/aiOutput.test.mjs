@@ -1,7 +1,72 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { enhanceStructuredEvents, extractStructuredEvents, validateStructuredEvents } from '../src/aiOutput.js';
+import { enhanceStructuredEvents, extractStructuredEvents, planPreflightCheck, validateStructuredEvents } from '../src/aiOutput.js';
 import { buildStructuredOutputPrompt } from '../src/prompts.js';
+
+function testSheet() {
+  return {
+    investigator: { name: '测试调查员', occupation: '记者' },
+    characteristics: {
+      STR: 50, CON: 50, SIZ: 50, DEX: 55,
+      APP: 50, INT: 60, POW: 50, EDU: 65, Luck: 50
+    },
+    skills: {
+      侦查: 68,
+      聆听: 55,
+      会计: 45,
+      话术: 60,
+      说服: 55,
+      恐吓: 30,
+      潜行: 45,
+      妙手: 35,
+      乔装: 25,
+      格斗: 40,
+      射击: 35
+    }
+  };
+}
+
+function roomStateForAction(content, { recent = [], moduleJson = null } = {}) {
+  const action = {
+    id: 100 + recent.length,
+    authorType: 'player',
+    messageType: 'ACTION',
+    playerId: 'p1',
+    displayName: '测试调查员',
+    content
+  };
+  return {
+    room: { sceneState: '{}' },
+    participants: [{
+      playerId: 'p1',
+      displayName: '玩家',
+      characterName: '测试调查员',
+      characterSheet: testSheet(),
+      playerMeta: {}
+    }],
+    messages: [
+      ...recent.map((content, index) => ({
+        id: index + 1,
+        authorType: 'dm',
+        messageType: 'AI_DM',
+        displayName: 'AI DM',
+        content
+      })),
+      action
+    ],
+    moduleJson: moduleJson || {
+      npcs: [
+        { name: '陈友', npc_id: 'chen_you', skills: { 心理学: 35 } },
+        { name: '老汉', npc_id: 'old_man', skills: { 心理学: 40 } },
+        { name: '顾振兴', npc_id: 'gu_zhenxing', skills: { 心理学: 60 } },
+        { name: '白崇礼', npc_id: 'bai_chongli', skills: { 心理学: 65 } },
+        { name: '王勇', npc_id: 'wang_yong', skills: { 侦查: 55 } }
+      ],
+      checks: []
+    },
+    action
+  };
+}
 
 test('extracts structured events from AI response with JSON block', () => {
   const text = [
@@ -157,6 +222,104 @@ test('rejects array items exceeding max limits', () => {
   const { valid, rejected } = validateStructuredEvents(events);
 
   assert.ok(rejected.includes('required_checks'));
+});
+
+test('preflight regression from playtest log: conversational deception triggers opposed checks', () => {
+  const cases = [
+    {
+      name: '祖上借口',
+      recent: ['陈友把茶缸放在柜台边，抬头等你继续解释。'],
+      action: '其实我祖上也是我们村的人',
+      expectedNpc: '陈友'
+    },
+    {
+      name: '老一辈借口',
+      recent: ['陈友皱着眉，没有立刻回答你。'],
+      action: '老一辈就让我找您呀',
+      expectedNpc: '陈友'
+    },
+    {
+      name: '姓郑伪装',
+      recent: ['陈友盯着你的介绍信，问你到底是哪家人。'],
+      action: '姓郑啊',
+      expectedNpc: '陈友'
+    },
+    {
+      name: '借陈友名义骗老汉',
+      recent: ['老汉拄着锄头挡在田埂边，狐疑地看着你们。'],
+      action: '陈友让我们往北边去的',
+      expectedNpc: '老汉'
+    }
+  ];
+
+  for (const item of cases) {
+    const state = roomStateForAction(item.action, { recent: item.recent });
+    const plan = planPreflightCheck({ actionMessage: state.action, roomState: state });
+
+    assert.equal(plan.type, 'opposed', item.name);
+    assert.equal(plan.events.opposed_checks.length, 1, item.name);
+    assert.equal(plan.events.opposed_checks[0].activeSkill, '话术', item.name);
+    assert.equal(plan.events.opposed_checks[0].passiveSkill, '心理学', item.name);
+    assert.equal(plan.events.opposed_checks[0].passiveNpcName, item.expectedNpc, item.name);
+  }
+});
+
+test('preflight regression from playtest log: explicit skill actions trigger required checks', () => {
+  const cases = [
+    ['会计', '回到房间 自己审查所有账册，看看是否有问题'],
+    ['侦查', '仔细观察一下这个房间（过侦查检定）'],
+    ['聆听', '我们出门 然后在门外先不走远 (过聆听）']
+  ];
+
+  for (const [expectedSkill, action] of cases) {
+    const state = roomStateForAction(action);
+    const plan = planPreflightCheck({ actionMessage: state.action, roomState: state });
+
+    assert.equal(plan.type, 'required', expectedSkill);
+    assert.equal(plan.events.required_checks.length, 1, expectedSkill);
+    assert.equal(plan.events.required_checks[0].skill, expectedSkill, expectedSkill);
+    assert.equal(plan.events.required_checks[0].targetPlayerId, 'p1', expectedSkill);
+  }
+});
+
+test('room-aware validation rejects impossible player, skill, private target, and hallucinated NPC', () => {
+  const state = roomStateForAction('我检查柜台。');
+
+  const unknownSkill = validateStructuredEvents({
+    required_checks: [{ targetPlayerId: 'p1', skill: '不存在技能', difficulty: 'REGULAR' }]
+  }, { roomState: state, defaultPlayerId: 'p1' });
+  assert.ok(unknownSkill.rejected.includes('required_checks'));
+  assert.ok(unknownSkill.issues.some((issue) => issue.includes('unknown skill')));
+
+  const missingPlayer = validateStructuredEvents({
+    opposed_checks: [{
+      activePlayerId: 'missing',
+      activeSkill: '话术',
+      passiveNpcName: '陈友',
+      passiveSkill: '心理学',
+      reason: '不存在的玩家'
+    }]
+  }, { roomState: state });
+  assert.ok(missingPlayer.rejected.includes('opposed_checks'));
+  assert.ok(missingPlayer.issues.some((issue) => issue.includes('participant not found')));
+
+  const hallucinatedNpc = validateStructuredEvents({
+    opposed_checks: [{
+      activePlayerId: 'p1',
+      activeSkill: '话术',
+      passiveNpcName: '幻觉NPC',
+      passiveSkill: '心理学',
+      reason: '模型编造 NPC'
+    }]
+  }, { roomState: state });
+  assert.ok(hallucinatedNpc.rejected.includes('opposed_checks'));
+  assert.ok(hallucinatedNpc.issues.some((issue) => issue.includes('NPC not found')));
+
+  const privateClue = validateStructuredEvents({
+    clues_revealed: [{ content: '只有不存在的人能看见', privateTo: 'missing' }]
+  }, { roomState: state });
+  assert.ok(privateClue.rejected.includes('clues_revealed'));
+  assert.ok(privateClue.issues.some((issue) => issue.includes('privateTo')));
 });
 
 test('infers social opposed check when AI omits structured events for deception', () => {

@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { buildDmMessages, streamChatCompletion } from './aiClient.js';
 import { createEventApplier } from './aiEvents.js';
-import { enhanceStructuredEvents, extractStructuredEvents, validateStructuredEvents } from './aiOutput.js';
+import { enhanceStructuredEvents, extractStructuredEvents, planPreflightCheck, validateStructuredEvents } from './aiOutput.js';
 import { buildIntroSystemPrompt, buildIntroUserContext, buildStructuredOutputPrompt } from './prompts.js';
 import { RoomAiQueue } from './aiQueue.js';
 import { assertAiSettingsInput, roomRuntimeAiConfig } from './aiSettings.js';
@@ -82,6 +82,36 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
   const { applyStructuredEvents } = createEventApplier({ database, hub, addAiLog });
 
+  function loadRoomModuleJson(room) {
+    if (!room?.moduleId) return null;
+    try {
+      const preview = database.getModuleForOwner(
+        room.moduleId,
+        room.ownerPlayerId,
+        { includeText: true, includeSegments: false }
+      );
+      const parsedText = preview?.module?.parsedText || '';
+      return parsedText.trim().startsWith('{') ? JSON.parse(parsedText) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function roomStateWithModuleJson(code, options = {}) {
+    const state = database.getRoomState(code, options);
+    state.moduleJson = loadRoomModuleJson(state.room);
+    return state;
+  }
+
+  function firstAppliedCheckMessage(applied) {
+    return applied?.opposedChecks?.[0]?.message || applied?.requiredChecks?.[0]?.message || null;
+  }
+
+  function isCheckContinuationTask(task) {
+    const key = String(task?.idempotencyKey || '');
+    return key.startsWith('continue:') || key.startsWith('precheck:');
+  }
+
   function setAiTaskStatus(code, taskUid, status, error = '') {
     const task = database.updateAiTaskStatus({ taskUid, status, error });
     if (task) broadcastAiTask(code, task);
@@ -109,7 +139,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     }
 
     setAiTaskStatus(code, taskUid, 'RETRIEVING');
-    const state = database.getRoomState(code, 80);
+    const state = roomStateWithModuleJson(code, 80);
     const moduleSegments = database.getRoomModuleSegments(code, 120);
 
     // Capture pre-round state for rollback
@@ -128,22 +158,6 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
     // Build per-player state JSONs
     state.playerStates = buildAllPlayerStates(state.participants, state.room);
-
-    // Try to get module JSON for AI context
-    state.moduleJson = null;
-    try {
-      if (state.room.moduleId) {
-        const preview = database.getModuleForOwner(
-          state.room.moduleId,
-          state.room.ownerPlayerId,
-          { includeText: true, includeSegments: false }
-        );
-        const pt = preview?.module?.parsedText || '';
-        if (pt.trim().startsWith('{')) {
-          state.moduleJson = JSON.parse(pt);
-        }
-      }
-    } catch { /* use text segments instead */ }
 
     setAiTaskStatus(code, taskUid, 'GENERATING');
     const dmMessage = database.createMessage({
@@ -166,13 +180,14 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       const aiMessages = buildDmMessages(state);
       // 结构化输出指令作为 system 消息，优先级最高
       aiMessages.splice(1, 0, { role: 'system', content: buildStructuredOutputPrompt() });
-      if (task?.idempotencyKey?.startsWith('continue:')) {
+      if (isCheckContinuationTask(task)) {
         aiMessages.splice(2, 0, {
           role: 'system',
           content: [
             '本轮是“检定结果后的继续叙事”。',
             '必须根据最近的骰子/系统检定消息推进结果，不要重复要求同一个检定。',
-            '如果最近检定失败，描述失败后果；如果成功，描述成功获得的信息、位置或 NPC 反应。'
+            '如果最近检定失败，描述失败后果；如果成功，描述成功获得的信息、位置或 NPC 反应。',
+            '本轮通常不需要再返回 required_checks 或 opposed_checks，除非玩家在检定后已经做了新的正式行动。'
           ].join('\n')
         });
       }
@@ -198,7 +213,10 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         roomState: state,
         triggerMessageId: task?.triggerMessageId || null
       });
-      const { valid, rejected, issues } = validateStructuredEvents(enhanced.events);
+      const { valid, rejected, issues, warnings } = validateStructuredEvents(enhanced.events, {
+        roomState: state,
+        defaultPlayerId: task?.requestedByPlayerId || ''
+      });
 
       // 诊断日志
       addAiLog(code, {
@@ -210,6 +228,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         validKeys: Object.keys(valid),
         rejectedKeys: rejected,
         issues,
+        warnings,
         hasOpposedChecks: Array.isArray(enhanced.events.opposed_checks) && enhanced.events.opposed_checks.length > 0,
         opposedCount: Array.isArray(enhanced.events.opposed_checks) ? enhanced.events.opposed_checks.length : 0,
         detection: enhanced.diagnostics,
@@ -780,21 +799,71 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         const message = database.createPlayerMessage({ code, playerId, content, messageType });
         hub.broadcast(code, 'message_created', { message });
         let aiTask = null;
+        let preflightCheck = null;
         if (triggersAi) {
-          const idempotencyKey = body.actionId
+          let triggerMessageId = message.id;
+          let idempotencyKey = body.actionId
             ? `action:${playerId}:${String(body.actionId).slice(0, 80)}`
             : `message:${message.id}`;
+
+          const preflightState = roomStateWithModuleJson(code, { playerId, messageLimit: 100 });
+          if (!preflightState.activeAiTask) {
+            const plan = planPreflightCheck({ actionMessage: message, roomState: preflightState });
+            if (plan.type !== 'none') {
+              addAiLog(code, {
+                stage: 'preflight-check',
+                actionMessageId: message.id,
+                playerId,
+                type: plan.type,
+                reason: plan.reason,
+                eventKeys: Object.keys(plan.events || {}),
+                detection: plan.detection,
+                issues: plan.issues || [],
+                warnings: plan.warnings || []
+              });
+              const applied = applyStructuredEvents(code, '', plan.events, null, preflightState.moduleJson);
+              const checkMessage = firstAppliedCheckMessage(applied);
+              if (checkMessage) {
+                preflightCheck = {
+                  type: plan.type,
+                  reason: plan.reason,
+                  messageId: checkMessage.id,
+                  detection: plan.detection
+                };
+                triggerMessageId = checkMessage.id;
+                idempotencyKey = `precheck:${message.id}:${checkMessage.id}`;
+              }
+            } else if (plan.issues?.length > 0) {
+              addAiLog(code, {
+                stage: 'preflight-skipped',
+                actionMessageId: message.id,
+                playerId,
+                reason: plan.reason,
+                detection: plan.detection,
+                issues: plan.issues
+              });
+            }
+          } else {
+            addAiLog(code, {
+              stage: 'preflight-skipped',
+              actionMessageId: message.id,
+              playerId,
+              reason: 'active-ai-task',
+              activeTaskUid: preflightState.activeAiTask.uid
+            });
+          }
+
           const result = database.createAiTask({
             code,
             playerId,
-            triggerMessageId: message.id,
+            triggerMessageId,
             idempotencyKey
           });
           aiTask = result.task;
           broadcastAiTask(code, aiTask);
           if (result.created) enqueueDm(code, aiTask.uid);
         }
-        sendJson(response, 201, { message, aiQueued: Boolean(aiTask), aiTask });
+        sendJson(response, 201, { message, aiQueued: Boolean(aiTask), aiTask, preflightCheck });
         return;
       }
 

@@ -58,7 +58,7 @@ function characterSheet() {
       EDU: 50,
       Luck: 50
     },
-    skills: { 侦查: 68, 图书馆使用: 55 }
+    skills: { 侦查: 68, 图书馆使用: 55, 话术: 60, 心理学: 50 }
   };
 }
 
@@ -338,7 +338,7 @@ test('AI required_checks are executed as server-side rolls', async () => {
       body: JSON.stringify({
         playerId: 'p1',
         messageType: 'ACTION',
-        content: '我检查书桌下面有没有隐藏暗格。'
+        content: '我把注意力放在书桌边缘，等 DM 判断。'
       })
     });
 
@@ -370,6 +370,210 @@ test('AI required_checks are executed as server-side rolls', async () => {
     const dmMessage = state.messages.find((message) => message.authorType === 'dm');
     assert.ok(dmMessage);
     assert.doesNotMatch(dmMessage.content, /```json/);
+  } finally {
+    await new Promise((resolveClose) => app.server.close(resolveClose));
+    app.database.close();
+    await fakeAi.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('preflight required checks roll before AI continuation', async () => {
+  const fakeAi = await startFakeAiServer('骰点结果出来后，书桌下沿的划痕显得更清楚。\n\n```json\n{}\n```');
+  const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
+  const app = createApp({
+    config: {
+      dbPath: join(dir, 'test.db'),
+      dataDir: dir,
+      publicDir: resolve('public'),
+      ai: {
+        baseUrl: fakeAi.baseUrl,
+        apiKey: 'test-key',
+        model: 'test-model',
+        temperature: 0.1,
+        timeoutMs: 10_000,
+        localFallback: false
+      }
+    },
+    publicDir: resolve('public')
+  });
+
+  try {
+    const baseUrl = await new Promise((resolveListen) => {
+      app.server.listen(0, '127.0.0.1', () => {
+        const address = app.server.address();
+        resolveListen(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    const module = createModule(app.database, 'p1');
+    const created = await jsonRequest(baseUrl, '/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        displayName: 'Keeper',
+        roomName: 'Preflight Check Room',
+        moduleId: module.id
+      })
+    });
+
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/character`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        playerId: 'p1',
+        displayName: 'Keeper',
+        characterSheet: characterSheet()
+      })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/ready`, {
+      method: 'PATCH',
+      body: JSON.stringify({ playerId: 'p1', isReady: true })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ playerId: 'p1', status: 'ACTIVE' })
+    });
+
+    const submitted = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        messageType: 'ACTION',
+        content: '我仔细侦查房间，检查书桌下面有没有隐藏痕迹。'
+      })
+    });
+
+    assert.equal(submitted.preflightCheck.type, 'required');
+    assert.equal(submitted.preflightCheck.messageId, submitted.aiTask.triggerMessageId);
+    assert.match(submitted.aiTask.idempotencyKey, /^precheck:/);
+
+    const state = await waitForState(
+      baseUrl,
+      created.room.code,
+      'p1',
+      (roomState) => roomState.aiTasks.some((task) => task.uid === submitted.aiTask.uid && task.status === 'COMPLETED')
+    );
+
+    assert.equal(fakeAi.requests.length, 1);
+    assert.ok(fakeAi.requests[0].body.messages.some((message) =>
+      message.role === 'system' && /检定结果后的继续叙事/.test(message.content)
+    ));
+
+    const rolls = state.diceRolls.filter((roll) => roll.label === '侦查');
+    assert.equal(rolls.length, 1);
+    assert.equal(rolls[0].playerId, 'p1');
+
+    const checkMessages = state.messages.filter((message) => message.displayName === '必要检定');
+    assert.equal(checkMessages.length, 1);
+    assert.match(checkMessages[0].content, /侦查\(68\)/);
+
+    const dmMessage = state.messages.find((message) => message.authorType === 'dm');
+    assert.ok(dmMessage);
+    assert.doesNotMatch(dmMessage.content, /```json/);
+  } finally {
+    await new Promise((resolveClose) => app.server.close(resolveClose));
+    app.database.close();
+    await fakeAi.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('preflight opposed checks use recent NPC context before AI narration', async () => {
+  const fakeAi = await startFakeAiServer('检定结果让陈友的态度出现了细微变化。\n\n```json\n{}\n```');
+  const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
+  const app = createApp({
+    config: {
+      dbPath: join(dir, 'test.db'),
+      dataDir: dir,
+      publicDir: resolve('public'),
+      ai: {
+        baseUrl: fakeAi.baseUrl,
+        apiKey: 'test-key',
+        model: 'test-model',
+        temperature: 0.1,
+        timeoutMs: 10_000,
+        localFallback: false
+      }
+    },
+    publicDir: resolve('public')
+  });
+
+  try {
+    const baseUrl = await new Promise((resolveListen) => {
+      app.server.listen(0, '127.0.0.1', () => {
+        const address = app.server.address();
+        resolveListen(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    const module = createModule(app.database, 'p1');
+    const created = await jsonRequest(baseUrl, '/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        displayName: 'Keeper',
+        roomName: 'Preflight Opposed Room',
+        moduleId: module.id
+      })
+    });
+
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/character`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        playerId: 'p1',
+        displayName: 'Keeper',
+        characterSheet: characterSheet()
+      })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/ready`, {
+      method: 'PATCH',
+      body: JSON.stringify({ playerId: 'p1', isReady: true })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ playerId: 'p1', status: 'ACTIVE' })
+    });
+
+    app.database.createMessage({
+      code: created.room.code,
+      authorType: 'dm',
+      messageType: 'AI_DM',
+      displayName: 'AI DM',
+      content: '陈友把茶缸放在柜台边，抬头等你继续解释。'
+    });
+
+    const submitted = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        messageType: 'ACTION',
+        content: '其实我祖上也是我们村的人'
+      })
+    });
+
+    assert.equal(submitted.preflightCheck.type, 'opposed');
+    assert.equal(submitted.preflightCheck.messageId, submitted.aiTask.triggerMessageId);
+    assert.match(submitted.aiTask.idempotencyKey, /^precheck:/);
+
+    const state = await waitForState(
+      baseUrl,
+      created.room.code,
+      'p1',
+      (roomState) => roomState.aiTasks.some((task) => task.uid === submitted.aiTask.uid && task.status === 'COMPLETED')
+    );
+
+    assert.ok(fakeAi.requests[0].body.messages.some((message) =>
+      message.role === 'system' && /检定结果后的继续叙事/.test(message.content)
+    ));
+
+    const opposedRolls = state.diceRolls.filter((roll) => roll.rollType === 'contested_check');
+    assert.equal(opposedRolls.length, 1);
+    assert.match(opposedRolls[0].label, /话术 vs 陈友/);
+
+    const checkMessage = state.messages.find((message) => message.displayName === '对抗检定');
+    assert.ok(checkMessage);
+    assert.match(checkMessage.content, /陈友/);
+    assert.match(checkMessage.content, /话术\(60\)/);
   } finally {
     await new Promise((resolveClose) => app.server.close(resolveClose));
     app.database.close();

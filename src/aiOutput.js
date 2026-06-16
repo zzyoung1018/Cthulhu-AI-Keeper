@@ -2,6 +2,8 @@
 // AI replies split into narrative text (streamed to players) and structured events
 // parsed after completion. Events are validated before being written to the database.
 
+import { getCheckTarget, getSkillTarget } from './character.js';
+
 const EVENT_SCHEMAS = {
   required_checks: {
     type: 'array',
@@ -579,6 +581,20 @@ function currentSceneIds(roomState = {}) {
   return ids;
 }
 
+function parseSceneState(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
+}
+
+function participantByPlayerId(roomState = {}, playerId = '') {
+  return (roomState.participants || []).find((participant) => participant.playerId === playerId) || null;
+}
+
 function isNpcOnlyObservation(text, roomState) {
   const source = normalizeText(text);
   if (!/(看|看看|查看|观察|打量|盯着|端详)/.test(source)) return false;
@@ -763,11 +779,99 @@ function npcCandidates(roomState = {}) {
 
 function findExplicitNpc(text, candidates) {
   const source = String(text || '');
-  return candidates.find(({ alias }) => new RegExp(escapeRegExp(alias)).test(source))?.name || '';
+  return explicitNpcMatches(source, candidates)[0]?.name || '';
+}
+
+function explicitNpcMatches(text, candidates) {
+  const source = String(text || '');
+  return candidates.filter(({ alias }) => new RegExp(escapeRegExp(alias)).test(source));
+}
+
+function uniqueNpcName(matches) {
+  const names = [...new Set(matches.map((match) => match.name).filter(Boolean))];
+  return names.length === 1 ? names[0] : '';
+}
+
+function recentNpcMention(roomState, candidates, excludedNames = []) {
+  const excluded = new Set(excludedNames.filter(Boolean));
+  const recentText = (roomState.messages || [])
+    .slice(-8)
+    .map((message) => `${message.displayName || ''} ${message.content || ''}`)
+    .join('\n');
+  return uniqueNpcName(explicitNpcMatches(recentText, candidates)
+    .filter((match) => !excluded.has(match.name)));
+}
+
+function sourceNpcNamesInDeception(text, candidates) {
+  const source = String(text || '');
+  return [...new Set(explicitNpcMatches(source, candidates)
+    .filter((match) => new RegExp(`${escapeRegExp(match.alias)}.{0,6}(?:让|叫|派|托|要|让我|让我们)`).test(source))
+    .map((match) => match.name)
+    .filter(Boolean))];
+}
+
+function resolveNpcReference(value, roomState = {}) {
+  const name = normalizeText(value);
+  if (!name) return null;
+
+  for (const npc of roomState.moduleJson?.npcs || []) {
+    const aliases = [npc.name, npc.npc_id].filter(Boolean).map(normalizeText);
+    if (aliases.some((alias) => alias && (alias === name || alias.includes(name) || name.includes(alias)))) {
+      return {
+        name: npc.name || name,
+        npcId: npc.npc_id || '',
+        source: 'module'
+      };
+    }
+  }
+
+  const sceneState = parseSceneState(roomState.room?.sceneState);
+  for (const npc of Object.values(sceneState.npcStates || {})) {
+    const aliases = [npc.name, npc.npcName, npc.id, npc.npcId].filter(Boolean).map(normalizeText);
+    if (aliases.some((alias) => alias && (alias === name || alias.includes(name) || name.includes(alias)))) {
+      return {
+        name: npc.name || npc.npcName || name,
+        npcId: npc.npcId || npc.id || '',
+        source: 'scene-state'
+      };
+    }
+  }
+
+  for (const participant of roomState.participants || []) {
+    for (const npc of participant.playerMeta?.knownNpcs || []) {
+      const aliases = [npc.name, npc.npcName, npc.id, npc.npcId].filter(Boolean).map(normalizeText);
+      if (aliases.some((alias) => alias && (alias === name || alias.includes(name) || name.includes(alias)))) {
+        return {
+          name: npc.name || npc.npcName || name,
+          npcId: npc.npcId || npc.id || '',
+          source: 'known-npc'
+        };
+      }
+    }
+  }
+
+  const alias = npcCandidates(roomState).find((candidate) =>
+    normalizeText(candidate.alias) === name || normalizeText(candidate.name) === name
+  );
+  return alias ? { name: alias.name, npcId: '', source: 'alias' } : null;
+}
+
+function recentTextIncludes(value, roomState = {}) {
+  const text = normalizeText((roomState.messages || []).slice(-12).map((message) =>
+    `${message.displayName || ''} ${message.content || ''}`
+  ).join('\n'));
+  const needle = normalizeText(value);
+  return Boolean(needle && text.includes(needle));
 }
 
 function inferNpcName({ actionText, narrative, roomState }) {
   const candidates = npcCandidates(roomState);
+  const sourceNames = sourceNpcNamesInDeception(actionText, candidates);
+  if (sourceNames.length > 0) {
+    const recentTarget = recentNpcMention(roomState, candidates, sourceNames);
+    if (recentTarget) return recentTarget;
+  }
+
   const explicit = findExplicitNpc(actionText, candidates);
   if (explicit) return explicit;
 
@@ -776,7 +880,10 @@ function inferNpcName({ actionText, narrative, roomState }) {
     .map((message) => message.content || '')
     .join('\n');
 
-  const pronounTarget = /(?:他|她|对方|那人|那个人|老人|老汉|司机|板寸头|主任|所长|大夫|师傅)/.test(actionText);
+  const contextualTarget = recentNpcMention(roomState, candidates);
+  if (contextualTarget) return contextualTarget;
+
+  const pronounTarget = /(?:他|她|你|您|对方|那人|那个人|老人|老汉|司机|板寸头|主任|所长|大夫|师傅)/.test(actionText);
   if (pronounTarget) {
     const fromNarrative = findExplicitNpc(narrative, candidates);
     if (fromNarrative) return fromNarrative;
@@ -850,6 +957,94 @@ function buildInferredRequiredCheck({ action, rule }) {
     difficulty: rule.difficulty,
     reason: rule.reason,
     playerHint: rule.playerHint
+  };
+}
+
+export function planPreflightCheck({ actionMessage, roomState = {} } = {}) {
+  const action = actionMessage;
+  if (!action || action.authorType !== 'player' || action.messageType !== 'ACTION' || !action.playerId) {
+    return { type: 'none', reason: 'not-action', events: {}, detection: null, issues: [] };
+  }
+
+  const opposedRule = classifyOpposedAction(action.content);
+  if (opposedRule) {
+    const npcName = inferNpcName({ actionText: action.content, narrative: '', roomState });
+    if (!npcName) {
+      return {
+        type: 'none',
+        reason: 'opposed-npc-unresolved',
+        events: {},
+        detection: {
+          ...opposedRule.detection,
+          skill: opposedRule.activeSkill,
+          passiveSkill: opposedRule.passiveSkill
+        },
+        issues: ['opposed check target NPC could not be resolved before narration']
+      };
+    }
+
+    const events = {
+      opposed_checks: [buildInferredOpposedCheck({ action, rule: opposedRule, npcName })]
+    };
+    const checked = validateStructuredEvents(events, { roomState, defaultPlayerId: action.playerId });
+    if (!checked.valid.opposed_checks?.length) {
+      return {
+        type: 'none',
+        reason: 'opposed-validation-failed',
+        events: {},
+        detection: opposedRule.detection,
+        issues: checked.issues
+      };
+    }
+
+    return {
+      type: 'opposed',
+      reason: `preflight-${opposedRule.type}`,
+      events: { opposed_checks: checked.valid.opposed_checks },
+      detection: {
+        ...opposedRule.detection,
+        target: checked.valid.opposed_checks[0].passiveNpcName,
+        skill: opposedRule.activeSkill,
+        passiveSkill: opposedRule.passiveSkill
+      },
+      issues: checked.issues,
+      warnings: checked.warnings || []
+    };
+  }
+
+  const requiredRule = classifyModuleRequiredAction(action.content, roomState) ||
+    classifyRequiredAction(action.content, roomState);
+  if (!requiredRule) {
+    return { type: 'none', reason: 'no-check', events: {}, detection: null, issues: [] };
+  }
+
+  const events = {
+    required_checks: [buildInferredRequiredCheck({ action, rule: requiredRule })]
+  };
+  const checked = validateStructuredEvents(events, { roomState, defaultPlayerId: action.playerId });
+  if (!checked.valid.required_checks?.length) {
+    return {
+      type: 'none',
+      reason: 'required-validation-failed',
+      events: {},
+      detection: requiredRule.detection,
+      issues: checked.issues
+    };
+  }
+
+  return {
+    type: 'required',
+    reason: `preflight-${requiredRule.detection?.source || 'backend'}-${requiredRule.skill}`,
+    events: { required_checks: checked.valid.required_checks },
+    detection: {
+      ...requiredRule.detection,
+      skill: checked.valid.required_checks[0].skill,
+      difficulty: checked.valid.required_checks[0].difficulty,
+      moduleCheckId: requiredRule.moduleCheckId || '',
+      moduleSceneId: requiredRule.moduleSceneId || ''
+    },
+    issues: checked.issues,
+    warnings: checked.warnings || []
   };
 }
 
@@ -1141,10 +1336,144 @@ export function enhanceStructuredEvents({ events, narrative, roomState, triggerM
   };
 }
 
-export function validateStructuredEvents(events) {
+function normalizeRequiredChecksForRoom(value, roomState, defaultPlayerId) {
+  const kept = [];
+  const issues = [];
+
+  value.forEach((check, index) => {
+    const targetPlayerId = check.targetPlayerId || defaultPlayerId || roomState.participants?.[0]?.playerId || '';
+    const participant = participantByPlayerId(roomState, targetPlayerId);
+    if (!participant) {
+      issues.push(`required_checks[${index}].targetPlayerId: room participant not found`);
+      return;
+    }
+
+    const target = getCheckTarget(participant.characterSheet, check.skill);
+    if (!target || !Number.isInteger(target.target)) {
+      issues.push(`required_checks[${index}].skill: unknown skill or characteristic for target player (${check.skill})`);
+      return;
+    }
+
+    kept.push({
+      ...check,
+      targetPlayerId,
+      skill: target.label,
+      difficulty: normalizeDifficulty(check.difficulty)
+    });
+  });
+
+  return { value: kept, issues };
+}
+
+function normalizeOpposedChecksForRoom(value, roomState) {
+  const kept = [];
+  const issues = [];
+  const warnings = [];
+  const hasModuleNpcs = Array.isArray(roomState.moduleJson?.npcs) && roomState.moduleJson.npcs.length > 0;
+
+  value.forEach((check, index) => {
+    const participant = participantByPlayerId(roomState, check.activePlayerId);
+    if (!participant) {
+      issues.push(`opposed_checks[${index}].activePlayerId: room participant not found`);
+      return;
+    }
+
+    const activeSkill = getSkillTarget(participant.characterSheet, check.activeSkill);
+    if (!Number.isInteger(activeSkill)) {
+      issues.push(`opposed_checks[${index}].activeSkill: unknown skill for active player (${check.activeSkill})`);
+      return;
+    }
+
+    const npc = resolveNpcReference(check.passiveNpcName, roomState);
+    if (!npc && hasModuleNpcs && !recentTextIncludes(check.passiveNpcName, roomState)) {
+      issues.push(`opposed_checks[${index}].passiveNpcName: NPC not found in module, known NPCs, or recent scene (${check.passiveNpcName})`);
+      return;
+    }
+    if (!npc) {
+      warnings.push(`opposed_checks[${index}].passiveNpcName: NPC kept as ad-hoc target (${check.passiveNpcName})`);
+    }
+
+    kept.push({
+      ...check,
+      passiveNpcName: npc?.name || check.passiveNpcName,
+      contestType: check.contestType || inferContestTypeFromSkill(check.activeSkill)
+    });
+  });
+
+  return { value: kept, issues, warnings };
+}
+
+function inferContestTypeFromSkill(skill) {
+  if (['潜行', '妙手', '乔装'].includes(skill)) return 'stealth';
+  if (['格斗', '射击'].includes(skill)) return 'combat';
+  return 'social';
+}
+
+function normalizeStateChangesForRoom(value, roomState) {
+  const kept = [];
+  const issues = [];
+
+  value.forEach((change, index) => {
+    if (!participantByPlayerId(roomState, change.targetPlayerId)) {
+      issues.push(`proposed_state_changes[${index}].targetPlayerId: room participant not found`);
+      return;
+    }
+    kept.push(change);
+  });
+
+  return { value: kept, issues };
+}
+
+function normalizeCluesForRoom(value, roomState) {
+  const kept = [];
+  const issues = [];
+
+  value.forEach((clue, index) => {
+    if (clue.privateTo && !participantByPlayerId(roomState, clue.privateTo)) {
+      issues.push(`clues_revealed[${index}].privateTo: room participant not found`);
+      return;
+    }
+    kept.push(clue);
+  });
+
+  return { value: kept, issues };
+}
+
+function normalizeNpcChangesForRoom(value, roomState) {
+  const warnings = [];
+  const normalized = value.map((npc, index) => {
+    const match = resolveNpcReference(npc.npcId || npc.npcName, roomState);
+    if (!match && Array.isArray(roomState.moduleJson?.npcs) && roomState.moduleJson.npcs.length > 0) {
+      warnings.push(`npc_state_changes[${index}].npcName: NPC kept as ad-hoc state (${npc.npcName})`);
+      return npc;
+    }
+    if (!match) return npc;
+    return {
+      ...npc,
+      npcId: npc.npcId || match.npcId,
+      npcName: match.name
+    };
+  });
+
+  return { value: normalized, issues: [], warnings };
+}
+
+function normalizeEventValueForRoom(key, value, roomState, defaultPlayerId) {
+  if (!roomState?.participants) return { value, issues: [], warnings: [] };
+  if (key === 'required_checks') return normalizeRequiredChecksForRoom(value, roomState, defaultPlayerId);
+  if (key === 'opposed_checks') return normalizeOpposedChecksForRoom(value, roomState);
+  if (key === 'proposed_state_changes') return normalizeStateChangesForRoom(value, roomState);
+  if (key === 'clues_revealed') return normalizeCluesForRoom(value, roomState);
+  if (key === 'npc_state_changes') return normalizeNpcChangesForRoom(value, roomState);
+  return { value, issues: [], warnings: [] };
+}
+
+export function validateStructuredEvents(events, options = {}) {
   const valid = {};
   const rejected = [];
   const issues = [];
+  const warnings = [];
+  const { roomState = null, defaultPlayerId = '' } = options || {};
 
   for (const [key, schema] of Object.entries(EVENT_SCHEMAS)) {
     const value = events[key];
@@ -1204,8 +1533,21 @@ export function validateStructuredEvents(events) {
       }
     }
 
-    valid[key] = value;
+    const roomValidation = normalizeEventValueForRoom(key, value, roomState, defaultPlayerId);
+    warnings.push(...(roomValidation.warnings || []));
+    if (roomValidation.issues?.length > 0) {
+      rejected.push(key);
+      issues.push(...roomValidation.issues);
+      continue;
+    }
+    if (Array.isArray(roomValidation.value) && roomValidation.value.length === 0 && Array.isArray(value) && value.length > 0) {
+      rejected.push(key);
+      issues.push(`${key}: no valid room-applicable items`);
+      continue;
+    }
+
+    valid[key] = roomValidation.value;
   }
 
-  return { valid, rejected, issues };
+  return { valid, rejected, issues, warnings };
 }

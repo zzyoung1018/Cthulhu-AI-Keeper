@@ -197,13 +197,13 @@ export function createEventApplier({ database, hub, addAiLog }) {
 
   function applyRequiredCheck(code, check, defaultPlayerId) {
     const targetPlayerId = check.targetPlayerId || defaultPlayerId;
-    if (!targetPlayerId) return;
+    if (!targetPlayerId) return null;
 
     const { participant } = database.getParticipant(code, targetPlayerId);
-    if (!participant) return;
+    if (!participant) return null;
 
     const target = getCheckTarget(participant.characterSheet, check.skill);
-    if (!target || !Number.isInteger(target.target)) return;
+    if (!target || !Number.isInteger(target.target)) return null;
 
     const difficulty = normalizeCheckDifficulty(check.difficulty);
     const { result } = dispatchDiceRoll({
@@ -245,6 +245,7 @@ export function createEventApplier({ database, hub, addAiLog }) {
 
     hub.broadcast(code, 'message_created', { message: msg });
     hub.broadcast(code, 'dice_rolled', { roll });
+    return { type: 'required', message: msg, roll, check };
   }
 
   function applyStateChange(code, change) {
@@ -296,12 +297,21 @@ export function createEventApplier({ database, hub, addAiLog }) {
   function applyStructuredEvents(code, taskUid, events, dmMessageId, moduleJson = null) {
     const state = database.getRoomState(code, 80);
     const defaultPlayerId = resolveDefaultCheckPlayerId(state, taskUid);
+    const applied = {
+      requiredChecks: [],
+      opposedChecks: [],
+      stateChanges: 0,
+      clues: 0,
+      sceneChanges: 0,
+      npcChanges: 0
+    };
 
     // Process required checks against static obstacles or the environment.
     if (Array.isArray(events.required_checks)) {
       for (const check of events.required_checks) {
         try {
-          applyRequiredCheck(code, check, defaultPlayerId);
+          const result = applyRequiredCheck(code, check, defaultPlayerId);
+          if (result) applied.requiredChecks.push(result);
         } catch (checkError) {
           console.error('[ai-output] required check failed:', check.skill, checkError.message);
         }
@@ -393,6 +403,7 @@ export function createEventApplier({ database, hub, addAiLog }) {
 
           hub.broadcast(code, 'message_created', { message: msg });
           hub.broadcast(code, 'dice_rolled', { roll });
+          applied.opposedChecks.push({ type: 'opposed', message: msg, roll, check: opp });
         } catch (oppError) {
           console.error('[ai-output] opposed check failed:', oppError.message);
         }
@@ -404,6 +415,7 @@ export function createEventApplier({ database, hub, addAiLog }) {
       for (const change of events.proposed_state_changes) {
         try {
           applyStateChange(code, change);
+          applied.stateChanges += 1;
         } catch (stateError) {
           console.error('[ai-output] state change failed:', change.fieldPath, stateError.message);
         }
@@ -429,6 +441,7 @@ export function createEventApplier({ database, hub, addAiLog }) {
             hub.broadcast(code, 'message_created', { message: clueMsg });
           }
           persistClue(code, clue, clueMsg, state.participants || []);
+          applied.clues += 1;
         } catch (clueError) {
           console.error('[ai-output] clue reveal failed:', clueError.message);
           addAiLog(code, {
@@ -468,6 +481,7 @@ export function createEventApplier({ database, hub, addAiLog }) {
         status: 'complete'
       });
       hub.broadcast(code, 'message_created', { message: sceneMsg });
+      applied.sceneChanges += 1;
 
       try {
         const currentSceneState = parseSceneState(state.room.sceneState);
@@ -515,6 +529,7 @@ export function createEventApplier({ database, hub, addAiLog }) {
           });
           hub.broadcast(code, 'message_created', { message: npcMsg });
           persistNpcState(code, npc, state.participants || []);
+          applied.npcChanges += 1;
         } catch (npcError) {
           console.error('[ai-output] npc state failed:', npc.npcName, npcError.message);
           addAiLog(code, {
@@ -529,6 +544,7 @@ export function createEventApplier({ database, hub, addAiLog }) {
     // Broadcast updated room state
     const updatedState = database.getRoomState(code, 80);
     hub.broadcast(code, 'room_state', updatedState);
+    return applied;
   }
 
   return { applyStructuredEvents };
