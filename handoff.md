@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-16 14:10 CST
+Last updated: 2026-06-16 17:56 CST
 
 ## Current State
 
@@ -12,15 +12,18 @@ Last updated: 2026-06-16 14:10 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/opt/dm-online/data`
 - Local branch: `main`
-- Latest completed local app commit: `9a6ab9b feat: improve ai log tools and frontend coverage`
-- Latest deployed app commit: `9a6ab9b feat: improve ai log tools and frontend coverage`
-- Deployment verified on 2026-06-16 14:08 CST: systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
+- Latest completed local app commit: `96d8f3d fix: validate private message targets`
+- Latest deployed app commit: `96d8f3d fix: validate private message targets`
+- Deployment verified on 2026-06-16 17:55 CST: systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
 - Local worktree is clean.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent Commits
 
+- `96d8f3d` fix: validate private message targets
+- `ee06284` chore: checkpoint before bug audit fixes
+- `d8e23d6` docs: update handoff after deployment and e2e work
 - `9a6ab9b` feat: improve ai log tools and frontend coverage
 - `01a7d1d` chore: checkpoint before e2e and log upgrades
 - `d419174` docs: update handoff after quick send
@@ -28,15 +31,12 @@ Do not write server credentials into committed files. Use the conversation conte
 - `4716b92` test: add frontend e2e and readable ai logs
 - `e426d16` feat: persist ai state and action lifecycle
 - `56ffb3c` chore: checkpoint before ai state and log upgrades
-- `4ad3c21` docs: update handoff with ai detection review
-- `79bedf4` docs: refresh handoff with continue loop fix and duplicate marker fix
-- `0a94f99` fix: strip AI-generated check markers before injecting backend markers
 
 ## Code Map
 
 ```text
 src/
-  app.js           (1030 lines) — HTTP routes, room lifecycle, AI orchestration
+  app.js           (1037 lines) — HTTP routes, room lifecycle, AI orchestration
   aiOutput.js      (1211 lines) — AI JSON extraction, validation, detection inference
   aiEvents.js       (535 lines) — applies AI structured events to rolls/state/summary
   aiClient.js       (430 lines) — streaming client and scene-aware AI context assembly
@@ -50,13 +50,13 @@ src/
   privateHub.js      (63 lines) — player-specific SSE delivery
 
 public/
-  app.js          (2467 lines) — main frontend logic
+  app.js          (2458 lines) — main frontend logic
 
 test/
   comprehensive-ai.test.mjs (765 lines) — full AI detection and event coverage
   aiOutput.test.mjs         (594 lines) — parser/validator/inference regressions
   frontend.e2e.mjs          (507 lines) — Playwright browser coverage for visible controls
-  app.test.mjs              (446 lines) — API integration tests
+  app.test.mjs              (527 lines) — API integration tests
   db.test.mjs               (774 lines) — persistence tests
   fixtures/
     comprehensive-test-module.json — reusable CoC 7e test module
@@ -203,6 +203,27 @@ Verification after `9a6ab9b`:
 - In-app Browser smoke check — OK
 - Server `npm run check`
 - Server `npm test` — 105/105 passed
+- Server systemd/Nginx/health checks — OK
+- Public deployment audit — OK
+
+### Bug Audit Fixes (`96d8f3d`)
+
+Two concrete bugs were found and fixed during the latest review:
+
+- Private message API accepted missing or non-room `privateTarget` values.
+  - Before: it could create a private message that no recipient would ever receive.
+  - Now: `POST /api/rooms/:code/messages` with `messageType: "PRIVATE"` requires `privateTarget`, validates the target is a room participant, and then delivers to sender + target.
+  - Added integration coverage in `test/app.test.mjs`.
+- Frontend SSE had duplicate `message_error` listeners.
+  - Before: one AI failure event could run the same error handling twice and show duplicate toasts.
+  - Now: only one listener remains.
+
+Verification after `96d8f3d`:
+- Local `npm run check`
+- Local `npm test` — 106/106 passed
+- Local `npm run test:e2e` — 8/8 passed
+- Server `npm run check`
+- Server `npm test` — 106/106 passed
 - Server systemd/Nginx/health checks — OK
 - Public deployment audit — OK
 
