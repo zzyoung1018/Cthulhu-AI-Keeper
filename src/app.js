@@ -742,7 +742,8 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         const submitToDm = Boolean(body.submitToDm);
         const messageType = String(body.messageType || (submitToDm ? 'ACTION' : 'IC')).trim().toUpperCase();
         const privateTarget = optionalString(body.privateTarget, 80);
-        const { room } = database.getParticipant(code, playerId);
+        const sender = database.getParticipant(code, playerId);
+        const { room } = sender;
         const triggersAi = messageType === 'ACTION' || submitToDm;
         if (triggersAi && room.status !== 'ACTIVE') {
           throw new HttpError(409, 'Game is not active');
@@ -750,7 +751,15 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
         // Private messages: only deliver to intended recipient (and sender sees their own)
         if (messageType === 'PRIVATE') {
-          const { participant } = database.getParticipant(code, playerId);
+          if (!privateTarget) {
+            throw new HttpError(400, 'privateTarget is required for private messages');
+          }
+          try {
+            database.getParticipant(code, privateTarget);
+          } catch {
+            throw new HttpError(400, 'privateTarget must be a room participant');
+          }
+          const { participant } = sender;
           const message = database.createMessage({
             code,
             authorType: 'player',
@@ -762,10 +771,8 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
             status: 'complete',
             privateTarget
           });
-          if (privateTarget) {
-            hub.sendTo(code, privateTarget, 'message_created', { message });
-            hub.sendTo(code, playerId, 'message_created', { message });
-          }
+          hub.sendTo(code, privateTarget, 'message_created', { message });
+          hub.sendTo(code, playerId, 'message_created', { message });
           sendJson(response, 201, { message, aiQueued: false });
           return;
         }

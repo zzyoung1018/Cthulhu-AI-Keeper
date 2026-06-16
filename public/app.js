@@ -1983,15 +1983,6 @@ function connectEvents() {
     renderMessages();
   });
 
-  source.addEventListener('message_error', (event) => {
-    const { message } = JSON.parse(event.data);
-    const index = state.messages.findIndex((item) => item.id === message.id);
-    if (index >= 0) state.messages[index] = message;
-    updateMessageNode(message);
-    setAiBusy(false);
-    toast('AI 生成失败');
-  });
-
   source.onerror = () => {
     setConnection('reconnecting', '正在重连');
   };

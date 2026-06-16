@@ -179,6 +179,87 @@ test('skill rolls use the server-side character sheet target', async () => {
   }
 });
 
+test('private messages require a valid room participant target', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
+  const app = createApp({
+    config: {
+      dbPath: join(dir, 'test.db'),
+      dataDir: dir,
+      publicDir: resolve('public'),
+      ai: { localFallback: true }
+    },
+    publicDir: resolve('public')
+  });
+
+  try {
+    const baseUrl = await new Promise((resolveListen) => {
+      app.server.listen(0, '127.0.0.1', () => {
+        const address = app.server.address();
+        resolveListen(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    const module = createModule(app.database, 'owner');
+    const created = await jsonRequest(baseUrl, '/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'owner',
+        displayName: 'Keeper',
+        roomName: 'Private Target Room',
+        moduleId: module.id
+      })
+    });
+
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/join`, {
+      method: 'POST',
+      body: JSON.stringify({ playerId: 'guest', displayName: 'Guest' })
+    });
+
+    const missingTarget = await fetch(`${baseUrl}/api/rooms/${created.room.code}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        playerId: 'owner',
+        messageType: 'PRIVATE',
+        content: 'secret'
+      })
+    });
+    const missingBody = await missingTarget.json();
+    assert.equal(missingTarget.status, 400);
+    assert.match(missingBody.error, /privateTarget is required/);
+
+    const unknownTarget = await fetch(`${baseUrl}/api/rooms/${created.room.code}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        playerId: 'owner',
+        messageType: 'PRIVATE',
+        privateTarget: 'missing-player',
+        content: 'secret'
+      })
+    });
+    const unknownBody = await unknownTarget.json();
+    assert.equal(unknownTarget.status, 400);
+    assert.match(unknownBody.error, /room participant/);
+
+    const valid = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'owner',
+        messageType: 'PRIVATE',
+        privateTarget: 'guest',
+        content: 'secret'
+      })
+    });
+    assert.equal(valid.message.privateTarget, 'guest');
+    assert.equal(valid.aiQueued, false);
+  } finally {
+    await new Promise((resolveClose) => app.server.close(resolveClose));
+    app.database.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('AI required_checks are executed as server-side rolls', async () => {
   const aiText = [
     '书桌边缘的潮气让木板微微翘起，你的手停在抽屉下沿。',
