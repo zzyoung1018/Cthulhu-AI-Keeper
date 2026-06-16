@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-15 19:44 CST
+Last updated: 2026-06-16 00:00 CST
 
 ## Current State
 
@@ -12,19 +12,20 @@ Last updated: 2026-06-15 19:44 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/opt/dm-online/data`
 - Local branch: `main`
-- Latest functional/deployed code commit: `6546044 fix: make deployment audit summary assertion stable`
-- Latest deployed app content includes `6546044` and `e58f148`
-- Local worktree was clean after deployment before this handoff update.
+- Latest deployed commit: `0a94f99 fix: strip AI-generated check markers before injecting backend markers`
+- Local worktree is clean.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent Commits
 
+- `0a94f99` fix: strip AI-generated check markers before injecting backend markers
+- `652a60d` fix: skip processed actions in latestPlayerAction to prevent check re-inference loop
+- `0ec6d12` docs: refresh handoff after ai detection deployment
 - `6546044` fix: make deployment audit summary assertion stable
 - `e58f148` fix: expand ai detection diagnostics
 - `0a732a7` chore: checkpoint before ai detection expansion
 - `0c4067c` fix: stabilize continuation rollback and ai events
-- `04fb838` chore: checkpoint before stability fixes
 - `3028b48` docs: update handoff notes with session refactor details
 - `2e1d80d` refactor: remove dead code, fix double normalization, extract aiEvents module
 
@@ -33,7 +34,7 @@ Do not write server credentials into committed files. Use the conversation conte
 ```text
 src/
   app.js           (1026 lines) — HTTP routes, room lifecycle, AI orchestration
-  aiOutput.js      (1177 lines) — AI JSON extraction, validation, detection inference
+  aiOutput.js      (~1200 lines) — AI JSON extraction, validation, detection inference
   aiEvents.js       (381 lines) — applies AI structured events to rolls/state/summary
   aiClient.js       (261 lines) — streaming client and AI context assembly
   prompts.js        (243 lines) — system/user/structured-output prompts
@@ -50,216 +51,142 @@ public/
 
 test/
   comprehensive-ai.test.mjs (702 lines) — full AI detection and event coverage
-  aiOutput.test.mjs         (520 lines) — parser/validator/inference regressions
+  aiOutput.test.mjs         (~560 lines) — parser/validator/inference regressions
   app.test.mjs              (446 lines) — API integration tests
   db.test.mjs               (735 lines) — persistence tests
+  fixtures/
+    comprehensive-test-module.json — reusable CoC 7e test module
 ```
 
-## What Was Just Finished
+## What Was Just Finished (2026-06-15 Session)
 
-### AI Detection Expansion (`e58f148`)
+### Fix: Continue Loop — Check Re-inference (`652a60d`)
 
-Backend detection now covers more ordinary CoC skill checks, not just 侦查/聆听/图书馆使用.
+**Problem**: Clicking `继续叙事` after a check result caused the same check to trigger again, creating an infinite loop.
 
-New generic required-check rules include:
+**Root cause**: The `/continue` endpoint does not create a new player ACTION message. `latestPlayerAction()` in `aiOutput.js` kept finding the *original* ACTION (e.g., "我谎称自己是陈友的远房亲戚"), and `classifyOpposedAction` kept re-matching it — every round, forever.
 
-- 会计
-- 锁匠
-- 急救
-- 医学
-- 驾驶汽车
-- 攀爬
-- 跳跃
-- 投掷
-- 追踪
-- 神秘学
-- 法律
-- 估价
-- 导航
-- 博物学
-- 机械维修
-- 电气维修
-- 化学
-- 物理学
-- 药学
+**Fix** (`src/aiOutput.js` `latestPlayerAction`): After finding the latest ACTION, check whether a DM reply or check system message already exists after it. If so, the action has been processed — return `null` to skip inference.
 
-Existing opposed checks still take priority over required checks:
-
-- 社交：话术/说服/恐吓/魅惑 vs NPC 心理学
-- 潜行：潜行/妙手/乔装 vs NPC 侦查/聆听/心理学
-- 战斗：格斗/射击 vs NPC 闪避/侦查
-
-### Module JSON Check Matching
-
-`src/aiOutput.js` now tries `roomState.moduleJson.checks` before generic required-check rules.
-
-Important details:
-
-- Match uses trigger text, skill mentions, generic same-skill hits, current scene, and CJK bigram overlap.
-- Secret-ish `success` / `failure` / `ai_dm_instruction` text can add a small overlap score, but cannot be the only anchor.
-- A module check must be anchored by trigger overlap/exact match, explicit skill mention, or a generic same-skill rule.
-- Module matches add detection metadata:
-  - `source: "module"`
-  - `moduleCheckId`
-  - `moduleSceneId`
-  - confidence score
-  - notes such as `trigger-overlap`, `generic-same-skill`, `scene-match`
-- Player-facing system messages do not expose module `ai_dm_instruction`; they use a generic safe hint.
-
-### False Positive Reduction
-
-The backend now avoids inferring 侦查 when a player only observes an NPC reaction, for example:
-
-```text
-我看看陈友的脸色和反应。
+```js
+// Pseudocode for the fix:
+const action = findLatestAction(messages);
+const alreadyProcessed = messagesAfter(action).some(m =>
+  m.authorType === 'dm' ||
+  (m.authorType === 'system' && ['对抗检定', '必要检定'].includes(m.displayName))
+);
+if (alreadyProcessed) return null;  // skip inference
 ```
 
-This should not become a required 侦查 check. Actual environment/object searches still trigger checks:
+This means:
+- First AI round (no DM after action yet): inference works normally ✓
+- Continue round (DM + check messages already after action): inference skipped ✓
+- New player ACTION (no DM after this new action yet): inference works again ✓
 
-```text
-我检查前台登记簿。
-我搜索房间和抽屉。
+### Fix: Duplicate Check Markers (`0a94f99`)
+
+**Problem**: AI model sometimes writes `（此处触发XX检定...。）` in its narrative text. The backend's `sanitizeNarrative` then injects its own marker. Result: two visible markers, one actual check.
+
+**Fix** (`src/aiOutput.js` `sanitizeNarrative`): Added a regex clean step at the start — strips any AI-generated markers matching `（此处触发[^）]*?检定[^）]*?。）` before the backend injects its own unified marker.
+
+```js
+const AI_CHECK_MARKER = /（此处触发[^）]*?检定[^）]*?。）\s*/g;
+let text = String(narrative || '').replace(AI_CHECK_MARKER, '').trim();
 ```
 
-### Recent Check Results In AI Context
-
-`src/aiClient.js` now summarizes recent relevant dice rolls and passes them into `buildDmUserContext`.
-
-Supported recent roll types:
-
-- `skill_check`
-- `coc_check`
-- `contested_check`
-- `opposed_check`
-- `pushed_check`
-- `luck_spend`
-
-The prompt now includes:
-
-```text
-最近检定结果（JSON，继续叙事必须依据这些结果，不要重复同一检定）
-```
-
-The structured-output prompt also tells the AI that when the recent action is “继续”, it must use `passed` / `winner` from that JSON and must not repeat the same required/opposed check.
-
-### AI Detection Logs
-
-There is now a room-owner-only detection log UI:
-
-- Frontend button: `检测日志`
-- Dialog: `#aiLogDialog`
-- Backend route: `GET /api/rooms/:code/ai-log?playerId=...`
-- Permission: only `room.ownerPlayerId` can view it.
-
-The log shows:
-
-- AI task UID
-- structured-event keys
-- rejected keys and validation issues
-- dropped required checks for opposed actions
-- inferred detection notes
-- detection source/rule/skill/target/confidence
-- raw response snippet
-
-Test coverage includes owner-only access.
-
-### Deployment Audit Fix (`6546044`)
-
-The public audit script used to write a summary containing “审计房间” and then assert that exact phrase after AI generation. That was brittle because AI `summary_update` can validly replace the summary.
-
-Now the script:
-
-- Verifies manual summary persistence immediately after writing it.
-- After AI completion, only requires final summary to be non-empty.
-- Still supports strict AI mode with `--require-ai`.
-
-## Earlier Important Fixes Still In Place
+## Existing Features Reference
 
 ### Continue After Checks
 
-The frontend shows a `继续叙事` control after required/opposed check system messages when the room is ACTIVE and no AI task is running.
+The frontend shows a `继续叙事` button after required/opposed check system messages when the room is ACTIVE and no AI task is running.
 
-Current backend behavior:
+Backend behavior:
+- `POST /api/rooms/:code/continue` with `checkMessageId`
+- Idempotency key: `continue:<checkMessageId>`
+- Does **not** create a visible player ACTION message
+- Adds system instruction: "本轮是检定结果后的继续叙事，必须根据最近的骰子结果推进"
+- Recent check JSON is included in AI context via `summarizeRecentCheckRolls()`
+- **Important**: `latestPlayerAction` now skips already-processed actions, preventing the re-inference loop
 
-- Uses `/api/rooms/:code/continue`.
-- Queues an AI task with idempotency key `continue:<checkMessageId>`.
-- Does **not** create a visible player ACTION message.
-- Adds a system instruction: this is “检定结果后的继续叙事”.
-- Recent check JSON is included in the AI context.
+### AI Detection Logic (`src/aiOutput.js`)
 
-### Rollback Stability
+**Opposed checks** (9 rules, takes priority over required):
 
-AI rounds are tracked by task UID. Rollback restores:
+| Type | activeSkill | passiveSkill | Trigger keywords |
+|------|-------------|--------------|-----------------|
+| social | 话术 | 心理学 | 撒谎, 说谎, 骗, 忽悠, 假装, 冒充, 套话 |
+| social | 说服 | 心理学 | 说服, 劝说, 请求, 交涉, 谈判, 打动 |
+| social | 恐吓 | 心理学 | 恐吓, 威胁, 吓唬, 逼问, 震慑, 拔刀 |
+| social | 魅惑 | 心理学 | 魅惑, 讨好, 套近乎, 献殷勤, 寒暄 |
+| stealth | 潜行 | 侦查 | 潜行, 偷偷, 悄悄, 跟踪, 溜进, 潜入 |
+| stealth | 妙手 | 侦查 | 偷, 扒, 摸走, 顺走, 悄悄拿 |
+| stealth | 乔装 | 心理学 | 乔装, 易容, 伪装成, 扮成, 假扮 |
+| combat | 格斗 | 闪避 | 攻击, 偷袭, 刺杀, 挥拳, 打, 砍, 制服 |
+| combat | 射击 | 闪避 | 射击, 开枪, 枪击, 手枪, 步枪, 瞄准 |
 
-- character snapshots
-- story summary
-- scene state
-- messages/rolls from the rolled-back round
+**Required checks** (19 rules, plus module-defined):
 
-Runtime character state changes preserve ready flag/history.
+| Skill | Difficulty | Trigger keywords |
+|-------|-----------|-----------------|
+| 图书馆使用 | REGULAR | 查资料, 查阅, 翻阅, 档案, 卷宗, 报纸 |
+| 侦查 | REGULAR | 侦查, 观察, 搜索, 搜查, 翻找, 打量 |
+| 聆听 | REGULAR | 聆听, 倾听, 听声音, 脚步, 动静 |
+| 会计/锁匠/急救/医学/驾驶汽车/攀爬/跳跃/投掷/追踪/神秘学/法律/估价/导航/博物学/机械维修/电气维修/化学/物理学/药学 | varies | see `REQUIRED_CHECK_DETECTION_RULES` |
 
-### AI Event Application
+**Special rules**:
+- `isNpcOnlyObservation`: Actions that only observe an NPC reaction (e.g., "我看看陈友的脸色") are NOT inferred as 侦查 checks
+- `classifyModuleRequiredAction`: Module-defined checks are matched before generic rules (trigger text overlap, skill mention, scene match, CJK bigram)
+- Priority: opposed actions drop any model-provided required_checks
 
-`src/aiEvents.js` applies validated structured events:
+### Structured Event Application (`src/aiEvents.js`)
 
-- required checks become server-side rolls and system messages
-- opposed checks use player skill and NPC skill
-- NPC skill lookup uses `moduleJson.npcs` when available
-- scene changes update scene state
-- summary updates are applied once and trusted as replacement summary
-- state changes only allow whitelisted status/characteristic paths
+Factory pattern: `createEventApplier({ database, hub, addAiLog })` returns `{ applyStructuredEvents }`.
 
-## Verification Already Run
+- required_checks → server-side skill/attribute rolls, system messages
+- opposed_checks → contested rolls (player vs NPC), NPC skill from `moduleJson.npcs` when available
+- proposed_state_changes → whitelisted status/characteristic paths only
+- clues_revealed → system messages (with optional privateTarget)
+- scene_change → scene state update + system message
+- npc_state_changes → NPC state messages (disposition, location, isPresent)
+- summary_update → trusted as replacement summary
+
+### Rollback
+
+AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restores:
+- Character snapshots (sheet + revision)
+- Story summary
+- Scene state
+- Marks round and messages as rolled back
+
+## Verification
 
 Local:
-
 ```bash
-npm run check
-npm test
-# 100/100 passed
+npm run check   # passed
+npm test        # 101/101 passed
 ```
 
 Server:
-
 ```bash
-cd /opt/dm-online && npm install && npm test
-# 100/100 passed, 0 vulnerabilities
-```
-
-Service and proxy:
-
-```bash
-curl -fsS http://127.0.0.1:4173/api/health
-# {"ok":true,"aiConfigured":true,"localFallback":false,...}
-
-systemctl is-active dm-online
-# active
-
-nginx -t
-# successful
+cd /opt/dm-online && npm install && npm test   # 101/101 passed, 0 vulnerabilities
+systemctl restart dm-online
+curl -fsS http://127.0.0.1:4173/api/health     # ok: true, aiConfigured: true
+systemctl is-active dm-online                    # active
+nginx -t                                         # successful
 ```
 
 Public deployment audit:
-
 ```bash
 npm run audit:deployment -- http://8.153.147.137
-# ok: true, aiConfigured: true, dmMessageId: 435
+# ok: true, aiConfigured: true
 
 npm run audit:deployment -- --require-ai http://8.153.147.137
-# ok: true, aiConfigured: true, strictAi: true, dmMessageId: 446
+# ok: true, aiConfigured: true, strictAi: true
 ```
-
-Browser static verification:
-
-- `#btnAiLog` exists with text `检测日志`.
-- `#aiLogDialog` and `#aiLogBody` exist.
-- Button is initially hidden before room context.
-- No browser console errors on local page load.
 
 ## Deployment Commands
 
 From local repo:
-
 ```bash
 export SSHPASS='<password>'
 
@@ -273,10 +200,7 @@ sshpass -e rsync -az --delete \
 ```
 
 Then on server:
-
 ```bash
-export SSHPASS='<password>'
-
 sshpass -e ssh -p 2233 -o StrictHostKeyChecking=no root@8.153.147.137 \
   'cd /opt/dm-online && npm install && npm test'
 
@@ -284,8 +208,7 @@ sshpass -e ssh -p 2233 -o StrictHostKeyChecking=no root@8.153.147.137 \
   'systemctl restart dm-online && sleep 2 && curl -fsS http://127.0.0.1:4173/api/health; echo; systemctl is-active dm-online; nginx -t'
 ```
 
-Public audit after restart:
-
+Public audit after restart (increased timeout for slow AI):
 ```bash
 DEPLOYMENT_AUDIT_AI_TIMEOUT_MS=180000 npm run audit:deployment -- --require-ai http://8.153.147.137
 ```
@@ -293,21 +216,23 @@ DEPLOYMENT_AUDIT_AI_TIMEOUT_MS=180000 npm run audit:deployment -- --require-ai h
 ## Notes For Next Agent
 
 - User prefers autonomous implementation, testing, deployment, and log inspection.
+- Always run tests before and after changes (`npm test`).
 - Keep doing checkpoint commits before substantial changes.
-- Use `apply_patch` for manual edits.
 - Do not overwrite unrelated user changes if the worktree is dirty.
 - Do not commit secrets.
 - Preserve server `.env`, `data/`, and runtime database during rsync.
-- The test fixture `test/fixtures/comprehensive-test-module.json` is useful for AI detection/manual room tests.
+- The test fixture `test/fixtures/comprehensive-test-module.json` can be uploaded via the API to manually test AI detection in a real room.
 - If changing AI detection, add regression tests in `test/aiOutput.test.mjs` and/or `test/comprehensive-ai.test.mjs`.
-- If changing deployed behavior, run both local and server tests, restart systemd, check health, check Nginx, then run public audit.
+- When debugging game sessions, request the JSON export (`GET /api/rooms/:code/export?format=json`) to see messages, diceRolls, and aiTasks in context.
+- The AI detection log endpoint (`GET /api/rooms/:code/ai-log`) is owner-only and shows raw event parsing diagnostics.
+- `latestPlayerAction` now returns `null` for already-processed actions — if AI check inference stops working unexpectedly for new actions, check this function first.
 
 ## Potential Follow-Ups
 
-- Add a true end-to-end frontend test for `继续叙事` button visibility and click behavior.
-- Add a true end-to-end frontend test for the owner-only `检测日志` dialog after an AI round.
-- Show detection log summaries in a more compact owner dashboard, not just a modal.
-- Add TTL-based eviction for `_aiLogs` map beyond existing room lifecycle cleanup.
-- Tune module check matching with more real playtest logs from `reports/`.
-- Add structured event support for clue-state updates, so successful module checks can mark clues discovered automatically.
-- Split `db.js` and `public/app.js` when the next feature touches them heavily.
+- Add end-to-end frontend tests for `继续叙事` button and `检测日志` dialog.
+- Cache NPC candidates per room (currently rebuilt every AI call in `npcCandidates()`).
+- Add TTL-based eviction for `_aiLogs` map.
+- Split `db.js` (1246 lines) into schema / row-mappers / queries.
+- Split `public/app.js` (2106 lines) into lobby / character / chat modules.
+- Add structured event support for clue-state updates so successful module checks can auto-mark clues discovered.
+- Tune module check matching with real playtest logs from `reports/`.
