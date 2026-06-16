@@ -470,6 +470,16 @@ test('preflight required checks roll before AI continuation', async () => {
     const dmMessage = state.messages.find((message) => message.authorType === 'dm');
     assert.ok(dmMessage);
     assert.doesNotMatch(dmMessage.content, /```json/);
+
+    const rolledBack = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/rollback/${submitted.aiTask.uid}`, {
+      method: 'POST',
+      body: JSON.stringify({ playerId: 'p1' })
+    });
+
+    assert.equal(rolledBack.rolledBack, true);
+    assert.equal(rolledBack.messages.some((message) => message.displayName === '必要检定'), false);
+    assert.equal(rolledBack.messages.some((message) => message.authorType === 'dm'), false);
+    assert.equal(rolledBack.diceRolls.some((roll) => roll.label === '侦查'), false);
   } finally {
     await new Promise((resolveClose) => app.server.close(resolveClose));
     app.database.close();

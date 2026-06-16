@@ -177,6 +177,7 @@ function rowToDiceRoll(row) {
     expression: row.expression,
     label: row.label || '',
     isPrivate: Boolean(row.is_private),
+    isRolledBack: Boolean(row.is_rolled_back),
     result: JSON.parse(row.result_json),
     createdAt: row.created_at
   };
@@ -360,6 +361,7 @@ export function createDatabase(dbPath) {
       expression TEXT NOT NULL,
       label TEXT NOT NULL DEFAULT '',
       is_private INTEGER NOT NULL DEFAULT 0,
+      is_rolled_back INTEGER NOT NULL DEFAULT 0,
       result_json TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
@@ -479,6 +481,9 @@ export function createDatabase(dbPath) {
   }
   if (!hasColumn('messages', 'is_rolled_back')) {
     db.exec('ALTER TABLE messages ADD COLUMN is_rolled_back INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!hasColumn('dice_rolls', 'is_rolled_back')) {
+    db.exec('ALTER TABLE dice_rolls ADD COLUMN is_rolled_back INTEGER NOT NULL DEFAULT 0');
   }
   if (!hasColumn('messages', 'ai_processed_task_uid')) {
     db.exec("ALTER TABLE messages ADD COLUMN ai_processed_task_uid TEXT NOT NULL DEFAULT ''");
@@ -610,13 +615,13 @@ export function createDatabase(dbPath) {
     `),
     listDiceRolls: db.prepare(`
       SELECT * FROM dice_rolls
-      WHERE room_id = ? AND is_private = 0
+      WHERE room_id = ? AND is_private = 0 AND is_rolled_back = 0
       ORDER BY created_at DESC, id DESC
       LIMIT ?
     `),
     listDiceRollsForPlayer: db.prepare(`
       SELECT * FROM dice_rolls
-      WHERE room_id = ? AND (is_private = 0 OR player_id = ?)
+      WHERE room_id = ? AND is_rolled_back = 0 AND (is_private = 0 OR player_id = ?)
       ORDER BY created_at DESC, id DESC
       LIMIT ?
     `),
@@ -690,6 +695,7 @@ export function createDatabase(dbPath) {
     `),
     markRoundRolledBack: db.prepare('UPDATE round_states SET is_rolled_back = 1 WHERE id = ?'),
     markMessageRolledBack: db.prepare('UPDATE messages SET is_rolled_back = 1 WHERE id = ?'),
+    markDiceRollRolledBack: db.prepare('UPDATE dice_rolls SET is_rolled_back = 1 WHERE id = ?'),
     forceUpdateSceneState: db.prepare('UPDATE rooms SET scene_state = ?, updated_at = ? WHERE id = ?'),
     getParticipantByPlayerId: db.prepare('SELECT * FROM participants WHERE room_id = ? AND player_id = ?'),
     restoreCharacterSnapshot: db.prepare(`
@@ -703,7 +709,7 @@ export function createDatabase(dbPath) {
     forceUpdateSummary: db.prepare('UPDATE rooms SET summary = ?, updated_at = ? WHERE id = ?'),
     listAllDiceRolls: db.prepare(`
       SELECT * FROM dice_rolls
-      WHERE room_id = ?
+      WHERE room_id = ? AND is_rolled_back = 0
       ORDER BY created_at DESC, id DESC
       LIMIT ?
     `)
@@ -1286,6 +1292,10 @@ export function createDatabase(dbPath) {
 
     markMessageRolledBack(messageId) {
       statements.markMessageRolledBack.run(messageId);
+    },
+
+    markDiceRollRolledBack(rollId) {
+      statements.markDiceRollRolledBack.run(rollId);
     },
 
     getParticipantByPlayerId(roomId, playerId) {

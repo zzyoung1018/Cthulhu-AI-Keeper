@@ -249,10 +249,10 @@ export function createEventApplier({ database, hub, addAiLog }) {
   }
 
   function applyStateChange(code, change) {
-    if (!change.targetPlayerId || !change.fieldPath) return;
+    if (!change.targetPlayerId || !change.fieldPath) return null;
 
     const { participant } = database.getParticipant(code, change.targetPlayerId);
-    if (!participant) return;
+    if (!participant) return null;
 
     const sheet = structuredClone(participant.characterSheet || {});
     const parts = change.fieldPath.split('.');
@@ -261,7 +261,7 @@ export function createEventApplier({ database, hub, addAiLog }) {
       sheet.status = sheet.status || {};
       const resource = parts[1];
       const newValue = Number(change.newValue);
-      if (!Number.isFinite(newValue)) return;
+      if (!Number.isFinite(newValue)) return null;
 
       const limits = { hp: 100, mp: 100, san: 99, luck: 100 };
       const max = limits[resource] || 100;
@@ -269,10 +269,10 @@ export function createEventApplier({ database, hub, addAiLog }) {
     } else if (parts[0] === 'characteristics' && parts[1]) {
       sheet.characteristics = sheet.characteristics || {};
       const newValue = Number(change.newValue);
-      if (!Number.isFinite(newValue)) return;
+      if (!Number.isFinite(newValue)) return null;
       sheet.characteristics[parts[1]] = Math.max(0, Math.min(100, Math.round(newValue)));
     } else {
-      return;
+      return null;
     }
 
     database.updateCharacterRuntimeState({
@@ -292,6 +292,7 @@ export function createEventApplier({ database, hub, addAiLog }) {
       privateTarget: change.targetPlayerId
     });
     hub.sendTo(code, change.targetPlayerId, 'message_created', { message: msg });
+    return msg;
   }
 
   function applyStructuredEvents(code, taskUid, events, dmMessageId, moduleJson = null) {
@@ -303,7 +304,9 @@ export function createEventApplier({ database, hub, addAiLog }) {
       stateChanges: 0,
       clues: 0,
       sceneChanges: 0,
-      npcChanges: 0
+      npcChanges: 0,
+      messageIds: [],
+      diceRollIds: []
     };
 
     // Process required checks against static obstacles or the environment.
@@ -311,7 +314,11 @@ export function createEventApplier({ database, hub, addAiLog }) {
       for (const check of events.required_checks) {
         try {
           const result = applyRequiredCheck(code, check, defaultPlayerId);
-          if (result) applied.requiredChecks.push(result);
+          if (result) {
+            applied.requiredChecks.push(result);
+            applied.messageIds.push(result.message.id);
+            applied.diceRollIds.push(result.roll.id);
+          }
         } catch (checkError) {
           console.error('[ai-output] required check failed:', check.skill, checkError.message);
         }
@@ -404,6 +411,8 @@ export function createEventApplier({ database, hub, addAiLog }) {
           hub.broadcast(code, 'message_created', { message: msg });
           hub.broadcast(code, 'dice_rolled', { roll });
           applied.opposedChecks.push({ type: 'opposed', message: msg, roll, check: opp });
+          applied.messageIds.push(msg.id);
+          applied.diceRollIds.push(roll.id);
         } catch (oppError) {
           console.error('[ai-output] opposed check failed:', oppError.message);
         }
@@ -414,8 +423,11 @@ export function createEventApplier({ database, hub, addAiLog }) {
     if (Array.isArray(events.proposed_state_changes)) {
       for (const change of events.proposed_state_changes) {
         try {
-          applyStateChange(code, change);
-          applied.stateChanges += 1;
+          const msg = applyStateChange(code, change);
+          if (msg) {
+            applied.stateChanges += 1;
+            applied.messageIds.push(msg.id);
+          }
         } catch (stateError) {
           console.error('[ai-output] state change failed:', change.fieldPath, stateError.message);
         }
@@ -442,6 +454,7 @@ export function createEventApplier({ database, hub, addAiLog }) {
           }
           persistClue(code, clue, clueMsg, state.participants || []);
           applied.clues += 1;
+          applied.messageIds.push(clueMsg.id);
         } catch (clueError) {
           console.error('[ai-output] clue reveal failed:', clueError.message);
           addAiLog(code, {
@@ -482,6 +495,7 @@ export function createEventApplier({ database, hub, addAiLog }) {
       });
       hub.broadcast(code, 'message_created', { message: sceneMsg });
       applied.sceneChanges += 1;
+      applied.messageIds.push(sceneMsg.id);
 
       try {
         const currentSceneState = parseSceneState(state.room.sceneState);
@@ -530,6 +544,7 @@ export function createEventApplier({ database, hub, addAiLog }) {
           hub.broadcast(code, 'message_created', { message: npcMsg });
           persistNpcState(code, npc, state.participants || []);
           applied.npcChanges += 1;
+          applied.messageIds.push(npcMsg.id);
         } catch (npcError) {
           console.error('[ai-output] npc state failed:', npc.npcName, npcError.message);
           addAiLog(code, {

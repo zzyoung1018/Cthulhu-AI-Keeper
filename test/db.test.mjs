@@ -681,6 +681,22 @@ test('rollback by task uid restores snapshots, summary, scene state, and marks m
       content: 'test',
       messageType: 'IC'
     });
+    const sideEffectMessage = database.createMessage({
+      code: room.code,
+      authorType: 'system',
+      messageType: 'SYSTEM',
+      displayName: '必要检定',
+      content: '侦查检定结果',
+      status: 'complete'
+    });
+    const sideEffectRoll = database.createDiceRoll({
+      code: room.code,
+      playerId: 'keeper',
+      rollType: 'skill_check',
+      expression: '1d100',
+      label: '侦查',
+      result: { total: 41, target: 60, successLevel: 'REGULAR', passed: true }
+    });
 
     // Create round state with pre-change snapshot
     const round = database.createRoundState({
@@ -694,7 +710,11 @@ test('rollback by task uid restores snapshots, summary, scene state, and marks m
           characterRevision: 0
         }],
         summary: 'old summary',
-        sceneState: JSON.stringify({ currentScene: 'old_scene' })
+        sceneState: JSON.stringify({ currentScene: 'old_scene' }),
+        rollbackRefs: {
+          messageIds: [sideEffectMessage.id],
+          diceRollIds: [sideEffectRoll.id]
+        }
       })
     });
 
@@ -712,9 +732,12 @@ test('rollback by task uid restores snapshots, summary, scene state, and marks m
     assert.equal(result.aiTaskUid, 'rollback-test');
     const rolledMsg = database.getMessageById(msg.id);
     assert.equal(rolledMsg.isRolledBack, true);
+    const rolledSideEffect = database.getMessageById(sideEffectMessage.id);
+    assert.equal(rolledSideEffect.isRolledBack, true);
 
     const state = database.getRoomState(room.code);
     assert.equal(state.messages.length, 0); // Rolled back messages are filtered
+    assert.equal(state.diceRolls.length, 0);
     assert.equal(state.room.summary, 'old summary');
     assert.equal(JSON.parse(state.room.sceneState).currentScene, 'old_scene');
   } finally {

@@ -418,6 +418,31 @@ function validateBySchema(value, schema, path = '') {
   return issues;
 }
 
+function validateArrayItemsBySchema(value, schema, key) {
+  if (!Array.isArray(value)) {
+    return { value, issues: [`${key}: expected array`], fatal: true };
+  }
+
+  if (value.length > schema.maxItems) {
+    return { value, issues: [`${key}: too many items (max ${schema.maxItems})`], fatal: true };
+  }
+
+  const kept = [];
+  const issues = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const itemIssues = schema.itemSchema
+      ? validateBySchema(value[index], schema.itemSchema, `${key}[${index}]`)
+      : [];
+    if (itemIssues.length > 0) {
+      issues.push(...itemIssues);
+    } else {
+      kept.push(value[index]);
+    }
+  }
+
+  return { value: kept, issues, fatal: false };
+}
+
 function isCompleteOpposedCheck(check) {
   return check && typeof check === 'object' && !Array.isArray(check) &&
     REQUIRED_OPPOSED_FIELDS.every((field) => typeof check[field] === 'string' && check[field].trim());
@@ -538,6 +563,18 @@ function normalizeDifficulty(value) {
   if (difficulty === '极难') return 'EXTREME';
   if (difficulty === '常规' || difficulty === '普通') return 'REGULAR';
   return ['REGULAR', 'HARD', 'EXTREME'].includes(difficulty) ? difficulty : 'REGULAR';
+}
+
+function isAllowedDifficulty(value) {
+  const raw = String(value || '').trim();
+  const difficulty = raw.toUpperCase();
+  return ['REGULAR', 'NORMAL', 'HARD', 'EXTREME'].includes(difficulty) ||
+    ['困难', '极难', '常规', '普通'].includes(raw);
+}
+
+function normalizeContestType(value) {
+  const contestType = String(value || '').trim().toLowerCase();
+  return ['social', 'stealth', 'combat', 'item'].includes(contestType) ? contestType : '';
 }
 
 function cjkBigrams(text) {
@@ -960,6 +997,31 @@ function buildInferredRequiredCheck({ action, rule }) {
   };
 }
 
+function hasUsableModelRequiredCheck(checks, roomState = {}, defaultPlayerId = '') {
+  if (!Array.isArray(roomState.participants)) return checks.length > 0;
+  return checks.some((check) => {
+    if (!isAllowedDifficulty(check.difficulty)) return false;
+    const targetPlayerId = check.targetPlayerId || defaultPlayerId || roomState.participants[0]?.playerId || '';
+    const participant = participantByPlayerId(roomState, targetPlayerId);
+    if (!participant) return false;
+    const target = getCheckTarget(participant.characterSheet, check.skill);
+    return Boolean(target && Number.isInteger(target.target));
+  });
+}
+
+function hasUsableModelOpposedCheck(checks, roomState = {}) {
+  if (!Array.isArray(roomState.participants)) return checks.length > 0;
+  const hasModuleNpcs = Array.isArray(roomState.moduleJson?.npcs) && roomState.moduleJson.npcs.length > 0;
+  return checks.some((check) => {
+    if (check.contestType && !normalizeContestType(check.contestType)) return false;
+    const participant = participantByPlayerId(roomState, check.activePlayerId);
+    if (!participant) return false;
+    if (!Number.isInteger(getSkillTarget(participant.characterSheet, check.activeSkill))) return false;
+    const npc = resolveNpcReference(check.passiveNpcName, roomState);
+    return Boolean(npc || !hasModuleNpcs || recentTextIncludes(check.passiveNpcName, roomState));
+  });
+}
+
 export function planPreflightCheck({ actionMessage, roomState = {} } = {}) {
   const action = actionMessage;
   if (!action || action.authorType !== 'player' || action.messageType !== 'ACTION' || !action.playerId) {
@@ -1056,7 +1118,7 @@ function inferOpposedChecks({ events, narrative, roomState, triggerMessageId = n
   }
 
   const existing = Array.isArray(events.opposed_checks) ? events.opposed_checks.filter(isCompleteOpposedCheck) : [];
-  if (existing.length > 0) {
+  if (hasUsableModelOpposedCheck(existing, roomState)) {
     return {
       checks: [],
       reason: 'model-provided',
@@ -1107,7 +1169,7 @@ function inferRequiredChecks({ events, roomState, triggerMessageId = null }) {
   }
 
   const existing = Array.isArray(events.required_checks) ? events.required_checks.filter(isCompleteRequiredCheck) : [];
-  if (existing.length > 0) {
+  if (hasUsableModelRequiredCheck(existing, roomState, action.playerId)) {
     return {
       checks: [],
       reason: 'model-provided',
@@ -1396,7 +1458,7 @@ function normalizeOpposedChecksForRoom(value, roomState) {
     kept.push({
       ...check,
       passiveNpcName: npc?.name || check.passiveNpcName,
-      contestType: check.contestType || inferContestTypeFromSkill(check.activeSkill)
+      contestType: normalizeContestType(check.contestType) || inferContestTypeFromSkill(check.activeSkill)
     });
   });
 
@@ -1476,7 +1538,7 @@ export function validateStructuredEvents(events, options = {}) {
   const { roomState = null, defaultPlayerId = '' } = options || {};
 
   for (const [key, schema] of Object.entries(EVENT_SCHEMAS)) {
-    const value = events[key];
+    let value = events[key];
     if (value === undefined || value === null) continue;
 
     if (key === 'summary_update') {
@@ -1489,55 +1551,116 @@ export function validateStructuredEvents(events, options = {}) {
       continue;
     }
 
-    const schemaIssues = validateBySchema(value, schema, key);
-    if (schemaIssues.length > 0) {
-      rejected.push(key);
-      issues.push(...schemaIssues);
-      continue;
+    if (schema.type === 'array') {
+      const arrayValidation = validateArrayItemsBySchema(value, schema, key);
+      if (arrayValidation.fatal) {
+        rejected.push(key);
+        issues.push(...arrayValidation.issues);
+        continue;
+      }
+      if (arrayValidation.issues.length > 0) {
+        issues.push(...arrayValidation.issues);
+        warnings.push(`${key}: dropped ${value.length - arrayValidation.value.length} invalid item(s)`);
+      }
+      if (value.length > 0 && arrayValidation.value.length === 0) {
+        rejected.push(key);
+        continue;
+      }
+      value = arrayValidation.value;
+    } else {
+      const schemaIssues = validateBySchema(value, schema, key);
+      if (schemaIssues.length > 0) {
+        rejected.push(key);
+        issues.push(...schemaIssues);
+        continue;
+      }
     }
 
     if (key === 'proposed_state_changes') {
-      const fieldIssues = value.flatMap((change) => validateStateChangeField(change.fieldPath));
+      const kept = [];
+      const fieldIssues = [];
+      value.forEach((change, index) => {
+        const itemIssues = validateStateChangeField(change.fieldPath);
+        if (itemIssues.length > 0) {
+          fieldIssues.push(...itemIssues.map((issue) => `${key}[${index}]: ${issue}`));
+        } else {
+          kept.push(change);
+        }
+      });
       if (fieldIssues.length > 0) {
-        rejected.push(key);
         issues.push(...fieldIssues);
+        warnings.push(`${key}: dropped ${value.length - kept.length} invalid item(s)`);
+      }
+      if (value.length > 0 && kept.length === 0) {
+        rejected.push(key);
         continue;
       }
+      value = kept;
     }
 
     if (key === 'required_checks') {
-      const difficultyIssues = value.flatMap((check, index) => {
-        const difficulty = String(check.difficulty || '').toUpperCase();
-        return ['REGULAR', 'NORMAL', 'HARD', 'EXTREME'].includes(difficulty)
-          ? []
-          : [`${key}[${index}].difficulty: invalid difficulty`];
+      const kept = [];
+      const difficultyIssues = [];
+      value.forEach((check, index) => {
+        if (!isAllowedDifficulty(check.difficulty)) {
+          difficultyIssues.push(`${key}[${index}].difficulty: invalid difficulty`);
+          return;
+        }
+        kept.push({
+          ...check,
+          difficulty: normalizeDifficulty(check.difficulty)
+        });
       });
       if (difficultyIssues.length > 0) {
-        rejected.push(key);
         issues.push(...difficultyIssues);
+        warnings.push(`${key}: dropped ${value.length - kept.length} invalid item(s)`);
+      }
+      if (value.length > 0 && kept.length === 0) {
+        rejected.push(key);
         continue;
       }
+      value = kept;
     }
 
     if (key === 'opposed_checks') {
-      const contestIssues = value.flatMap((check, index) => {
-        if (!check.contestType) return [];
-        return ['social', 'stealth', 'combat', 'item'].includes(String(check.contestType))
-          ? []
-          : [`${key}[${index}].contestType: invalid contest type`];
+      const kept = [];
+      const contestIssues = [];
+      value.forEach((check, index) => {
+        if (!check.contestType) {
+          kept.push(check);
+          return;
+        }
+        const contestType = normalizeContestType(check.contestType);
+        if (!contestType) {
+          contestIssues.push(`${key}[${index}].contestType: invalid contest type`);
+          return;
+        }
+        kept.push({
+          ...check,
+          contestType
+        });
       });
       if (contestIssues.length > 0) {
-        rejected.push(key);
         issues.push(...contestIssues);
+        warnings.push(`${key}: dropped ${value.length - kept.length} invalid item(s)`);
+      }
+      if (value.length > 0 && kept.length === 0) {
+        rejected.push(key);
         continue;
       }
+      value = kept;
     }
 
     const roomValidation = normalizeEventValueForRoom(key, value, roomState, defaultPlayerId);
     warnings.push(...(roomValidation.warnings || []));
     if (roomValidation.issues?.length > 0) {
-      rejected.push(key);
       issues.push(...roomValidation.issues);
+      if (Array.isArray(value) && Array.isArray(roomValidation.value) && roomValidation.value.length > 0) {
+        warnings.push(`${key}: dropped ${value.length - roomValidation.value.length} invalid item(s)`);
+        valid[key] = roomValidation.value;
+        continue;
+      }
+      rejected.push(key);
       continue;
     }
     if (Array.isArray(roomValidation.value) && roomValidation.value.length === 0 && Array.isArray(value) && value.length > 0) {

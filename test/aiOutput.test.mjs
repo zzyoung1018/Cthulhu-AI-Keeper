@@ -179,7 +179,7 @@ test('rejects structured objects missing required fields or invalid booleans', (
   assert.ok(issues.some((issue) => issue.includes('isPresent: expected boolean')));
 });
 
-test('rejects invalid state change field paths', () => {
+test('drops invalid state change items while keeping valid room-independent items', () => {
   const events = {
     proposed_state_changes: [
       { targetPlayerId: 'p1', fieldPath: 'skills.侦查', newValue: 90, reason: 'hack' },
@@ -190,8 +190,9 @@ test('rejects invalid state change field paths', () => {
 
   const { valid, rejected } = validateStructuredEvents(events);
 
-  assert.ok(rejected.includes('proposed_state_changes'));
-  assert.equal(valid.proposed_state_changes, undefined);
+  assert.equal(rejected.length, 0);
+  assert.equal(valid.proposed_state_changes.length, 1);
+  assert.equal(valid.proposed_state_changes[0].fieldPath, 'status.hp');
 });
 
 test('allows valid field paths in state changes', () => {
@@ -322,6 +323,30 @@ test('room-aware validation rejects impossible player, skill, private target, an
   assert.ok(privateClue.issues.some((issue) => issue.includes('privateTo')));
 });
 
+test('room-aware validation drops bad array items while keeping valid checks', () => {
+  const state = roomStateForAction('我检查柜台。');
+
+  const result = validateStructuredEvents({
+    required_checks: [
+      { targetPlayerId: 'p1', skill: '侦查', difficulty: 'REGULAR', reason: '有效检定' },
+      { targetPlayerId: 'p1', skill: '不存在技能', difficulty: 'REGULAR', reason: '无效检定' }
+    ],
+    clues_revealed: [
+      { content: '公开线索' },
+      { content: '错误私密线索', privateTo: 'missing' }
+    ]
+  }, { roomState: state, defaultPlayerId: 'p1' });
+
+  assert.equal(result.rejected.length, 0);
+  assert.equal(result.valid.required_checks.length, 1);
+  assert.equal(result.valid.required_checks[0].skill, '侦查');
+  assert.equal(result.valid.clues_revealed.length, 1);
+  assert.equal(result.valid.clues_revealed[0].content, '公开线索');
+  assert.ok(result.issues.some((issue) => issue.includes('unknown skill')));
+  assert.ok(result.issues.some((issue) => issue.includes('privateTo')));
+  assert.ok(result.warnings.some((warning) => warning.includes('dropped 1 invalid item')));
+});
+
 test('infers social opposed check when AI omits structured events for deception', () => {
   const roomState = {
     messages: [
@@ -427,6 +452,32 @@ test('strips decisive outcome when model provides opposed checks', () => {
   assert.match(enhanced.narrative, /触发社交检定/);
 });
 
+test('infers opposed check when model-provided check is not room-applicable', () => {
+  const roomState = roomStateForAction('我骗陈友说自己是顾所长派来的。');
+
+  const enhanced = enhanceStructuredEvents({
+    events: {
+      opposed_checks: [{
+        activePlayerId: 'p1',
+        activeSkill: '话术',
+        passiveNpcName: '幻觉NPC',
+        passiveSkill: '心理学',
+        contestType: 'social',
+        reason: '模型编造了不存在的 NPC'
+      }]
+    },
+    narrative: '陈友眯起眼睛看着你。',
+    roomState
+  });
+  const checked = validateStructuredEvents(enhanced.events, { roomState, defaultPlayerId: 'p1' });
+
+  assert.equal(enhanced.diagnostics.inferredReason, 'backend-social');
+  assert.equal(checked.rejected.length, 0);
+  assert.equal(checked.valid.opposed_checks.length, 1);
+  assert.equal(checked.valid.opposed_checks[0].passiveNpcName, '陈友');
+  assert.ok(checked.issues.some((issue) => issue.includes('NPC not found')));
+});
+
 test('infers stealth opposed check when model returns an empty opposed_checks array', () => {
   const roomState = {
     messages: [
@@ -525,6 +576,30 @@ test('regression: detects opposed checks for common player actions', () => {
     assert.equal(check.contestType, item.expectedType, item.name);
     assert.equal(enhanced.events.required_checks, undefined, item.name);
   }
+});
+
+test('infers required check when model-provided check has invalid skill', () => {
+  const roomState = roomStateForAction('我仔细检查柜台下面有没有隐藏痕迹。');
+
+  const enhanced = enhanceStructuredEvents({
+    events: {
+      required_checks: [{
+        targetPlayerId: 'p1',
+        skill: '不存在技能',
+        difficulty: 'REGULAR',
+        reason: '模型写错技能名'
+      }]
+    },
+    narrative: '你蹲下身，手电光扫过柜台底部。',
+    roomState
+  });
+  const checked = validateStructuredEvents(enhanced.events, { roomState, defaultPlayerId: 'p1' });
+
+  assert.equal(enhanced.diagnostics.inferredRequiredReason, 'generic-侦查');
+  assert.equal(checked.rejected.length, 0);
+  assert.equal(checked.valid.required_checks.length, 1);
+  assert.equal(checked.valid.required_checks[0].skill, '侦查');
+  assert.ok(checked.issues.some((issue) => issue.includes('unknown skill')));
 });
 
 test('drops model required checks when latest action must be opposed', () => {
@@ -711,6 +786,9 @@ test('formats structured output instructions for AI prompt', () => {
   assert.match(instructions, /targetPlayerId/);
   assert.match(instructions, /图书馆使用/);
   assert.match(instructions, /继续/);
+  assert.match(instructions, /不要自己生成 d100/);
+  assert.match(instructions, /顶层只允许/);
+  assert.match(instructions, /不确定 playerId/);
   assert.match(instructions, /proposed_state_changes/);
   assert.match(instructions, /clues_revealed/);
   assert.match(instructions, /scene_change/);

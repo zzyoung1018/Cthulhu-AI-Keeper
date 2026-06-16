@@ -107,6 +107,35 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     return applied?.opposedChecks?.[0]?.message || applied?.requiredChecks?.[0]?.message || null;
   }
 
+  function firstAppliedCheckRoll(applied) {
+    return applied?.opposedChecks?.[0]?.roll || applied?.requiredChecks?.[0]?.roll || null;
+  }
+
+  function appliedRollbackRefs(applied) {
+    return {
+      messageIds: [...new Set((applied?.messageIds || []).map(Number).filter(Number.isInteger))],
+      diceRollIds: [...new Set((applied?.diceRollIds || []).map(Number).filter(Number.isInteger))]
+    };
+  }
+
+  function preflightRollbackRefsFromTask(task) {
+    const parts = String(task?.idempotencyKey || '').split(':');
+    if (parts[0] !== 'precheck') return { messageIds: [], diceRollIds: [] };
+    const messageId = Number(parts[2]);
+    const rollId = Number(parts[3]);
+    return {
+      messageIds: Number.isInteger(messageId) ? [messageId] : [],
+      diceRollIds: Number.isInteger(rollId) ? [rollId] : []
+    };
+  }
+
+  function mergeRollbackRefs(...refs) {
+    return {
+      messageIds: [...new Set(refs.flatMap((ref) => ref?.messageIds || []).map(Number).filter(Number.isInteger))],
+      diceRollIds: [...new Set(refs.flatMap((ref) => ref?.diceRollIds || []).map(Number).filter(Number.isInteger))]
+    };
+  }
+
   function isCheckContinuationTask(task) {
     const key = String(task?.idempotencyKey || '');
     return key.startsWith('continue:') || key.startsWith('precheck:');
@@ -187,7 +216,9 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
             '本轮是“检定结果后的继续叙事”。',
             '必须根据最近的骰子/系统检定消息推进结果，不要重复要求同一个检定。',
             '如果最近检定失败，描述失败后果；如果成功，描述成功获得的信息、位置或 NPC 反应。',
-            '本轮通常不需要再返回 required_checks 或 opposed_checks，除非玩家在检定后已经做了新的正式行动。'
+            '不要改写、重掷或补编服务器已经给出的 d100 点数和胜负。',
+            '本轮通常不需要再返回 required_checks 或 opposed_checks，除非玩家在检定后已经做了新的正式行动。',
+            '若根据成功检定揭示线索，请用 clues_revealed；若 NPC 态度/位置变化，请用 npc_state_changes。'
           ].join('\n')
         });
       }
@@ -243,9 +274,10 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       });
 
       // Apply valid structured events
+      let appliedEvents = null;
       if (Object.keys(valid).length > 0) {
         addAiLog(code, { stage: 'apply-events', taskUid, keys: Object.keys(valid) });
-        applyStructuredEvents(code, taskUid, valid, dmMessage.id, state.moduleJson);
+        appliedEvents = applyStructuredEvents(code, taskUid, valid, dmMessage.id, state.moduleJson);
       }
 
       if (rejected.length > 0) {
@@ -255,12 +287,19 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
       // Save round record for rollback
       try {
+        const rollbackRefs = mergeRollbackRefs(
+          preflightRollbackRefsFromTask(task),
+          appliedRollbackRefs(appliedEvents)
+        );
         createRoundRecord({
           database,
           roomId: state.room.id,
           aiTaskUid: taskUid,
           dmMessageId: dmMessage.id,
-          preState
+          preState: {
+            ...preState,
+            rollbackRefs
+          }
         });
       } catch (roundError) {
         console.error('[ai-output] round record failed:', roundError.message);
@@ -823,15 +862,17 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
               });
               const applied = applyStructuredEvents(code, '', plan.events, null, preflightState.moduleJson);
               const checkMessage = firstAppliedCheckMessage(applied);
+              const checkRoll = firstAppliedCheckRoll(applied);
               if (checkMessage) {
                 preflightCheck = {
                   type: plan.type,
                   reason: plan.reason,
                   messageId: checkMessage.id,
+                  rollId: checkRoll?.id || null,
                   detection: plan.detection
                 };
                 triggerMessageId = checkMessage.id;
-                idempotencyKey = `precheck:${message.id}:${checkMessage.id}`;
+                idempotencyKey = `precheck:${message.id}:${checkMessage.id}:${checkRoll?.id || 0}`;
               }
             } else if (plan.issues?.length > 0) {
               addAiLog(code, {

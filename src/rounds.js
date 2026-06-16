@@ -44,6 +44,7 @@ export function computeRollback({
   if (round.isRolledBack) throw new HttpError(409, 'Round already rolled back');
 
   const preState = JSON.parse(round.snapshotJson);
+  const rollbackRefs = preState.rollbackRefs || {};
 
   // Restore each participant's character sheet and revision
   for (const snap of preState.participants) {
@@ -68,6 +69,18 @@ export function computeRollback({
   // Mark the DM message as rolled back
   if (round.dmMessageId) {
     database.markMessageRolledBack(round.dmMessageId);
+  }
+
+  for (const messageId of rollbackRefs.messageIds || []) {
+    if (Number.isInteger(Number(messageId))) {
+      database.markMessageRolledBack(Number(messageId));
+    }
+  }
+
+  for (const rollId of rollbackRefs.diceRollIds || []) {
+    if (Number.isInteger(Number(rollId))) {
+      database.markDiceRollRolledBack(Number(rollId));
+    }
   }
 
   // Mark round as rolled back
