@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-16 17:56 CST
+Last updated: 2026-06-16 18:09 CST
 
 ## Current State
 
@@ -12,15 +12,18 @@ Last updated: 2026-06-16 17:56 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/opt/dm-online/data`
 - Local branch: `main`
-- Latest completed local app commit: `96d8f3d fix: validate private message targets`
-- Latest deployed app commit: `96d8f3d fix: validate private message targets`
-- Deployment verified on 2026-06-16 17:55 CST: systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
+- Latest completed local app commit: `3c3583a feat: clarify ai queue and log status`
+- Latest deployed app commit: `3c3583a feat: clarify ai queue and log status`
+- Deployment verified on 2026-06-16 18:08 CST: systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
 - Local worktree is clean.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent Commits
 
+- `3c3583a` feat: clarify ai queue and log status
+- `ae9c104` chore: checkpoint before ai status ui
+- `a9fc6aa` docs: update handoff after bug audit
 - `96d8f3d` fix: validate private message targets
 - `ee06284` chore: checkpoint before bug audit fixes
 - `d8e23d6` docs: update handoff after deployment and e2e work
@@ -28,9 +31,6 @@ Do not write server credentials into committed files. Use the conversation conte
 - `01a7d1d` chore: checkpoint before e2e and log upgrades
 - `d419174` docs: update handoff after quick send
 - `e38928d` feat: add chat quick send shortcut
-- `4716b92` test: add frontend e2e and readable ai logs
-- `e426d16` feat: persist ai state and action lifecycle
-- `56ffb3c` chore: checkpoint before ai state and log upgrades
 
 ## Code Map
 
@@ -50,12 +50,12 @@ src/
   privateHub.js      (63 lines) — player-specific SSE delivery
 
 public/
-  app.js          (2458 lines) — main frontend logic
+  app.js          (2561 lines) — main frontend logic
 
 test/
   comprehensive-ai.test.mjs (765 lines) — full AI detection and event coverage
   aiOutput.test.mjs         (594 lines) — parser/validator/inference regressions
-  frontend.e2e.mjs          (507 lines) — Playwright browser coverage for visible controls
+  frontend.e2e.mjs          (556 lines) — Playwright browser coverage for visible controls
   app.test.mjs              (527 lines) — API integration tests
   db.test.mjs               (774 lines) — persistence tests
   fixtures/
@@ -227,9 +227,36 @@ Verification after `96d8f3d`:
 - Server systemd/Nginx/health checks — OK
 - Public deployment audit — OK
 
+### AI Queue / Log Frontend State (`3c3583a`)
+
+Implemented the latest optimization pass after `Ctrl+Enter`:
+
+- Main chat header now includes `#aiQueueSummary`, a compact live queue summary next to the AI state pill.
+- The summary shows:
+  - current active task status and short task id
+  - waiting active-task count
+  - latest finished task, or active failure count when failures exist
+  - latest task update time when available
+- AI log dialog now includes `#aiLogStats`, showing total logs, current filter matches, warning count, distinct task count, and latest stage/time.
+- AI log stats update together with stage filter, warning-only toggle, and task grouping state.
+- Loading and failure states are visible in the AI log stats strip, so the owner can tell whether logs are unavailable or simply empty.
+- Added E2E coverage that seeds a busy AI queue and log records, then verifies the queue summary and filtered AI log stats in the browser.
+- Public cache bust: `public/index.html` now serves `/app.js?v=20260616-ai-status-ui`.
+
+Verification after `3c3583a`:
+- Local `npm run check`
+- Local `npm test` — 106/106 passed
+- Local `npm run test:e2e` — 9/9 passed
+- In-app Browser smoke check — OK, no console errors
+- Server `npm run check`
+- Server `npm test` — 106/106 passed
+- Server systemd/Nginx/health checks — OK
+- Public deployment audit — OK, room `PXUPGK`, `aiConfigured: true`
+- Confirmed public HTML/JS includes `#aiQueueSummary`, `#aiLogStats`, and `20260616-ai-status-ui`
+
 ## 2026-06-16 Code Review Notes
 
-Historical review note retained for context. The items marked as recommended below have mostly been implemented by `e426d16` and `4716b92`.
+Historical review note retained for context. The old high-value items around structured clue/NPC persistence, explicit action lifecycle, scene-aware context, persistent AI logs, visible log tooling, and browser coverage have now been implemented.
 
 Current AI behavior detection is much stronger than the original playtest report described:
 - The model no longer needs to reliably emit JSON for common checks. Backend inference now recovers many missing `required_checks` and `opposed_checks`.
@@ -237,22 +264,20 @@ Current AI behavior detection is much stronger than the original playtest report
 - The continuation loop caused by reusing the same player ACTION has been fixed by skipping already-processed actions.
 - AI-written check-marker text is stripped before backend marker injection, preventing duplicate visible prompts.
 
-The remaining improvements are mostly about durability, edge cases, and making future tuning easier.
+The remaining improvements are now mostly about deeper durability, UI ergonomics, and reducing future maintenance cost.
 
-### AI Behavior Detection: Recommended Next Work
+### Current Recommended Next Work
 
-1. Persist clue and NPC state structurally.
-   - `src/aiEvents.js` currently turns `clues_revealed` into system/private messages only.
-   - `playerState.js` already exposes `discoveredClues` and `knownNpcs`, but AI events do not update those arrays.
-   - Best next feature: when a clue is revealed or an NPC state changes, merge it into participant `playerMeta` or room scene state, then include it in future AI context.
-   - This improves long-session memory more than another prompt-only tweak.
+1. Split large frontend/server files before the next broad feature.
+   - `public/app.js` is now 2561 lines; `src/db.js`, `src/app.js`, and `src/aiOutput.js` are also large.
+   - Best first split: move character-sheet UI, AI log UI, and chat rendering into focused frontend modules.
+   - Keep tests green between each extraction; avoid a big-bang refactor.
 
-2. Make check lifecycle explicit instead of heuristic.
-   - `latestPlayerAction()` now skips an ACTION if a later DM/system check message exists. This fixed the continue loop.
-   - Longer term, attach the triggering `messageId` or task context to `ai_tasks` and mark that action as processed.
-   - This would handle edge cases like manual system checks, interleaved players, retries, or future regeneration flows more cleanly.
+2. Add owner-facing AI retry / cancel controls.
+   - Queue visibility exists, but owners still cannot cancel a stuck AI task or retry a failed task from the UI.
+   - Backend already tracks task status and idempotency keys, so this is a natural next UX improvement.
 
-3. Split `aiOutput.js` before major detection tuning.
+3. Split `aiOutput.js` before more detection tuning.
    - It now mixes JSON extraction, validation, narrative cleanup, required-check inference, opposed-check inference, module matching, and NPC matching.
    - Suggested split:
      - `aiStructuredParser.js` for JSON extraction/validation.
@@ -266,27 +291,16 @@ The remaining improvements are mostly about durability, edge cases, and making f
    - Avoid over-broad keyword rules; prefer module-specific anchors so normal roleplay does not trigger excessive rolls.
 
 5. Improve observability for skipped/invalid structured events.
-   - Some invalid or unresolved events are skipped or logged only to server console.
+   - Most owner-facing AI logs are now readable, but some invalid or unresolved events are still only lightly summarized.
    - Add owner-visible AI log entries for rejected check skills, missing NPC targets, and ignored state changes.
    - This will make future playtest debugging faster than reading raw server logs.
 
-6. Persist AI diagnostics if playtests become longer.
-   - `_aiLogs` in `src/app.js` is in-memory, capped per room, and lost on restart.
-   - For serious playtesting, store diagnostics in SQLite or include them in room export.
-   - If staying in memory, add time-based eviction as already noted below.
-
-7. Make AI context scene-aware.
-   - `buildDmMessages()` sends compact module JSON, but current selection still favors early scenes/NPCs.
-   - Use `sceneState.currentScene`, recent messages, and latest triggered check/clue IDs to include the most relevant scene/NPC/clue context first.
-   - This should improve narrative continuity and reduce hallucinated location/NPC details.
-
-8. Add browser/E2E coverage for visible AI controls.
-   - Current tests cover backend and parser behavior well, but not the actual chat UI.
-   - Add tests for `继续叙事`, AI detection log modal, rollback button visibility, and character-card quick status/actions.
+6. Add export/import for a complete playtest session.
+   - Chat, character cards, state, summary, AI logs, and module data are all persisted.
+   - A single owner export would make bug reports and future regression fixtures much easier to produce.
 
 ### Lower-Priority Cleanup
 
-- Harden `public/app.js` `window.onerror`; it currently injects raw error text via HTML. Use DOM nodes/textContent or disable it in production.
 - Broaden `AI_CHECK_MARKER` only if more duplicate marker variants appear. Current regex handles the observed Chinese full-width marker pattern.
 - Cache NPC candidates and module detection data per room/task if AI calls become CPU-heavy.
 - Split large files (`public/app.js`, `src/db.js`, `src/app.js`) when touching those areas next; do not refactor them all at once.
@@ -359,14 +373,15 @@ AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restore
 
 Local:
 ```bash
-npm run check     # passed on 2026-06-16 12:39 CST
-npm test          # 105/105 passed on 2026-06-16 12:39 CST
-npm run test:e2e  # 3/3 Playwright tests passed on 2026-06-16 12:39 CST
+npm run check     # passed on 2026-06-16 18:05 CST
+npm test          # 106/106 passed on 2026-06-16 18:05 CST
+npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-16 18:05 CST
 ```
 
 Server:
 ```bash
-cd /opt/dm-online && npm install && npm test   # 101/101 passed, 0 vulnerabilities
+cd /opt/dm-online && npm run check
+cd /opt/dm-online && npm test                  # 106/106 passed
 systemctl restart dm-online
 curl -fsS http://127.0.0.1:4173/api/health     # ok: true, aiConfigured: true
 systemctl is-active dm-online                    # active
@@ -376,7 +391,7 @@ nginx -t                                         # successful
 Public deployment audit:
 ```bash
 npm run audit:deployment -- http://8.153.147.137
-# ok: true, aiConfigured: true
+# ok: true, aiConfigured: true, roomCode: PXUPGK
 
 npm run audit:deployment -- --require-ai http://8.153.147.137
 # ok: true, aiConfigured: true, strictAi: true
