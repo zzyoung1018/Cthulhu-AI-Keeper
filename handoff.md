@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-16 13:58 CST
+Last updated: 2026-06-16 14:10 CST
 
 ## Current State
 
@@ -12,15 +12,18 @@ Last updated: 2026-06-16 13:58 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/opt/dm-online/data`
 - Local branch: `main`
-- Latest completed local code commit: `e38928d feat: add chat quick send shortcut`
-- Latest deployed code commit known from prior deployment: `0a94f99 fix: strip AI-generated check markers before injecting backend markers`
-- Note: local app code now has post-deployment changes after `0a94f99`; deploy before expecting the server to have these features.
+- Latest completed local app commit: `9a6ab9b feat: improve ai log tools and frontend coverage`
+- Latest deployed app commit: `9a6ab9b feat: improve ai log tools and frontend coverage`
+- Deployment verified on 2026-06-16 14:08 CST: systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
 - Local worktree is clean.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent Commits
 
+- `9a6ab9b` feat: improve ai log tools and frontend coverage
+- `01a7d1d` chore: checkpoint before e2e and log upgrades
+- `d419174` docs: update handoff after quick send
 - `e38928d` feat: add chat quick send shortcut
 - `4716b92` test: add frontend e2e and readable ai logs
 - `e426d16` feat: persist ai state and action lifecycle
@@ -28,9 +31,6 @@ Do not write server credentials into committed files. Use the conversation conte
 - `4ad3c21` docs: update handoff with ai detection review
 - `79bedf4` docs: refresh handoff with continue loop fix and duplicate marker fix
 - `0a94f99` fix: strip AI-generated check markers before injecting backend markers
-- `652a60d` fix: skip processed actions in latestPlayerAction to prevent check re-inference loop
-- `0ec6d12` docs: refresh handoff after ai detection deployment
-- `6546044` fix: make deployment audit summary assertion stable
 
 ## Code Map
 
@@ -50,12 +50,12 @@ src/
   privateHub.js      (63 lines) — player-specific SSE delivery
 
 public/
-  app.js          (2214 lines) — main frontend logic
+  app.js          (2467 lines) — main frontend logic
 
 test/
   comprehensive-ai.test.mjs (765 lines) — full AI detection and event coverage
   aiOutput.test.mjs         (594 lines) — parser/validator/inference regressions
-  frontend.e2e.mjs          (305 lines) — Playwright browser coverage for visible controls
+  frontend.e2e.mjs          (507 lines) — Playwright browser coverage for visible controls
   app.test.mjs              (446 lines) — API integration tests
   db.test.mjs               (774 lines) — persistence tests
   fixtures/
@@ -164,6 +164,47 @@ The five high-value follow-ups from the previous review are now implemented loca
   - `npm run check`
   - `npm test` — 105/105 passed
   - `npm run test:e2e` — 4/4 passed
+
+### Follow-up Items 1 / 3 / 4 / 5 (`9a6ab9b`)
+
+Completed the latest requested follow-up set:
+
+1. Deployment
+   - Synced local app code to `/opt/dm-online` with runtime data excluded (`.env`, `data/`, `node_modules/`, reports, test-results).
+   - Ran on server: `npm install`, `npm run check`, `npm test`, `systemctl restart dm-online`, `nginx -t`.
+   - Rechecked after restart race: `curl http://127.0.0.1:4173/api/health` returned OK and `systemctl is-active dm-online` returned `active`.
+   - Ran public audit locally: `npm run audit:deployment -- http://8.153.147.137`, result OK.
+   - Confirmed public HTML/JS contains the new cache version `20260616-e2e-log-tools` and AI log export code.
+
+3. Frontend E2E coverage
+   - Expanded Playwright coverage from 4 to 8 browser tests.
+   - New coverage:
+     - Create room through UI, join through UI, enforce max-player cap.
+     - Real-time player message sync across browser pages.
+     - Private messages delivered only to sender and target player.
+     - Character sheet save/reopen preserves occupation and interest skill allocations.
+     - AI log filtering, grouping, and JSON export.
+   - Local `npm run test:e2e` passed 8/8.
+
+4. AI detection log usability
+   - AI log dialog now has a stage filter, warning-only toggle, task grouping toggle, and JSON export.
+   - Filtering/grouping happens client-side against the persisted SQLite log payload.
+   - Export includes room code, export time, active filters, and filtered log entries.
+
+5. Frontend HTML rendering cleanup
+   - Removed `innerHTML` usage from `public/app.js`.
+   - Rebuilt chat messages, player list, status cards, character sheet overlay, skill tables, characteristic/resource inputs, and AI log entries with DOM APIs and `textContent`.
+   - Local browser smoke check via in-app Browser: page loaded at `127.0.0.1:4174`, AI log toolbar and quick-send marker existed, and console error count was 0.
+
+Verification after `9a6ab9b`:
+- Local `npm run check`
+- Local `npm test` — 105/105 passed
+- Local `npm run test:e2e` — 8/8 passed
+- In-app Browser smoke check — OK
+- Server `npm run check`
+- Server `npm test` — 105/105 passed
+- Server systemd/Nginx/health checks — OK
+- Public deployment audit — OK
 
 ## 2026-06-16 Code Review Notes
 
