@@ -2054,6 +2054,13 @@ els.messageForm.addEventListener('submit', async (event) => {
   }
 });
 
+els.messageForm.content.addEventListener('keydown', (event) => {
+  if (event.isComposing) return;
+  if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey)) return;
+  event.preventDefault();
+  els.messageForm.requestSubmit();
+});
+
 els.cancelAiTask.addEventListener('click', async () => {
   if (!state.room || !els.cancelAiTask.dataset.taskUid) return;
   try {

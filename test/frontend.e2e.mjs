@@ -262,6 +262,24 @@ test('renders readable AI detection logs for the owner', async ({ page }) => {
   }
 });
 
+test('sends chat actions with Ctrl+Enter', async ({ page }) => {
+  const fixture = await startFixture(['门缝里透出一线冷光。\n\n```json\n{}\n```']);
+  try {
+    const { room } = seedActiveRoom(fixture.app.database);
+    await openSeededRoom(page, fixture.baseUrl, room.code);
+
+    const textarea = page.locator('#messageForm textarea');
+    await textarea.fill('我查看门缝。');
+    await page.keyboard.press('Control+Enter');
+
+    await expect(page.locator('.message.action').filter({ hasText: '我查看门缝。' })).toBeVisible();
+    await expect(textarea).toHaveValue('');
+    await expect(page.getByText('门缝里透出一线冷光')).toBeVisible();
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('shows rollback and character skill allocation shortcuts', async ({ page }) => {
   const fixture = await startFixture();
   try {
