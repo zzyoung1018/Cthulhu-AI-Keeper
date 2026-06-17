@@ -184,6 +184,31 @@ function collectKnownHandouts(moduleJson, opening) {
   ], 8);
 }
 
+function splitPublicFacts(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .split(/(?<=[。！？!?；;])\s*|\n+/u)
+    .map((item) => item.replace(/^[-*]\s*/, '').trim())
+    .filter(Boolean);
+}
+
+function hasCriticalPublicDetail(value) {
+  return /(?:\d|[一二三四五六七八九十百千万]+(?:米|毫米|公里|英里|天|周|年|倍)|球形空缺|圆形空缺|完美的“?无”?|现实缺|光|声音|照片|信封|预付款|尾款|委托|目标|西边|大厅|中央|角落|不是|坑洞|黑洞|凹陷|透明|反射)/.test(String(value || ''));
+}
+
+function deriveCriticalPublicFacts(guide) {
+  const candidates = [
+    guide.publicInformation,
+    guide.objective,
+    guide.openingText,
+    guide.defaultOpening,
+    guide.initialScene,
+    ...guide.knownLocations,
+    ...guide.knownHandouts
+  ].flatMap(splitPublicFacts);
+  return uniqueValues(candidates.filter(hasCriticalPublicDetail), 10);
+}
+
 function deriveIntroSkills(moduleJson) {
   const excluded = new Set(['STR', 'CON', 'SIZ', 'DEX', 'APP', 'INT', 'POW', 'EDU', 'LUCK', 'Luck', '克苏鲁神话']);
   const preferred = ['侦查', '聆听', '图书馆使用', '心理学', '话术', '说服', '会计', '医学', '急救', '外语', '驾驶汽车', '导航'];
@@ -244,6 +269,7 @@ function buildIntroSections(guide) {
       '## 玩家公开前提',
       `- ${guide.publicInformation || '调查员收到一项需要共同处理的异常委托。'}`,
       `- **公开目标**：${guide.objective || '弄清异常事件的原因，并带回足够可靠的答案。'}`,
+      guide.criticalPublicFacts?.length ? `- **不可改写的公开事实**：${guide.criticalPublicFacts.join('；')}` : '',
       guide.knownNpcs.length ? `- **已知人物**：${guide.knownNpcs.join('；')}` : '',
       guide.knownLocations.length ? `- **已知地点**：${guide.knownLocations.join('；')}` : '',
       guide.knownHandouts.length ? `- **已知物件/资料**：${guide.knownHandouts.join('；')}` : ''
@@ -302,6 +328,7 @@ export function buildIntroPublicGuide({ moduleTitle, maxPlayers = 5, moduleJson 
     sourceContext: compactValue(moduleContext, 2400),
     requiredHeadings: INTRO_REQUIRED_HEADINGS
   };
+  guide.criticalPublicFacts = deriveCriticalPublicFacts(guide);
   const sections = buildIntroSections(guide);
   const facts = [
     `标题：${guide.moduleTitle}`,
@@ -319,6 +346,7 @@ export function buildIntroPublicGuide({ moduleTitle, maxPlayers = 5, moduleJson 
     guide.knownNpcs.length ? `玩家已知NPC：${guide.knownNpcs.join('；')}` : '',
     guide.knownLocations.length ? `玩家已知地点：${guide.knownLocations.join('；')}` : '',
     guide.knownHandouts.length ? `玩家已知道具/资料：${guide.knownHandouts.join('；')}` : '',
+    guide.criticalPublicFacts.length ? `不可改写的公开事实：${guide.criticalPublicFacts.join('；')}` : '',
     guide.recommendedSkills.length ? `可推荐技能：${guide.recommendedSkills.join('、')}` : '',
     guide.occupationHooks.length ? `可推荐职业方向：${guide.occupationHooks.join('、')}` : '',
     guide.contentWarnings.length ? `内容提醒：${guide.contentWarnings.join('、')}` : '',
@@ -376,6 +404,9 @@ export function buildIntroSystemPrompt(roomCfg = {}) {
     '- 不要泄露守秘人秘密、幕后真相、未发现的线索、NPC隐藏身份、反派身份或结局。',
     '- NPC 的 role 字段可能包含隐藏身份；准备阶段不要直接复述 role，只能说玩家公开可见的信息。',
     '- 不要替玩家决定角色的背景故事，只提供建议方向',
+    '- 必须保留“不可改写的公开事实”里的关键名词、数字、地点、距离、物件和目标；可以改写语气，但不能改写事实。',
+    '- 遇到异常几何、空洞、虚无、照片等核心意象时，必须保留原词。资料写“球形空缺/完美的无/现实缺了一块”时，不得改成“凹陷”“坑洞”“黑洞”“传送门”或普通圆洞。',
+    '- 如果照片、传闻和现场真实现象存在视角差异，要同时说清“照片显示什么”和“公开目标指向什么”，不要用照片画面覆盖现场事实。',
     '- 输出长度建议 900-1800 个中文字符；宁可条理清楚，也不要文学化堆砌。',
     '- 回复末尾不要列举游玩行动选项；准备阶段只说明开局状态和角色创建建议。',
     '- 回复应友好、专业，适合直接展示给所有玩家',

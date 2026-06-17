@@ -60,10 +60,10 @@ function createIntroJsonModule(database, ownerPlayerId) {
       content_warnings: ['经济危机与失业', '精神崩溃']
     },
     player_opening: {
-      initial_public_information: '调查员是被现实碾碎的人。一个富有银行家在底特律近郊酒吧给出现金预付款和一张模糊照片。',
+      initial_public_information: '调查员是被现实碾碎的人。一个富有银行家在底特律近郊酒吧给出现金预付款和一张模糊照片，要求调查废弃汽车工会大厅里直径一米的完美球形空缺。',
       initial_scene_id: 'bar_commission',
-      initial_objective: '前往废弃汽车工会大厅，观察空洞，弄清它是什么、是否会扩张、能否填上。',
-      suggested_intro_text: '门口风铃响起，炭灰色西装的中年人把厚厚的牛皮纸信封放在你的桌前。',
+      initial_objective: '前往废弃汽车工会大厅，观察直径一米的完美球形空缺，弄清它是什么、是否会扩张、能否填上。',
+      suggested_intro_text: '门口风铃响起，炭灰色西装的中年人把厚厚的牛皮纸信封放在你的桌前。照片显示一个圆形空缺，委托指向工会大厅里直径一米的完美球形空缺。',
       known_npcs: ['npc_patron'],
       known_locations: ['bar_commission', 'union_hall_void'],
       known_handouts: ['asset_blurry_void_photo', 'asset_cash_envelope']
@@ -267,13 +267,16 @@ test('module intro fills missing public premise, character guidance, and opening
     assert.match(intro.content, /## 调查员创建指南/);
     assert.match(intro.content, /## 开局场景/);
     assert.match(intro.content, /前往废弃汽车工会大厅/);
+    assert.match(intro.content, /直径一米的完美球形空缺/);
     assert.match(intro.content, /炭灰色西装/);
     assert.match(intro.content, /预付款牛皮纸信封/);
+    assert.doesNotMatch(intro.content, /球形凹陷|凹陷|坑洞|黑洞/);
     assert.doesNotMatch(intro.content, /奈亚拉托提普化身/);
     assert.ok(fakeAi.requests[0].body.messages.some((message) =>
       message.role === 'user' &&
       /公开开场简报/.test(message.content) &&
-      /必须完整覆盖以下标题/.test(message.content)
+      /必须完整覆盖以下标题/.test(message.content) &&
+      /直径一米的完美球形空缺/.test(message.content)
     ));
   } finally {
     await new Promise((resolveClose) => app.server.close(resolveClose));

@@ -53,6 +53,20 @@ AI DM 运行时会特别依赖：
 
 如果由于原文缺损、扫描不清、OCR 失败或图片无法辨认导致无法保证 0% 保真，必须在相关对象的 `uncertainty_notes` 和 `quality_control.detected_missing_parts` / `quality_control.image_understanding_limitations` 中明确标记。不要把无法确认的信息伪装成已确认。
 
+## 关键意象和开场保真
+
+开场引入不是可随意改写的摘要。请先区分这些层级，再写入 JSON：
+
+1. `module_info`/模组简介中明确告诉玩家或 KP 的核心异常、时代、地点、公开任务。
+2. `player_opening.initial_public_information` 中玩家开局应知道的事实。
+3. `player_opening.suggested_intro_text` 中可直接朗读的委托场景。
+4. `visual_assets`/handout 中照片、信件、剪报等“材料本身能看到什么”。
+5. `scenes`/现场中玩家抵达后真实看到什么。
+
+不要用 handout 的局部画面覆盖现场事实。例如原文如果同时写“照片里有一个圆形空缺”和“大厅中央是直径一米的球形空缺”，JSON 必须同时保留二者：照片字段写圆形截面/模糊照片，`initial_public_information`、`initial_objective`、相关场景、对象和核心线索必须写“直径一米的球形空缺”。不得把“球形空缺、完美的无、现实缺了一块”改写成“凹陷、坑洞、黑洞、传送门、普通圆洞”。
+
+凡是原文用于制造核心悬念的专有意象、几何关系、负面定义和关键措辞，都必须原样或近似原样保存。例如“不是什么”“不是黑影/不是坑洞/不是黑洞”“光和声音不再返回”“现实缺了一块”等，不要在压缩时删除。
+
 ## 输出硬规则
 
 1. 只输出 JSON。

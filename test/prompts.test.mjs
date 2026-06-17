@@ -21,10 +21,10 @@ const INTRO_MODULE = {
     content_warnings: ['经济危机与失业', '精神崩溃']
   },
   player_opening: {
-    initial_public_information: '调查员是被现实碾碎的人。一个富有银行家在底特律近郊酒吧给出现金预付款和一张模糊照片。',
+    initial_public_information: '调查员是被现实碾碎的人。一个富有银行家在底特律近郊酒吧给出现金预付款和一张模糊照片，要求调查废弃汽车工会大厅里直径一米的完美球形空缺。',
     initial_scene_id: 'bar_commission',
-    initial_objective: '前往废弃汽车工会大厅，观察空洞，弄清它是什么、是否会扩张、能否填上。',
-    suggested_intro_text: '门口风铃响起，炭灰色西装的中年人把厚厚的牛皮纸信封放在你的桌前。',
+    initial_objective: '前往废弃汽车工会大厅，观察直径一米的完美球形空缺，弄清它是什么、是否会扩张、能否填上。',
+    suggested_intro_text: '门口风铃响起，炭灰色西装的中年人把厚厚的牛皮纸信封放在你的桌前。照片显示一个圆形空缺，委托指向工会大厅里直径一米的完美球形空缺。',
     known_npcs: ['npc_patron'],
     known_locations: ['bar_commission', 'union_hall_void'],
     known_handouts: ['asset_blurry_void_photo', 'asset_cash_envelope']
@@ -78,6 +78,9 @@ test('intro prompt requires complete public opening sections', () => {
   assert.match(prompt, /## 玩家公开前提/);
   assert.match(prompt, /## 开局场景/);
   assert.match(prompt, /NPC 的 role 字段可能包含隐藏身份/);
+  assert.match(prompt, /不可改写的公开事实/);
+  assert.match(prompt, /球形空缺\/完美的无\/现实缺了一块/);
+  assert.match(prompt, /不得改成“凹陷”“坑洞”“黑洞”/);
 });
 
 test('buildIntroPublicGuide extracts public opening without leaking hidden NPC role', () => {
@@ -85,6 +88,8 @@ test('buildIntroPublicGuide extracts public opening without leaking hidden NPC r
   assert.match(guide.contextText, /底特律近郊酒吧/);
   assert.match(guide.contextText, /牛皮纸信封/);
   assert.match(guide.contextText, /模糊的空洞照片/);
+  assert.match(guide.contextText, /不可改写的公开事实/);
+  assert.match(guide.contextText, /直径一米的完美球形空缺/);
   assert.match(guide.contextText, /侦查、聆听、图书馆使用/);
   assert.doesNotMatch(guide.contextText, /奈亚拉托提普化身/);
 });
@@ -102,6 +107,8 @@ test('ensureCompleteIntroContent appends missing opening sections from module JS
   assert.match(completed, /## 调查员创建指南/);
   assert.match(completed, /## 开局场景/);
   assert.match(completed, /前往废弃汽车工会大厅/);
+  assert.match(completed, /直径一米的完美球形空缺/);
   assert.match(completed, /炭灰色西装/);
+  assert.doesNotMatch(completed, /球形凹陷|凹陷|坑洞|黑洞/);
   assert.doesNotMatch(completed, /奈亚拉托提普化身/);
 });
