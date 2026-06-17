@@ -141,6 +141,27 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     return key.startsWith('continue:') || key.startsWith('precheck:');
   }
 
+  function taskTriggerIsCheckResult(task) {
+    if (!task?.triggerMessageId) return false;
+    try {
+      return isCheckResultMessage(database.getMessageById(task.triggerMessageId));
+    } catch {
+      return false;
+    }
+  }
+
+  function shouldUseCheckContinuationPrompt(task, queuedPreflight) {
+    return isCheckContinuationTask(task) ||
+      queuedPreflight?.continuedFromCheck ||
+      taskTriggerIsCheckResult(task);
+  }
+
+  function canRunQueuedPreflight(task) {
+    if (!task?.triggerMessageId || isCheckContinuationTask(task)) return false;
+    const key = String(task.idempotencyKey || '');
+    return key.startsWith('message:') || key.startsWith('action:');
+  }
+
   function setAiTaskStatus(code, taskUid, status, error = '') {
     const task = database.updateAiTaskStatus({ taskUid, status, error });
     if (task) broadcastAiTask(code, task);
@@ -153,6 +174,93 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       throw new AiTaskCancelled();
     }
     return task;
+  }
+
+  function maybeRunQueuedPreflight(code, task) {
+    if (!canRunQueuedPreflight(task)) {
+      return { task, applied: null, continuedFromCheck: false };
+    }
+
+    const actionMessage = database.getMessageById(task.triggerMessageId);
+    if (!actionMessage || actionMessage.authorType !== 'player' || actionMessage.messageType !== 'ACTION') {
+      return { task, applied: null, continuedFromCheck: false };
+    }
+    if (actionMessage.aiProcessedTaskUid) {
+      addAiLog(code, {
+        stage: 'preflight-skipped',
+        taskUid: task.uid,
+        actionMessageId: actionMessage.id,
+        playerId: actionMessage.playerId,
+        reason: 'action-already-processed'
+      });
+      return { task, applied: null, continuedFromCheck: false };
+    }
+
+    const preflightState = roomStateWithModuleJson(code, {
+      playerId: task.requestedByPlayerId || actionMessage.playerId || '',
+      messageLimit: 100
+    });
+    const plan = planPreflightCheck({ actionMessage, roomState: preflightState });
+    if (plan.type === 'none') {
+      if (plan.issues?.length > 0) {
+        addAiLog(code, {
+          stage: 'preflight-skipped',
+          taskUid: task.uid,
+          actionMessageId: actionMessage.id,
+          playerId: actionMessage.playerId,
+          reason: plan.reason,
+          detection: plan.detection,
+          issues: plan.issues,
+          warnings: plan.warnings || []
+        });
+      }
+      return { task, applied: null, continuedFromCheck: false };
+    }
+
+    addAiLog(code, {
+      stage: 'preflight-check',
+      taskUid: task.uid,
+      actionMessageId: actionMessage.id,
+      playerId: actionMessage.playerId,
+      type: plan.type,
+      reason: plan.reason,
+      eventKeys: Object.keys(plan.events || {}),
+      detection: plan.detection,
+      issues: plan.issues || [],
+      warnings: plan.warnings || []
+    });
+
+    const applied = applyStructuredEvents(code, task.uid, plan.events, null, preflightState.moduleJson);
+    const checkMessage = firstAppliedCheckMessage(applied);
+    const checkRoll = firstAppliedCheckRoll(applied);
+    if (!checkMessage) {
+      addAiLog(code, {
+        stage: 'preflight-skipped',
+        taskUid: task.uid,
+        actionMessageId: actionMessage.id,
+        playerId: actionMessage.playerId,
+        reason: 'no-check-message-created',
+        type: plan.type
+      });
+      return { task, applied: null, continuedFromCheck: false };
+    }
+
+    const updatedTask = database.updateAiTaskTrigger({
+      taskUid: task.uid,
+      triggerMessageId: checkMessage.id
+    });
+    if (updatedTask) {
+      task = updatedTask;
+      broadcastAiTask(code, task);
+    }
+
+    return {
+      task,
+      applied,
+      continuedFromCheck: true,
+      checkMessage,
+      checkRoll
+    };
   }
 
   async function generateDmReply(code, taskUid) {
@@ -168,6 +276,8 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     }
 
     setAiTaskStatus(code, taskUid, 'RETRIEVING');
+    const queuedPreflight = maybeRunQueuedPreflight(code, task);
+    task = queuedPreflight.task || task;
     const state = roomStateWithModuleJson(code, 80);
     const moduleSegments = database.getRoomModuleSegments(code, 120);
 
@@ -209,7 +319,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       const aiMessages = buildDmMessages(state);
       // 结构化输出指令作为 system 消息，优先级最高
       aiMessages.splice(1, 0, { role: 'system', content: buildStructuredOutputPrompt() });
-      if (isCheckContinuationTask(task)) {
+      if (shouldUseCheckContinuationPrompt(task, queuedPreflight)) {
         aiMessages.splice(2, 0, {
           role: 'system',
           content: [
@@ -289,6 +399,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       try {
         const rollbackRefs = mergeRollbackRefs(
           preflightRollbackRefsFromTask(task),
+          appliedRollbackRefs(queuedPreflight.applied),
           appliedRollbackRefs(appliedEvents)
         );
         createRoundRecord({
@@ -838,73 +949,22 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         const message = database.createPlayerMessage({ code, playerId, content, messageType });
         hub.broadcast(code, 'message_created', { message });
         let aiTask = null;
-        let preflightCheck = null;
         if (triggersAi) {
-          let triggerMessageId = message.id;
-          let idempotencyKey = body.actionId
+          const idempotencyKey = body.actionId
             ? `action:${playerId}:${String(body.actionId).slice(0, 80)}`
             : `message:${message.id}`;
-
-          const preflightState = roomStateWithModuleJson(code, { playerId, messageLimit: 100 });
-          if (!preflightState.activeAiTask) {
-            const plan = planPreflightCheck({ actionMessage: message, roomState: preflightState });
-            if (plan.type !== 'none') {
-              addAiLog(code, {
-                stage: 'preflight-check',
-                actionMessageId: message.id,
-                playerId,
-                type: plan.type,
-                reason: plan.reason,
-                eventKeys: Object.keys(plan.events || {}),
-                detection: plan.detection,
-                issues: plan.issues || [],
-                warnings: plan.warnings || []
-              });
-              const applied = applyStructuredEvents(code, '', plan.events, null, preflightState.moduleJson);
-              const checkMessage = firstAppliedCheckMessage(applied);
-              const checkRoll = firstAppliedCheckRoll(applied);
-              if (checkMessage) {
-                preflightCheck = {
-                  type: plan.type,
-                  reason: plan.reason,
-                  messageId: checkMessage.id,
-                  rollId: checkRoll?.id || null,
-                  detection: plan.detection
-                };
-                triggerMessageId = checkMessage.id;
-                idempotencyKey = `precheck:${message.id}:${checkMessage.id}:${checkRoll?.id || 0}`;
-              }
-            } else if (plan.issues?.length > 0) {
-              addAiLog(code, {
-                stage: 'preflight-skipped',
-                actionMessageId: message.id,
-                playerId,
-                reason: plan.reason,
-                detection: plan.detection,
-                issues: plan.issues
-              });
-            }
-          } else {
-            addAiLog(code, {
-              stage: 'preflight-skipped',
-              actionMessageId: message.id,
-              playerId,
-              reason: 'active-ai-task',
-              activeTaskUid: preflightState.activeAiTask.uid
-            });
-          }
 
           const result = database.createAiTask({
             code,
             playerId,
-            triggerMessageId,
+            triggerMessageId: message.id,
             idempotencyKey
           });
           aiTask = result.task;
           broadcastAiTask(code, aiTask);
           if (result.created) enqueueDm(code, aiTask.uid);
         }
-        sendJson(response, 201, { message, aiQueued: Boolean(aiTask), aiTask, preflightCheck });
+        sendJson(response, 201, { message, aiQueued: Boolean(aiTask), aiTask, preflightCheck: null });
         return;
       }
 

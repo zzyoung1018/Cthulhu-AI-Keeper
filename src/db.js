@@ -666,6 +666,7 @@ export function createDatabase(dbPath) {
       WHERE task_uid = ?
     `),
     attachAiTaskMessage: db.prepare('UPDATE ai_tasks SET dm_message_id = ?, updated_at = ? WHERE task_uid = ?'),
+    updateAiTaskTrigger: db.prepare('UPDATE ai_tasks SET trigger_message_id = ?, updated_at = ? WHERE task_uid = ?'),
     requestAiTaskCancel: db.prepare('UPDATE ai_tasks SET cancel_requested = 1, updated_at = ? WHERE task_uid = ?'),
     updateSummary: db.prepare('UPDATE rooms SET summary = ?, updated_at = ? WHERE id = ?'),
     updateSceneState: db.prepare('UPDATE rooms SET scene_state = ?, updated_at = ? WHERE id = ?'),
@@ -1234,6 +1235,11 @@ export function createDatabase(dbPath) {
 
     attachAiTaskMessage({ taskUid, messageId }) {
       statements.attachAiTaskMessage.run(messageId, now(), taskUid);
+      return rowToAiTask(statements.getAiTaskByUid.get(taskUid));
+    },
+
+    updateAiTaskTrigger({ taskUid, triggerMessageId }) {
+      statements.updateAiTaskTrigger.run(triggerMessageId || null, now(), taskUid);
       return rowToAiTask(statements.getAiTaskByUid.get(taskUid));
     },
 

@@ -58,7 +58,7 @@ function characterSheet() {
       EDU: 50,
       Luck: 50
     },
-    skills: { 侦查: 68, 图书馆使用: 55, 话术: 60, 心理学: 50 }
+    skills: { 侦查: 68, 聆听: 45, 图书馆使用: 55, 话术: 60, 心理学: 50 }
   };
 }
 
@@ -77,7 +77,16 @@ async function waitForState(baseUrl, code, playerId, predicate, timeoutMs = 3000
   throw new Error(`Timed out waiting for room state. Latest task: ${JSON.stringify(latest?.activeAiTask || null)}`);
 }
 
-async function startFakeAiServer(responseText) {
+async function waitForPredicate(predicate, timeoutMs = 3000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return;
+    await sleep(25);
+  }
+  throw new Error('Timed out waiting for predicate');
+}
+
+async function startFakeAiServer(responseText, { chunkDelayMs = 0 } = {}) {
   const requests = [];
   const encoderChunks = String(responseText).match(/.{1,24}/gs) || [''];
   const server = createServer(async (request, response) => {
@@ -90,6 +99,7 @@ async function startFakeAiServer(responseText) {
       'Cache-Control': 'no-cache'
     });
     for (const chunk of encoderChunks) {
+      if (chunkDelayMs > 0) await sleep(chunkDelayMs);
       response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: chunk } }] })}\n\n`);
     }
     response.write('data: [DONE]\n\n');
@@ -443,9 +453,9 @@ test('preflight required checks roll before AI continuation', async () => {
       })
     });
 
-    assert.equal(submitted.preflightCheck.type, 'required');
-    assert.equal(submitted.preflightCheck.messageId, submitted.aiTask.triggerMessageId);
-    assert.match(submitted.aiTask.idempotencyKey, /^precheck:/);
+    assert.equal(submitted.preflightCheck, null);
+    assert.equal(submitted.aiTask.triggerMessageId, submitted.message.id);
+    assert.match(submitted.aiTask.idempotencyKey, /^message:/);
 
     const state = await waitForState(
       baseUrl,
@@ -467,6 +477,9 @@ test('preflight required checks roll before AI continuation', async () => {
     assert.equal(checkMessages.length, 1);
     assert.match(checkMessages[0].content, /侦查\(68\)/);
 
+    const completedTask = state.aiTasks.find((task) => task.uid === submitted.aiTask.uid);
+    assert.equal(completedTask.triggerMessageId, checkMessages[0].id);
+
     const dmMessage = state.messages.find((message) => message.authorType === 'dm');
     assert.ok(dmMessage);
     assert.doesNotMatch(dmMessage.content, /```json/);
@@ -480,6 +493,105 @@ test('preflight required checks roll before AI continuation', async () => {
     assert.equal(rolledBack.messages.some((message) => message.displayName === '必要检定'), false);
     assert.equal(rolledBack.messages.some((message) => message.authorType === 'dm'), false);
     assert.equal(rolledBack.diceRolls.some((roll) => roll.label === '侦查'), false);
+  } finally {
+    await new Promise((resolveClose) => app.server.close(resolveClose));
+    app.database.close();
+    await fakeAi.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('regenerating a preflighted task keeps check continuation context', async () => {
+  const fakeAi = await startFakeAiServer('骰点结果被重新整理成更清晰的叙事。\n\n```json\n{}\n```');
+  const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
+  const app = createApp({
+    config: {
+      dbPath: join(dir, 'test.db'),
+      dataDir: dir,
+      publicDir: resolve('public'),
+      ai: {
+        baseUrl: fakeAi.baseUrl,
+        apiKey: 'test-key',
+        model: 'test-model',
+        temperature: 0.1,
+        timeoutMs: 10_000,
+        localFallback: false
+      }
+    },
+    publicDir: resolve('public')
+  });
+
+  try {
+    const baseUrl = await new Promise((resolveListen) => {
+      app.server.listen(0, '127.0.0.1', () => {
+        const address = app.server.address();
+        resolveListen(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    const module = createModule(app.database, 'p1');
+    const created = await jsonRequest(baseUrl, '/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        displayName: 'Keeper',
+        roomName: 'Regenerate Preflight Room',
+        moduleId: module.id
+      })
+    });
+
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/character`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        playerId: 'p1',
+        displayName: 'Keeper',
+        characterSheet: characterSheet()
+      })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/ready`, {
+      method: 'PATCH',
+      body: JSON.stringify({ playerId: 'p1', isReady: true })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ playerId: 'p1', status: 'ACTIVE' })
+    });
+
+    const submitted = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        messageType: 'ACTION',
+        content: '我仔细侦查房间，检查书桌下面有没有隐藏痕迹。'
+      })
+    });
+
+    await waitForState(
+      baseUrl,
+      created.room.code,
+      'p1',
+      (roomState) => roomState.aiTasks.some((task) => task.uid === submitted.aiTask.uid && task.status === 'COMPLETED')
+    );
+
+    const regenerated = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/ai-tasks/${submitted.aiTask.uid}/regenerate`, {
+      method: 'POST',
+      body: JSON.stringify({ playerId: 'p1' })
+    });
+
+    const state = await waitForState(
+      baseUrl,
+      created.room.code,
+      'p1',
+      (roomState) => roomState.aiTasks.some((task) =>
+        task.uid === regenerated.task.uid && task.status === 'COMPLETED'
+      )
+    );
+
+    assert.equal(fakeAi.requests.length, 2);
+    assert.ok(fakeAi.requests[1].body.messages.some((message) =>
+      message.role === 'system' && /检定结果后的继续叙事/.test(message.content)
+    ));
+    assert.equal(state.messages.filter((message) => message.displayName === '必要检定').length, 1);
   } finally {
     await new Promise((resolveClose) => app.server.close(resolveClose));
     app.database.close();
@@ -561,9 +673,9 @@ test('preflight opposed checks use recent NPC context before AI narration', asyn
       })
     });
 
-    assert.equal(submitted.preflightCheck.type, 'opposed');
-    assert.equal(submitted.preflightCheck.messageId, submitted.aiTask.triggerMessageId);
-    assert.match(submitted.aiTask.idempotencyKey, /^precheck:/);
+    assert.equal(submitted.preflightCheck, null);
+    assert.equal(submitted.aiTask.triggerMessageId, submitted.message.id);
+    assert.match(submitted.aiTask.idempotencyKey, /^message:/);
 
     const state = await waitForState(
       baseUrl,
@@ -584,6 +696,135 @@ test('preflight opposed checks use recent NPC context before AI narration', asyn
     assert.ok(checkMessage);
     assert.match(checkMessage.content, /陈友/);
     assert.match(checkMessage.content, /话术\(60\)/);
+
+    const completedTask = state.aiTasks.find((task) => task.uid === submitted.aiTask.uid);
+    assert.equal(completedTask.triggerMessageId, checkMessage.id);
+  } finally {
+    await new Promise((resolveClose) => app.server.close(resolveClose));
+    app.database.close();
+    await fakeAi.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('queued actions run preflight checks when their AI turn starts', async () => {
+  const fakeAi = await startFakeAiServer(
+    '检定结果推动场景继续发展，AI 根据服务器骰点补上后续叙事。\n\n```json\n{}\n```',
+    { chunkDelayMs: 60 }
+  );
+  const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
+  const app = createApp({
+    config: {
+      dbPath: join(dir, 'test.db'),
+      dataDir: dir,
+      publicDir: resolve('public'),
+      ai: {
+        baseUrl: fakeAi.baseUrl,
+        apiKey: 'test-key',
+        model: 'test-model',
+        temperature: 0.1,
+        timeoutMs: 10_000,
+        localFallback: false
+      }
+    },
+    publicDir: resolve('public')
+  });
+
+  try {
+    const baseUrl = await new Promise((resolveListen) => {
+      app.server.listen(0, '127.0.0.1', () => {
+        const address = app.server.address();
+        resolveListen(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    const module = createModule(app.database, 'p1');
+    const created = await jsonRequest(baseUrl, '/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        displayName: 'Keeper',
+        roomName: 'Queued Preflight Room',
+        moduleId: module.id
+      })
+    });
+
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/character`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        playerId: 'p1',
+        displayName: 'Keeper',
+        characterSheet: characterSheet()
+      })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/ready`, {
+      method: 'PATCH',
+      body: JSON.stringify({ playerId: 'p1', isReady: true })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ playerId: 'p1', status: 'ACTIVE' })
+    });
+
+    const first = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        messageType: 'ACTION',
+        content: '我仔细侦查房间，检查书桌下面有没有隐藏痕迹。'
+      })
+    });
+    await waitForPredicate(() => fakeAi.requests.length === 1);
+
+    const second = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        messageType: 'ACTION',
+        content: '第一轮还没结束时，我停下聆听走廊里的脚步声。'
+      })
+    });
+
+    assert.equal(first.preflightCheck, null);
+    assert.equal(second.preflightCheck, null);
+    assert.equal(second.aiTask.triggerMessageId, second.message.id);
+
+    const state = await waitForState(
+      baseUrl,
+      created.room.code,
+      'p1',
+      (roomState) =>
+        fakeAi.requests.length === 2 &&
+        roomState.aiTasks.filter((task) =>
+          [first.aiTask.uid, second.aiTask.uid].includes(task.uid) &&
+          task.status === 'COMPLETED'
+        ).length === 2,
+      6000
+    );
+
+    const requiredChecks = state.messages.filter((message) => message.displayName === '必要检定');
+    const spotHidden = requiredChecks.find((message) => /侦查\(68\)/.test(message.content));
+    const listenHallway = requiredChecks.find((message) => /聆听\(45\)/.test(message.content));
+    assert.ok(spotHidden);
+    assert.ok(listenHallway);
+
+    const firstTask = state.aiTasks.find((task) => task.uid === first.aiTask.uid);
+    const secondTask = state.aiTasks.find((task) => task.uid === second.aiTask.uid);
+    assert.equal(firstTask.triggerMessageId, spotHidden.id);
+    assert.equal(secondTask.triggerMessageId, listenHallway.id);
+    assert.ok(fakeAi.requests[0].body.messages.some((message) =>
+      message.role === 'system' && /检定结果后的继续叙事/.test(message.content)
+    ));
+    assert.ok(fakeAi.requests[1].body.messages.some((message) =>
+      message.role === 'system' && /检定结果后的继续叙事/.test(message.content)
+    ));
+
+    const logs = app.database.listAiLogs({ code: created.room.code, limit: 80 });
+    assert.ok(logs.some((entry) =>
+      entry.stage === 'preflight-check' &&
+      entry.taskUid === second.aiTask.uid &&
+      entry.detection?.skill === '聆听'
+    ));
   } finally {
     await new Promise((resolveClose) => app.server.close(resolveClose));
     app.database.close();

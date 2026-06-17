@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-16 23:11 CST
+Last updated: 2026-06-17 12:39 CST
 
 ## Current State
 
@@ -357,6 +357,33 @@ Current AI behavior detection is much stronger than the original playtest report
 
 The remaining improvements are now mostly about deeper durability, UI ergonomics, and reducing future maintenance cost.
 
+## 2026-06-17 Queued Preflight Update
+
+Completed the highest-impact follow-up from the previous review: preflight checks now run when an AI task reaches the front of the per-room queue, rather than only at message-submit time.
+
+Why this matters:
+- Previously, if another AI task was active, the backend skipped preflight for later ACTION messages to avoid out-of-order rolls.
+- That preserved ordering, but increased the chance that queued actions would rely on the model to ask for checks correctly.
+- Now every queued ACTION can still get deterministic server-side preflight when its own AI turn starts, so busy multiplayer rooms keep both ordering and lower AI check error rates.
+
+Implementation notes:
+- `src/app.js` keeps ACTION submission fast: it creates the player message and AI task immediately, then defers preflight to `generateDmReply()`.
+- When queued preflight creates a required/opposed check, the AI task `triggerMessageId` is updated to the resulting system check message.
+- The AI prompt then receives the same "检定结果后的继续叙事" instruction as manual continue tasks.
+- Rollback refs now include queued preflight check messages and dice rolls.
+- Regenerating a task whose trigger is a check result also receives continuation context, so it does not forget server dice results.
+- `src/db.js` added `updateAiTaskTrigger()` for the internal task trigger rewrite.
+
+Regression coverage:
+- `test/app.test.mjs` now verifies immediate preflight still rolls before narration.
+- It also verifies a second ACTION submitted while AI is streaming still runs its own preflight when its queued turn starts.
+- It verifies regeneration from a preflighted task preserves check-continuation prompt context.
+
+Verification after this update:
+- `npm run check`
+- `npm test` — 119/119 passed
+- `npm run test:e2e` — 9/9 passed
+
 ### Current Recommended Next Work
 
 1. Split large frontend/server files before the next broad feature.
@@ -364,10 +391,9 @@ The remaining improvements are now mostly about deeper durability, UI ergonomics
    - Best first split: move character-sheet UI, AI log UI, and chat rendering into focused frontend modules.
    - Keep tests green between each extraction; avoid a big-bang refactor.
 
-2. Move preflight into queued task execution for busy rooms.
-   - Current preflight is skipped while another AI task is active to avoid out-of-order rolls.
-   - Next reliability improvement: store a pending "preflight candidate" on the AI task and execute it when that task reaches the front of the per-room queue.
-   - This preserves order while still giving queued actions the lower-error preflight path.
+2. Add a complete owner-facing playtest export/import flow.
+   - Chat, character cards, state, summary, AI logs, and module data are already persisted.
+   - A single importable bundle would make bug reports, regression fixtures, and cross-machine playtest replay much easier.
 
 3. Split `aiOutput.js` before more detection tuning.
    - It now mixes JSON extraction, validation, narrative cleanup, required-check inference, opposed-check inference, module matching, and NPC matching.
