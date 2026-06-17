@@ -79,6 +79,8 @@ test('intro prompt asks for a natural synopsis that preserves core hook facts', 
   const prompt = buildIntroSystemPrompt();
   assert.match(prompt, /## 剧情简介/);
   assert.match(prompt, /只允许输出一个二级标题/);
+  assert.match(prompt, /不是固定三段格式/);
+  assert.match(prompt, /信息完整和自然节奏优先/);
   assert.match(prompt, /书背简介或跑团邀请语/);
   assert.match(prompt, /核心剧情引入/);
   assert.match(prompt, /不要用“玩家已经知道什么”的资料口吻/);
@@ -162,6 +164,8 @@ test('opening scene prompt uses opening text only after play starts', () => {
   const prompt = buildOpeningSceneSystemPrompt();
   const context = buildOpeningSceneUserContext({ moduleTitle: '现实的荒原', maxPlayers: 5, introGuide: guide });
   assert.match(prompt, /刚从准备阶段进入游玩阶段/);
+  assert.match(prompt, /不要求固定三段/);
+  assert.match(prompt, /玩家可行动性优先/);
   assert.match(context, /建议开场文本/);
   assert.match(context, /炭灰色西装/);
   assert.match(context, /直径一米的完美球形空缺/);
