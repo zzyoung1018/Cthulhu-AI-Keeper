@@ -877,6 +877,9 @@ test('imports owner playtest export into a replay room', () => {
     assert.equal(imported.room.ownerPlayerId, 'new-owner');
     assert.equal(imported.room.status, 'ACTIVE');
     assert.equal(imported.room.summary, '调查员进入档案室。');
+    assert.equal(imported.room.roomMeta.replay.isReplay, true);
+    assert.equal(imported.room.roomMeta.replay.sourceRoomCode, room.code);
+    assert.equal(imported.room.roomMeta.replay.importedMessages, 2);
     assert.equal(JSON.parse(imported.room.sceneState).currentScene, 'archive');
     assert.equal(imported.participants.length, 2);
     assert.equal(imported.participants[0].playerId, 'new-owner');
@@ -888,6 +891,7 @@ test('imports owner playtest export into a replay room', () => {
     assert.equal(imported.importSummary.playerIdsPreserved, true);
 
     const ownerState = database.getRoomState(imported.room.code, { playerId: 'new-owner', messageLimit: 20 });
+    assert.equal(ownerState.room.roomMeta.replay.sourceRoomName, 'Original Playtest');
     assert.equal(ownerState.messages.some((message) => message.content === '我偷偷告诉 Keeper。'), true);
     const importedLogs = database.listAiLogs({ code: imported.room.code, limit: 10 });
     assert.equal(importedLogs[0].stage, 'preflight-check');

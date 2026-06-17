@@ -603,6 +603,46 @@ select:focus {
   white-space: nowrap;
 }
 
+.replay-banner {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(123, 198, 164, 0.38);
+  border-radius: 6px;
+  background: rgba(123, 198, 164, 0.08);
+}
+
+.replay-banner[hidden] {
+  display: none;
+}
+
+.replay-banner-head {
+  display: grid;
+  gap: 3px;
+}
+
+.replay-banner-head strong {
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.replay-banner-head span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.replay-banner-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-state-chip.replay-chip {
+  border-color: rgba(123, 198, 164, 0.32);
+  background: rgba(123, 198, 164, 0.09);
+}
+
 .players {
   display: grid;
   gap: 8px;

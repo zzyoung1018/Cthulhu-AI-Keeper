@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CoC Online</title>
-    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/styles.css?v=20260618-replay-labels">
   </head>
   <body>
     <main class="shell">
@@ -56,6 +56,13 @@
               <button class="ghost" id="resumeGame" type="button">恢复</button>
               <button class="ghost danger" id="endGame" type="button">结束</button>
             </div>
+          </div>
+          <div class="replay-banner" id="replayBanner" hidden>
+            <div class="replay-banner-head">
+              <strong>调试回放</strong>
+              <span id="replaySource"></span>
+            </div>
+            <div class="replay-banner-meta" id="replayMeta"></div>
           </div>
           <div class="players" id="players"></div>
           <div class="character-card" id="characterCard">
@@ -293,6 +300,6 @@
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/app.js?v=20260616-ai-status-ui"></script>
+    <script type="module" src="/app.js?v=20260618-replay-labels"></script>
   </body>
 </html>

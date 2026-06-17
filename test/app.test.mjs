@@ -1329,12 +1329,15 @@ test('playtest import endpoint creates a replay room from owner export', async (
     assert.notEqual(imported.room.code, created.room.code);
     assert.equal(imported.room.name, 'Replay Room');
     assert.equal(imported.room.ownerPlayerId, 'new-owner');
+    assert.equal(imported.room.roomMeta.replay.isReplay, true);
+    assert.equal(imported.room.roomMeta.replay.sourceRoomCode, created.room.code);
     assert.equal(imported.importSummary.importedMessages, 1);
     assert.equal(imported.importSummary.importedAiLogs, 1);
     assert.equal(imported.messages[0].content, '这是一条需要复现的记录。');
 
     const roomState = await jsonRequest(baseUrl, `/api/rooms/${imported.room.code}?playerId=new-owner`);
     assert.equal(roomState.room.name, 'Replay Room');
+    assert.equal(roomState.room.roomMeta.replay.importedAiLogs, 1);
     assert.equal(roomState.messages[0].content, '这是一条需要复现的记录。');
     const logs = await jsonRequest(baseUrl, `/api/rooms/${imported.room.code}/ai-log?playerId=new-owner`);
     assert.equal(logs.logs[0].stage, 'preflight-check');

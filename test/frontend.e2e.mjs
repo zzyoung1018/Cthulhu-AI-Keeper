@@ -508,6 +508,11 @@ test('imports owner playtest exports through the create dialog', async ({ page }
 
     await expect(page.locator('#roomTitle')).toHaveText('Imported Replay');
     await expect(page.locator('#playerCount')).toHaveText('1/5');
+    await expect(page.locator('#replayBanner')).toBeVisible();
+    await expect(page.locator('#replayBanner')).toContainText('调试回放');
+    await expect(page.locator('#replayBanner')).toContainText(`来源 E2E Room #${room.code}`);
+    await expect(page.locator('#replayBanner')).toContainText('消息');
+    await expect(page.locator('#replayBanner')).toContainText('日志');
     await expect(page.locator('#chatLog')).toContainText('登记簿纸页潮湿');
     await expect(page.locator('#btnAiLog')).toBeVisible();
     await page.locator('#btnAiLog').click();

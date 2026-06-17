@@ -80,6 +80,9 @@ const els = {
   roomPanel: document.querySelector('#roomPanel'),
   roomTitle: document.querySelector('#roomTitle'),
   roomStatus: document.querySelector('#roomStatus'),
+  replayBanner: document.querySelector('#replayBanner'),
+  replaySource: document.querySelector('#replaySource'),
+  replayMeta: document.querySelector('#replayMeta'),
   roomCode: document.querySelector('#roomCode'),
   codeRow: document.querySelector('#codeRow'),
   playerCount: document.querySelector('#playerCount'),
@@ -973,6 +976,12 @@ function isOwner() {
   return Boolean(state.participant?.isOwner || state.room?.ownerPlayerId === state.playerId);
 }
 
+function currentReplayMeta() {
+  const meta = state.room?.roomMeta || {};
+  const replay = meta.replay || null;
+  return replay?.isReplay ? replay : null;
+}
+
 function findActiveAiTask(tasks = []) {
   return tasks.find((task) => activeAiStatuses.includes(task.status)) || null;
 }
@@ -1097,6 +1106,38 @@ function renderPlayers() {
     node.append(name, meta);
     els.players.append(node);
   }
+}
+
+function renderReplayBanner() {
+  if (!els.replayBanner) return;
+  const replay = currentReplayMeta();
+  const visible = Boolean(state.room && isOwner() && replay);
+  els.replayBanner.hidden = !visible;
+  if (!visible) {
+    els.replaySource.textContent = '';
+    els.replayMeta.replaceChildren();
+    return;
+  }
+
+  const source = [
+    replay.sourceRoomName || '',
+    replay.sourceRoomCode ? `#${replay.sourceRoomCode}` : ''
+  ].filter(Boolean).join(' ');
+  els.replaySource.textContent = source ? `来源 ${source}` : '来源 owner JSON';
+
+  const counts = [
+    ['玩家', replay.importedParticipants],
+    ['消息', replay.importedMessages],
+    ['骰点', replay.importedDiceRolls],
+    ['日志', replay.importedAiLogs],
+    ['片段', replay.importedModuleSegments]
+  ].filter(([, value]) => Number.isFinite(Number(value)));
+
+  els.replayMeta.replaceChildren();
+  for (const [label, value] of counts) {
+    els.replayMeta.append(stateChip(label, String(value), 'replay-chip'));
+  }
+  els.replayMeta.append(stateChip('用途', '调试', 'replay-chip'));
 }
 
 function messageClass(message) {
@@ -2055,6 +2096,7 @@ function render() {
   }
 
   renderPlayers();
+  renderReplayBanner();
   renderLifecycleActions();
   renderAiTaskControls();
   renderMessages();

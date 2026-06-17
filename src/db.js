@@ -66,6 +66,7 @@ function rowToRoom(row) {
     maxPlayers: Number(row.max_players || DEFAULT_MAX_PLAYERS),
     summary: row.summary || '',
     aiConfig: publicAiSettings(row.ai_config_json),
+    roomMeta: parseJsonObject(row.room_meta_json),
     sceneState: row.scene_state || '{}',
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -226,6 +227,17 @@ function rowToAiLog(row) {
   };
 }
 
+function parseJsonObject(value, fallback = {}) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return fallback;
+  try {
+    const parsed = JSON.parse(value || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function rowToRoundState(row) {
   if (!row) return null;
   return {
@@ -332,6 +344,7 @@ export function createDatabase(dbPath) {
       owner_player_id TEXT NOT NULL DEFAULT '',
       summary TEXT NOT NULL DEFAULT '',
       ai_config_json TEXT NOT NULL DEFAULT '{}',
+      room_meta_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -507,6 +520,9 @@ export function createDatabase(dbPath) {
   if (!hasColumn('rooms', 'ai_config_json')) {
     db.exec("ALTER TABLE rooms ADD COLUMN ai_config_json TEXT NOT NULL DEFAULT '{}'");
   }
+  if (!hasColumn('rooms', 'room_meta_json')) {
+    db.exec("ALTER TABLE rooms ADD COLUMN room_meta_json TEXT NOT NULL DEFAULT '{}'");
+  }
   if (!hasColumn('participants', 'is_ready')) {
     db.exec('ALTER TABLE participants ADD COLUMN is_ready INTEGER NOT NULL DEFAULT 0');
   }
@@ -571,6 +587,7 @@ export function createDatabase(dbPath) {
     `),
     updateRoomStatus: db.prepare('UPDATE rooms SET status = ?, updated_at = ? WHERE id = ?'),
     updateRoomAiConfig: db.prepare('UPDATE rooms SET ai_config_json = ?, updated_at = ? WHERE id = ?'),
+    updateRoomMeta: db.prepare('UPDATE rooms SET room_meta_json = ?, updated_at = ? WHERE id = ?'),
     getModuleById: db.prepare('SELECT * FROM modules WHERE id = ?'),
     listModulesByOwner: db.prepare('SELECT * FROM modules WHERE owner_player_id = ? ORDER BY created_at DESC, id DESC'),
     createModule: db.prepare(`
@@ -1582,17 +1599,13 @@ export function createDatabase(dbPath) {
           );
         }
 
-        const importedRoom = rowToRoom(statements.getRoomById.get(roomId));
-        return {
-          room: importedRoom,
-          participants: statements.listParticipants.all(roomId).map((row) => rowToParticipant(row, importedRoom)),
-          messages: statements.listAllMessages.all(roomId, 2000).map(rowToMessage).reverse(),
-          diceRolls: statements.listAllDiceRolls.all(roomId, 2000).map(rowToDiceRoll).reverse(),
-          aiTasks: [],
-          activeAiTask: null,
-          importSummary: {
+        const replayMeta = {
+          replay: {
+            isReplay: true,
+            importedAt: created,
             sourceRoomCode: importText(sourceRoom.code, '', 20),
             sourceRoomName: importText(sourceRoom.name, '', 120),
+            sourceModuleTitle: importText(sourceModule.title || sourceRoom.moduleTitle, '', 160),
             importedParticipants: participantRows.length,
             importedMessages: importedMessageIds.length,
             importedDiceRolls: importedDice,
@@ -1602,6 +1615,17 @@ export function createDatabase(dbPath) {
               (Array.isArray(data.diceRolls) && data.diceRolls.some((roll) => roll?.playerId)) ||
               false
           }
+        };
+        statements.updateRoomMeta.run(JSON.stringify(replayMeta), created, roomId);
+        const importedRoom = rowToRoom(statements.getRoomById.get(roomId));
+        return {
+          room: importedRoom,
+          participants: statements.listParticipants.all(roomId).map((row) => rowToParticipant(row, importedRoom)),
+          messages: statements.listAllMessages.all(roomId, 2000).map(rowToMessage).reverse(),
+          diceRolls: statements.listAllDiceRolls.all(roomId, 2000).map(rowToDiceRoll).reverse(),
+          aiTasks: [],
+          activeAiTask: null,
+          importSummary: replayMeta.replay
         };
       });
     },
