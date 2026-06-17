@@ -161,6 +161,7 @@ export function exportGameJson(state) {
     participants: participants.map((p) => ({
       displayName: p.displayName,
       playerId: p.playerId,
+      isOwner: Boolean(p.isOwner),
       characterSheet: p.characterSheet,
       characterRevision: p.characterRevision,
       isReady: p.isReady,
@@ -172,6 +173,8 @@ export function exportGameJson(state) {
     messages: messages.map((m) => ({
       authorType: m.authorType,
       messageType: m.messageType,
+      playerId: m.playerId || '',
+      privateTarget: m.privateTarget || '',
       displayName: m.displayName,
       content: m.content,
       status: m.status,
@@ -179,8 +182,10 @@ export function exportGameJson(state) {
     })),
     diceRolls: diceRolls.map((r) => ({
       rollType: r.rollType,
+      playerId: r.playerId || '',
       expression: r.expression,
       label: r.label,
+      isPrivate: Boolean(r.isPrivate),
       result: r.result,
       createdAt: r.createdAt
     })),

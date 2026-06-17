@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createApp, parseRequestUrl } from '../src/app.js';
+import { exportGameJson } from '../src/export.js';
 
 test('handles malformed Host headers without crashing', () => {
   const url = parseRequestUrl({
@@ -1262,6 +1263,81 @@ test('AI log endpoint is only visible to the room owner', async () => {
     const body = await response.json();
     assert.equal(response.status, 403);
     assert.match(body.error, /Only the room owner/);
+  } finally {
+    await new Promise((resolveClose) => app.server.close(resolveClose));
+    app.database.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('playtest import endpoint creates a replay room from owner export', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
+  const app = createApp({
+    config: {
+      dbPath: join(dir, 'test.db'),
+      dataDir: dir,
+      publicDir: resolve('public'),
+      ai: { localFallback: true }
+    },
+    publicDir: resolve('public')
+  });
+
+  try {
+    const baseUrl = await new Promise((resolveListen) => {
+      app.server.listen(0, '127.0.0.1', () => {
+        const address = app.server.address();
+        resolveListen(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    const module = createModule(app.database, 'owner');
+    const created = await jsonRequest(baseUrl, '/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'owner',
+        displayName: 'Keeper',
+        roomName: 'Original',
+        moduleId: module.id
+      })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'owner',
+        messageType: 'IC',
+        content: '这是一条需要复现的记录。'
+      })
+    });
+    app.database.createAiLog({
+      code: created.room.code,
+      taskUid: 'task-import-api',
+      stage: 'preflight-check',
+      entry: { type: 'required', reason: 'preflight-generic-侦查' }
+    });
+
+    const exported = JSON.parse(exportGameJson(app.database.getExportState(created.room.code, 'owner')));
+    const imported = await jsonRequest(baseUrl, '/api/imports/playtest', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'new-owner',
+        displayName: 'Importer',
+        roomName: 'Replay Room',
+        export: exported
+      })
+    });
+
+    assert.notEqual(imported.room.code, created.room.code);
+    assert.equal(imported.room.name, 'Replay Room');
+    assert.equal(imported.room.ownerPlayerId, 'new-owner');
+    assert.equal(imported.importSummary.importedMessages, 1);
+    assert.equal(imported.importSummary.importedAiLogs, 1);
+    assert.equal(imported.messages[0].content, '这是一条需要复现的记录。');
+
+    const roomState = await jsonRequest(baseUrl, `/api/rooms/${imported.room.code}?playerId=new-owner`);
+    assert.equal(roomState.room.name, 'Replay Room');
+    assert.equal(roomState.messages[0].content, '这是一条需要复现的记录。');
+    const logs = await jsonRequest(baseUrl, `/api/rooms/${imported.room.code}/ai-log?playerId=new-owner`);
+    assert.equal(logs.logs[0].stage, 'preflight-check');
   } finally {
     await new Promise((resolveClose) => app.server.close(resolveClose));
     app.database.close();

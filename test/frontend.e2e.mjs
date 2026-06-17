@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createApp } from '../src/app.js';
+import { exportGameJson } from '../src/export.js';
 
 function characterSheet() {
   return {
@@ -485,6 +486,33 @@ test('creates and joins rooms through the UI while enforcing the player cap', as
     await expect(extra.locator('#toast')).toContainText('Room is full');
   } finally {
     await Promise.all(pages.map((page) => page.close().catch(() => undefined)));
+    await fixture.close();
+  }
+});
+
+test('imports owner playtest exports through the create dialog', async ({ page }) => {
+  const fixture = await startFixture();
+  try {
+    const { room } = seedActiveRoom(fixture.app.database);
+    const exported = exportGameJson(fixture.app.database.getExportState(room.code, 'owner'));
+    const exportPath = join(fixture.dir, 'dm-online-export.json');
+    writeFileSync(exportPath, exported);
+
+    await setIdentity(page, { playerId: 'importer', displayName: 'Importer' });
+    await page.goto(fixture.baseUrl);
+    await page.locator('#btnCreateRoom').click();
+    await page.locator('#createRoomForm input[name="displayName"]').fill('Importer');
+    await page.locator('#createRoomForm input[name="roomName"]').fill('Imported Replay');
+    await page.locator('#playtestImportFile').setInputFiles(exportPath);
+    await page.locator('#importPlaytest').click();
+
+    await expect(page.locator('#roomTitle')).toHaveText('Imported Replay');
+    await expect(page.locator('#playerCount')).toHaveText('1/5');
+    await expect(page.locator('#chatLog')).toContainText('登记簿纸页潮湿');
+    await expect(page.locator('#btnAiLog')).toBeVisible();
+    await page.locator('#btnAiLog').click();
+    await expect(page.locator('#aiLogDialog')).toContainText('服务器预检定');
+  } finally {
     await fixture.close();
   }
 });

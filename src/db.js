@@ -38,6 +38,11 @@ function now() {
   return new Date().toISOString();
 }
 
+function safeImportTime(value, fallback = now()) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? fallback : date.toISOString();
+}
+
 function roomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
@@ -262,6 +267,52 @@ function normalizeAiTaskStatus(status) {
     throw new HttpError(400, 'Invalid AI task status');
   }
   return value;
+}
+
+function importText(value, fallback = '', limit = 4000) {
+  const text = String(value ?? '').trim() || String(fallback ?? '').trim();
+  return text.length > limit ? text.slice(0, limit) : text;
+}
+
+function importList(value) {
+  return Array.isArray(value) ? value.filter((item) => item && typeof item === 'object') : [];
+}
+
+function importObject(value, fallback = {}) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
+}
+
+function importSceneState(value) {
+  if (typeof value === 'string') {
+    try {
+      JSON.parse(value || '{}');
+      return value || '{}';
+    } catch {
+      return '{}';
+    }
+  }
+  if (value && typeof value === 'object') return JSON.stringify(value);
+  return '{}';
+}
+
+function importRoomStatus(status) {
+  const value = String(status || '').trim().toUpperCase();
+  return ROOM_STATUSES.includes(value) ? value : 'ACTIVE';
+}
+
+function importMessageType(type) {
+  const value = String(type || '').trim().toUpperCase();
+  return MESSAGE_TYPES.includes(value) ? value : 'IC';
+}
+
+function importAuthorType(type) {
+  const value = String(type || '').trim().toLowerCase();
+  return ['player', 'dm', 'system'].includes(value) ? value : 'system';
+}
+
+function importPlayerId(value, fallback) {
+  const text = String(value || fallback || '').trim();
+  return (text || fallback || randomUUID()).slice(0, 80);
 }
 
 export function createDatabase(dbPath) {
@@ -1327,6 +1378,232 @@ export function createDatabase(dbPath) {
         now(),
         roomId
       );
+    },
+
+    importPlaytestExport({ exportData, ownerPlayerId, displayName, roomName = '' }) {
+      const data = importObject(exportData, null);
+      if (!data) throw new HttpError(400, 'Import JSON is required');
+      if (data.isOwnerExport === false || !data.module) {
+        throw new HttpError(400, 'Owner JSON export with module data is required');
+      }
+
+      const sourceRoom = importObject(data.room);
+      const sourceModule = importObject(data.module);
+      const sourceSegments = importList(data.moduleSegments);
+      const participantsSource = importList(data.participants).slice(0, MAX_ROOM_PLAYERS);
+      const messagesSource = importList(data.messages).slice(0, 2000);
+      const diceSource = importList(data.diceRolls).slice(0, 2000);
+      const aiLogsSource = importList(data.aiLogs).slice(0, 300);
+      const created = now();
+
+      const moduleText = importText(sourceModule.parsedText, '', 1_000_000) ||
+        sourceSegments.map((segment) => [
+          importText(segment.title, '', 120),
+          importText(segment.scene, '', 120),
+          importText(segment.content, '', 8000)
+        ].filter(Boolean).join('\n')).filter(Boolean).join('\n\n');
+      if (!moduleText.trim()) {
+        throw new HttpError(400, 'Imported export does not include module text or segments');
+      }
+
+      const segments = sourceSegments.length > 0
+        ? sourceSegments.slice(0, 1000).map((segment, index) => ({
+            title: importText(segment.title, `导入片段 ${index + 1}`, 160),
+            scene: importText(segment.scene, '', 160),
+            content: importText(segment.content, '', 8000)
+          })).filter((segment) => segment.content)
+        : [{ title: '导入模组全文', scene: '', content: moduleText.slice(0, 8000) }];
+
+      return transaction(() => {
+        const moduleInserted = statements.createModule.run(
+          ownerPlayerId,
+          importText(sourceModule.title || sourceRoom.moduleTitle, '导入回放模组', 120),
+          importText(sourceModule.originalName, 'imported-playtest.json', 180),
+          importText(sourceModule.fileType, 'json', 40),
+          importText(sourceModule.contentType, 'application/json', 80),
+          Number(sourceModule.sizeBytes || moduleText.length || 0),
+          `import://playtest/${randomUUID()}.json`,
+          moduleText,
+          'PARSED',
+          '',
+          segments.length,
+          created,
+          created
+        );
+        const moduleId = Number(moduleInserted.lastInsertRowid);
+        segments.forEach((segment, index) => {
+          statements.createModuleSegment.run(
+            moduleId,
+            index + 1,
+            segment.title,
+            segment.scene,
+            segment.content,
+            created
+          );
+        });
+
+        let code = roomCode();
+        while (statements.getRoomByCode.get(code)) code = roomCode();
+
+        const importedName = importText(
+          roomName,
+          `回放 · ${sourceRoom.name || sourceRoom.code || sourceModule.title || '导入房间'}`,
+          80
+        );
+        const sourceMaxPlayers = Number(sourceRoom.maxPlayers || DEFAULT_MAX_PLAYERS) || DEFAULT_MAX_PLAYERS;
+        const maxPlayers = Math.max(1, Math.min(
+          MAX_ROOM_PLAYERS,
+          Math.max(sourceMaxPlayers, participantsSource.length || 1)
+        ));
+        const roomInserted = statements.createRoom.run(
+          code,
+          importedName,
+          moduleId,
+          importRoomStatus(sourceRoom.status),
+          ownerPlayerId,
+          maxPlayers,
+          importText(sourceRoom.summary, '', 20000),
+          created,
+          created
+        );
+        const roomId = Number(roomInserted.lastInsertRowid);
+        statements.forceUpdateSceneState.run(importSceneState(sourceRoom.sceneState), created, roomId);
+        const room = rowToRoom(statements.getRoomById.get(roomId));
+
+        const participantSources = participantsSource.length
+          ? participantsSource
+          : [{ playerId: ownerPlayerId, displayName, isReady: true, characterSheet: {} }];
+        const playerIdMap = new Map();
+        const participantRows = [];
+        const usedIds = new Set();
+
+        participantSources.slice(0, maxPlayers).forEach((source, index) => {
+          const originalPlayerId = importPlayerId(source.playerId, `imported-${index + 1}`);
+          let nextPlayerId = index === 0 ? ownerPlayerId : originalPlayerId;
+          if (usedIds.has(nextPlayerId)) nextPlayerId = `imported-${index + 1}-${randomUUID().slice(0, 8)}`;
+          nextPlayerId = nextPlayerId.slice(0, 80);
+          usedIds.add(nextPlayerId);
+          playerIdMap.set(originalPlayerId, nextPlayerId);
+
+          const nextDisplayName = index === 0
+            ? importText(displayName, source.displayName || 'Keeper', 40)
+            : importText(source.displayName, `导入玩家 ${index + 1}`, 40);
+          createParticipant(roomId, nextPlayerId, nextDisplayName);
+          const participant = rowToParticipant(statements.getParticipant.get(roomId, nextPlayerId), room);
+          const sheet = normalizeCharacterSheet(source.characterSheet || {}, {
+            displayName: nextDisplayName,
+            characterName: source.characterSheet?.investigator?.name || source.displayName || nextDisplayName
+          });
+          const importedRevision = Math.max(0, Number(source.characterRevision || 0));
+          statements.updateParticipantCharacter.run(
+            nextDisplayName,
+            sheet.investigator.name || nextDisplayName,
+            summarizeCharacterSheet(sheet),
+            JSON.stringify(sheet),
+            importedRevision,
+            importText(source.state, formatCharacterState(sheet), 4000),
+            source.isReady === false ? 0 : 1,
+            created,
+            roomId,
+            nextPlayerId
+          );
+          statements.updatePlayerMeta.run(JSON.stringify({
+            ...importObject(source.playerMeta),
+            discoveredClues: Array.isArray(source.discoveredClues) ? source.discoveredClues : [],
+            knownNpcs: Array.isArray(source.knownNpcs) ? source.knownNpcs : [],
+            importedFromPlayerId: originalPlayerId
+          }), created, roomId, nextPlayerId);
+          participantRows.push(rowToParticipant(statements.getParticipant.get(roomId, nextPlayerId), room));
+        });
+
+        const participantByDisplayName = new Map(
+          participantRows.map((participant) => [participant.displayName, participant])
+        );
+        const ownerParticipant = participantRows[0];
+        const importedMessageIds = [];
+
+        for (const message of messagesSource) {
+          const type = importMessageType(message.messageType);
+          const authorType = importAuthorType(message.authorType);
+          const originalPlayerId = importPlayerId(message.playerId, '');
+          const mappedPlayerId = playerIdMap.get(originalPlayerId) ||
+            participantByDisplayName.get(message.displayName)?.playerId ||
+            (authorType === 'player' ? ownerParticipant.playerId : '');
+          const participant = mappedPlayerId ? statements.getParticipant.get(roomId, mappedPlayerId) : null;
+          const privateTarget = type === 'PRIVATE'
+            ? (playerIdMap.get(message.privateTarget) || ownerPlayerId)
+            : '';
+          const inserted = statements.createMessage.run(
+            roomId,
+            authorType,
+            type,
+            participant?.id || null,
+            mappedPlayerId || '',
+            importText(message.displayName, authorType === 'dm' ? 'AI DM' : authorType === 'system' ? 'SYSTEM' : '导入消息', 80),
+            importText(message.content, '', 20000),
+            importText(message.status, 'complete', 40),
+            privateTarget,
+            safeImportTime(message.createdAt, created),
+            safeImportTime(message.createdAt, created)
+          );
+          importedMessageIds.push(Number(inserted.lastInsertRowid));
+        }
+
+        let importedDice = 0;
+        for (const roll of diceSource) {
+          const originalPlayerId = importPlayerId(roll.playerId, '');
+          const mappedPlayerId = playerIdMap.get(originalPlayerId) || ownerParticipant.playerId;
+          const participant = statements.getParticipant.get(roomId, mappedPlayerId) ||
+            statements.getParticipant.get(roomId, ownerParticipant.playerId);
+          statements.createDiceRoll.run(
+            roomId,
+            participant.id,
+            participant.player_id,
+            importText(roll.rollType, 'imported', 60),
+            importText(roll.expression, '', 120),
+            importText(roll.label, '', 160),
+            roll.isPrivate ? 1 : 0,
+            JSON.stringify(roll.result || {}),
+            safeImportTime(roll.createdAt, created)
+          );
+          importedDice += 1;
+        }
+
+        for (const log of aiLogsSource) {
+          const stage = importText(log.stage, 'imported-log', 80);
+          const taskUid = importText(log.taskUid, '', 120);
+          const loggedAt = safeImportTime(log.time || log.createdAt, created);
+          statements.createAiLog.run(
+            roomId,
+            taskUid,
+            stage,
+            JSON.stringify({ ...log, stage, taskUid, time: loggedAt }),
+            loggedAt
+          );
+        }
+
+        const importedRoom = rowToRoom(statements.getRoomById.get(roomId));
+        return {
+          room: importedRoom,
+          participants: statements.listParticipants.all(roomId).map((row) => rowToParticipant(row, importedRoom)),
+          messages: statements.listAllMessages.all(roomId, 2000).map(rowToMessage).reverse(),
+          diceRolls: statements.listAllDiceRolls.all(roomId, 2000).map(rowToDiceRoll).reverse(),
+          aiTasks: [],
+          activeAiTask: null,
+          importSummary: {
+            sourceRoomCode: importText(sourceRoom.code, '', 20),
+            sourceRoomName: importText(sourceRoom.name, '', 120),
+            importedParticipants: participantRows.length,
+            importedMessages: importedMessageIds.length,
+            importedDiceRolls: importedDice,
+            importedAiLogs: aiLogsSource.length,
+            importedModuleSegments: segments.length,
+            playerIdsPreserved: (Array.isArray(data.messages) && data.messages.some((message) => message?.playerId)) ||
+              (Array.isArray(data.diceRolls) && data.diceRolls.some((roll) => roll?.playerId)) ||
+              false
+          }
+        };
+      });
     },
 
     updateSceneState({ code, playerId, sceneState }) {

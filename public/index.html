@@ -137,6 +137,9 @@
             <label>上传模组（仅 JSON） <input type="file" id="moduleFile" accept=".json,application/json"></label>
             <button class="secondary" id="uploadModule" type="button">上传并解析</button>
             <div class="module-preview" id="modulePreview">模组内容仅房主和 AI DM 可见。</div>
+            <label>导入回放（owner JSON） <input type="file" id="playtestImportFile" accept=".json,application/json"></label>
+            <button class="secondary" id="importPlaytest" type="button">导入回放</button>
+            <div class="module-preview" id="importPreview">从 owner 导出的 dm-online JSON 创建可调试回放房间。</div>
           </div>
           <button class="primary" type="submit">创建房间</button>
         </form>

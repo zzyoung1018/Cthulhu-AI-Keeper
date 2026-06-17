@@ -806,6 +806,98 @@ test('export state includes full owner context and hides private module from non
   }
 });
 
+test('imports owner playtest export into a replay room', () => {
+  const { database, cleanup } = withDb();
+  try {
+    const mod = createModule(database, 'keeper');
+    const { room } = database.createRoom({
+      name: 'Original Playtest',
+      playerId: 'keeper',
+      displayName: 'Keeper',
+      moduleId: mod.id
+    });
+    database.joinRoom({ code: room.code, playerId: 'player2', displayName: 'Player 2' });
+    database.updateCharacterSheet({
+      code: room.code,
+      playerId: 'keeper',
+      displayName: 'Keeper',
+      characterSheet: characterSheet('林娜', 70)
+    });
+    database.updateCharacterSheet({
+      code: room.code,
+      playerId: 'player2',
+      displayName: 'Player 2',
+      characterSheet: characterSheet('周明', 45)
+    });
+    database.setParticipantReady({ code: room.code, playerId: 'keeper', isReady: true });
+    database.setParticipantReady({ code: room.code, playerId: 'player2', isReady: true });
+    database.setRoomStatus({ code: room.code, playerId: 'keeper', status: 'ACTIVE' });
+    database.forceUpdateSceneState(room.id, { currentScene: 'archive' });
+    database.updateSummary({ code: room.code, playerId: 'keeper', summary: '调查员进入档案室。' });
+    database.createPlayerMessage({ code: room.code, playerId: 'keeper', content: '我检查书桌。', messageType: 'ACTION' });
+    database.createMessage({
+      code: room.code,
+      authorType: 'player',
+      messageType: 'PRIVATE',
+      playerId: 'player2',
+      displayName: 'Player 2',
+      content: '我偷偷告诉 Keeper。',
+      privateTarget: 'keeper'
+    });
+    database.createDiceRoll({
+      code: room.code,
+      playerId: 'keeper',
+      rollType: 'coc_check',
+      expression: '1d100',
+      label: '侦查',
+      result: { total: 22, target: 70, successLevel: 'HARD', passed: true }
+    });
+    database.createAiLog({
+      code: room.code,
+      taskUid: 'task-exported',
+      stage: 'preflight-check',
+      entry: { type: 'required', reason: 'preflight-generic-侦查' }
+    });
+
+    const exported = JSON.parse(exportGameJson(database.getExportState(room.code, 'keeper')));
+    assert.equal(exported.participants.find((participant) => participant.playerId === 'keeper').isOwner, true);
+    assert.equal(exported.messages.some((message) => message.playerId === 'player2'), true);
+    assert.equal(exported.messages.some((message) => message.privateTarget === 'keeper'), true);
+    assert.equal(exported.diceRolls[0].playerId, 'keeper');
+
+    const imported = database.importPlaytestExport({
+      exportData: exported,
+      ownerPlayerId: 'new-owner',
+      displayName: 'New Keeper',
+      roomName: 'Imported Replay'
+    });
+
+    assert.notEqual(imported.room.code, room.code);
+    assert.equal(imported.room.name, 'Imported Replay');
+    assert.equal(imported.room.ownerPlayerId, 'new-owner');
+    assert.equal(imported.room.status, 'ACTIVE');
+    assert.equal(imported.room.summary, '调查员进入档案室。');
+    assert.equal(JSON.parse(imported.room.sceneState).currentScene, 'archive');
+    assert.equal(imported.participants.length, 2);
+    assert.equal(imported.participants[0].playerId, 'new-owner');
+    assert.equal(imported.participants[0].characterSheet.investigator.name, '林娜');
+    assert.equal(imported.messages.length, 2);
+    assert.equal(imported.messages.some((message) => message.content === '我检查书桌。'), true);
+    assert.equal(imported.diceRolls.length, 1);
+    assert.equal(imported.importSummary.importedAiLogs, 1);
+    assert.equal(imported.importSummary.playerIdsPreserved, true);
+
+    const ownerState = database.getRoomState(imported.room.code, { playerId: 'new-owner', messageLimit: 20 });
+    assert.equal(ownerState.messages.some((message) => message.content === '我偷偷告诉 Keeper。'), true);
+    const importedLogs = database.listAiLogs({ code: imported.room.code, limit: 10 });
+    assert.equal(importedLogs[0].stage, 'preflight-check');
+    const importedExport = database.getExportState(imported.room.code, 'new-owner');
+    assert.match(importedExport.module.parsedText, /旧宅/);
+  } finally {
+    cleanup();
+  }
+});
+
 test('getRoomByCode returns room without participant lookup', () => {
   const { database, cleanup } = withDb();
   try {

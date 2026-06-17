@@ -73,6 +73,9 @@ const els = {
   moduleFile: document.querySelector('#moduleFile'),
   uploadModule: document.querySelector('#uploadModule'),
   modulePreview: document.querySelector('#modulePreview'),
+  playtestImportFile: document.querySelector('#playtestImportFile'),
+  importPlaytest: document.querySelector('#importPlaytest'),
+  importPreview: document.querySelector('#importPreview'),
   // 房间面板
   roomPanel: document.querySelector('#roomPanel'),
   roomTitle: document.querySelector('#roomTitle'),
@@ -489,6 +492,26 @@ async function uploadModuleFile(file) {
     throw error;
   }
   return payload;
+}
+
+async function importPlaytestFile(file, { displayName, roomName }) {
+  const text = await file.text();
+  let exported;
+  try {
+    exported = JSON.parse(text);
+  } catch {
+    throw new Error('导入文件不是有效 JSON');
+  }
+
+  return api('/api/imports/playtest', {
+    method: 'POST',
+    body: JSON.stringify({
+      playerId: state.playerId,
+      displayName,
+      roomName,
+      export: exported
+    })
+  });
 }
 
 // 弹窗控制
@@ -2192,6 +2215,43 @@ els.uploadModule.addEventListener('click', async () => {
     toast(error.message);
   } finally {
     els.uploadModule.disabled = false;
+  }
+});
+
+els.importPlaytest?.addEventListener('click', async () => {
+  const file = els.playtestImportFile?.files?.[0];
+  if (!file) {
+    toast('请选择 owner 导出的 JSON');
+    return;
+  }
+
+  const form = new FormData(els.createRoomForm);
+  const displayName = String(form.get('displayName') || '').trim();
+  if (!displayName) {
+    els.importPreview.textContent = '请先填写玩家名。';
+    toast('请先填写玩家名');
+    return;
+  }
+
+  state.displayName = displayName;
+  localStorage.setItem(storageKeys.displayName, displayName);
+  els.importPlaytest.disabled = true;
+  els.importPreview.textContent = '正在导入回放房间...';
+  try {
+    const payload = await importPlaytestFile(file, {
+      displayName,
+      roomName: String(form.get('roomName') || '').trim()
+    });
+    closeCreateDialog();
+    applyRoomPayload(payload);
+    const summary = payload.importSummary || {};
+    els.importPreview.textContent = '从 owner 导出的 dm-online JSON 创建可调试回放房间。';
+    toast(`已导入回放：${summary.importedMessages || 0} 条消息`);
+  } catch (error) {
+    els.importPreview.textContent = error.message;
+    toast(error.message);
+  } finally {
+    els.importPlaytest.disabled = false;
   }
 });
 // 创建房间表单

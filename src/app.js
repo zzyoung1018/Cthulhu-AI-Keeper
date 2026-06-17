@@ -808,6 +808,20 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       }
     }
 
+    if (request.method === 'POST' && parts.length === 3 && parts[1] === 'imports' && parts[2] === 'playtest') {
+      const body = await readJson(request);
+      const playerId = assertString(body.playerId, 'playerId', 80);
+      const displayName = assertString(body.displayName, 'displayName', 40);
+      const imported = database.importPlaytestExport({
+        exportData: body.export || body.exportData || body.playtest || body,
+        ownerPlayerId: playerId,
+        displayName,
+        roomName: optionalString(body.roomName, 80)
+      });
+      sendJson(response, 201, imported);
+      return;
+    }
+
     if (request.method === 'POST' && parts.length === 2 && parts[1] === 'rooms') {
       const body = await readJson(request);
       const name = assertString(body.roomName || '新的冒险', 'roomName', 80);
