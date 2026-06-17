@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-18 00:59 CST
+Last updated: 2026-06-18 01:11 CST
 
 ## Current State
 
@@ -12,17 +12,19 @@ Last updated: 2026-06-18 00:59 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `ed4e26a feat: import playtest exports as replay rooms`
+- Latest completed local app commit: `b588b6b feat: label imported replay rooms`
 - Latest local utility commit: `07396ff fix: wait for audited ai tasks to finish`
-- Latest deployed app commit: `ed4e26a feat: import playtest exports as replay rooms`
+- Latest deployed app commit: `b588b6b feat: label imported replay rooms`
 - Latest Lina module nested repo commit: `62278db fix: preserve Lina void opening facts`
-- Deployment verified on 2026-06-18 00:59 CST: server `npm run check` OK, server `npm test` 129/129 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`5ANVDK`).
+- Deployment verified on 2026-06-18 01:11 CST: server `npm run check` OK, server `npm test` 129/129 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`ET3PKA`).
 - Local worktree has the nested `测试模组 新/` directory untracked from the parent repo; leave it alone unless the user explicitly asks.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent App Commits
 
+- `b588b6b` feat: label imported replay rooms
+- `fdde78a` chore: checkpoint before replay room labels
 - `ed4e26a` feat: import playtest exports as replay rooms
 - `212570b` chore: checkpoint before playtest import
 - `f859c06` docs: update handoff after preflight log visibility
@@ -70,7 +72,7 @@ src/
   aiEvents.js       (566 lines) — applies AI structured events to rolls/state/summary
   aiClient.js       (430 lines) — streaming client and scene-aware AI context assembly
   prompts.js        (687 lines) — intro/opening/DM system/user/structured-output prompts
-  db.js            (1662 lines) — SQLite schema, migrations, row mappers, queries
+  db.js            (1686 lines) — SQLite schema, migrations, row mappers, queries
   character.js      (392 lines) — CoC 7e sheet normalization and skill lookup
   dice.js           (441 lines) — CoC 7e dice, checks, opposed checks, luck/pushed rolls
   moduleParser.js   (347 lines) — JSON module validation and segment extraction
@@ -79,14 +81,14 @@ src/
   privateHub.js      (63 lines) — player-specific SSE delivery
 
 public/
-  app.js          (2667 lines) — main frontend logic
+  app.js          (2709 lines) — main frontend logic
 
 test/
   comprehensive-ai.test.mjs (765 lines) — full AI detection and event coverage
   aiOutput.test.mjs         (882 lines) — parser/validator/inference regressions
-  frontend.e2e.mjs          (610 lines) — Playwright browser coverage for visible controls
-  app.test.mjs             (1346 lines) — API integration tests
-  db.test.mjs               (918 lines) — persistence tests
+  frontend.e2e.mjs          (615 lines) — Playwright browser coverage for visible controls
+  app.test.mjs             (1349 lines) — API integration tests
+  db.test.mjs               (922 lines) — persistence tests
   fixtures/
     comprehensive-test-module.json — reusable CoC 7e test module
 ```
@@ -630,10 +632,42 @@ Verification after this update:
 - Server systemd/Nginx/health checks — OK
 - Public deployment audit — OK, room `5ANVDK`, `aiConfigured: true`
 
+## 2026-06-18 Replay Room Label Update
+
+Completed the UI/data follow-up after playtest import: imported replay rooms are now explicitly identifiable after refresh.
+
+What changed:
+- `rooms` now has `room_meta_json` with a migration and safe JSON parsing in `rowToRoom()`.
+- `importPlaytestExport()` stores `roomMeta.replay` with:
+  - `isReplay`
+  - import time
+  - source room name/code
+  - source module title
+  - imported participant/message/dice/log/segment counts
+  - whether player IDs were preserved
+- The import endpoint still returns `importSummary`, now using the same replay metadata object.
+- The owner sidebar now renders a `调试回放` banner with source room code and import counts.
+- The banner is owner-only and separate from `sceneState`, so replay/debug metadata does not pollute AI scene context.
+- Static asset cache bust changed to `20260618-replay-labels`.
+
+Regression coverage:
+- `test/db.test.mjs` verifies replay metadata is stored and survives `getRoomState()`.
+- `test/app.test.mjs` verifies the import API returns replay metadata and exposes it on room reload.
+- `test/frontend.e2e.mjs` verifies the create-dialog import flow shows the owner-visible `调试回放` banner with source and count labels.
+
+Verification after this update:
+- Local `npm run check`
+- Local `npm test` — 129/129 passed
+- Local `npm run test:e2e` — 10/10 passed
+- Server `npm run check`
+- Server `npm test` — 129/129 passed
+- Server health/systemd/Nginx/static cache-bust checks — OK
+- Public deployment audit — OK, room `ET3PKA`, `aiConfigured: true`
+
 ### Current Recommended Next Work
 
 1. Split large frontend/server files before the next broad feature.
-   - `public/app.js` is now 2667 lines; `src/db.js`, `src/app.js`, and `src/aiOutput.js` are also large.
+   - `public/app.js` is now 2709 lines; `src/db.js`, `src/app.js`, and `src/aiOutput.js` are also large.
    - Best first split: move character-sheet UI, AI log UI, and chat rendering into focused frontend modules.
    - Keep tests green between each extraction; avoid a big-bang refactor.
 
@@ -655,10 +689,10 @@ Verification after this update:
    - `ZZL4KB` report regressions are now covered for several social and required checks.
    - Add future reports as fixtures before changing broad keyword rules; prefer module-specific anchors so normal roleplay does not trigger excessive rolls.
 
-5. Make replay rooms more explicit in the UI.
-   - Imported rooms are functional now, but the UI does not yet label them as replay/debug rooms.
-   - Add a subtle owner-only banner with source room code, import counts, and "do not treat as live canonical session" wording.
-   - Consider adding one-click "export regression fixture" from that banner after the fixture script exists.
+5. Add replay-room owner actions.
+   - Replay rooms are now labeled and counted, but the banner is informational only.
+   - After fixture-generation exists, add one-click `导出回归用例` from the replay banner.
+   - A second useful action would open the AI log dialog pre-filtered to warnings/preflight for that replay.
 
 ### Lower-Priority Cleanup
 
@@ -734,9 +768,9 @@ AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restore
 
 Local:
 ```bash
-npm run check     # passed on 2026-06-18 00:59 CST
-npm test          # 129/129 passed on 2026-06-18 00:59 CST
-npm run test:e2e  # 10/10 Playwright tests passed on 2026-06-18 00:59 CST
+npm run check     # passed on 2026-06-18 01:09 CST
+npm test          # 129/129 passed on 2026-06-18 01:09 CST
+npm run test:e2e  # 10/10 Playwright tests passed on 2026-06-18 01:09 CST
 ```
 
 Server:
@@ -752,7 +786,7 @@ nginx -t                                         # successful
 Public deployment audit:
 ```bash
 npm run audit:deployment -- http://8.153.147.137
-# ok: true, aiConfigured: true, roomCode: 5ANVDK
+# ok: true, aiConfigured: true, roomCode: ET3PKA
 ```
 
 ## Deployment Commands
@@ -806,12 +840,14 @@ DEPLOYMENT_AUDIT_AI_TIMEOUT_MS=180000 npm run audit:deployment -- --require-ai h
 - If changing AI detection, add regression tests in `test/aiOutput.test.mjs` and/or `test/comprehensive-ai.test.mjs`.
 - When debugging game sessions, request the owner JSON export (`GET /api/rooms/:code/export?format=json`) to see messages, diceRolls, aiTasks, AI logs, module data, module segments, rounds, scene state, and participant state in context.
 - Owner JSON exports can now be imported through the create-room dialog or `POST /api/imports/playtest` to create a replay/debug room. Use this before manually recreating bad sessions.
+- Imported replay rooms now persist `room.roomMeta.replay` and show an owner-only `调试回放` banner. Keep replay/debug metadata in `room_meta_json`, not `sceneState`, so AI scene context stays clean.
 - The AI detection log endpoint (`GET /api/rooms/:code/ai-log`) is owner-only and now reads persistent SQLite `ai_logs`.
 - `latestPlayerAction` now prefers explicit `triggerMessageId` and skips `aiProcessedTaskUid` actions — if AI check inference stops working unexpectedly, inspect `ai_tasks.trigger_message_id` and `messages.ai_processed_task_uid` first.
 
 ## Potential Follow-Ups
 
 - Add fixture-generation tooling for imported replay rooms so bad sessions can become local regression tests quickly.
+- Add owner actions to the replay banner after fixture generation exists, especially `导出回归用例` and warning/preflight AI-log shortcuts.
 - Tune module check matching with newer real playtest logs from `reports/` after another session.
 - Cache NPC candidates per room/task (currently rebuilt every AI call in `npcCandidates()`).
 - Split `aiOutput.js`, `db.js`, `app.js`, and `public/app.js` along existing boundaries when next touching those files.
