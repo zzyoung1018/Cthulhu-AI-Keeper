@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-17 13:32 CST
+Last updated: 2026-06-17 20:01 CST
 
 ## Current State
 
@@ -12,16 +12,21 @@ Last updated: 2026-06-17 13:32 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `5479566 fix: guard intro critical fact drift`
-- Latest deployed app commit: `5479566 fix: guard intro critical fact drift`
+- Latest completed local app commit: `ae8e93f feat: defer opening scene until game start`
+- Latest local utility commit: `07396ff fix: wait for audited ai tasks to finish`
+- Latest deployed app commit: `ae8e93f feat: defer opening scene until game start`
 - Latest Lina module nested repo commit: `62278db fix: preserve Lina void opening facts`
-- Deployment verified on 2026-06-17 13:31 CST: server `npm run check` OK, server `npm test` 124/124 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
+- Deployment verified on 2026-06-17 20:00 CST: server `npm run check` OK, server `npm test` 127/127 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`R6X9AV`).
 - Local worktree has the nested `测试模组 新/` directory untracked from the parent repo; leave it alone unless the user explicitly asks.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent App Commits
 
+- `07396ff` fix: wait for audited ai tasks to finish
+- `ae8e93f` feat: defer opening scene until game start
+- `3c41fe5` chore: checkpoint before deferred opening scene
+- `186673b` docs: update handoff after intro fidelity fix
 - `5479566` fix: guard intro critical fact drift
 - `effb1f4` chore: checkpoint before intro drift guard
 - `b16fd69` fix: preserve intro anomaly facts
@@ -50,11 +55,11 @@ Do not write server credentials into committed files. Use the conversation conte
 
 ```text
 src/
-  app.js           (1147 lines) — HTTP routes, room lifecycle, AI orchestration
+  app.js           (1320 lines) — HTTP routes, room lifecycle, AI orchestration
   aiOutput.js      (1676 lines) — AI JSON extraction, validation, detection inference
   aiEvents.js       (566 lines) — applies AI structured events to rolls/state/summary
   aiClient.js       (430 lines) — streaming client and scene-aware AI context assembly
-  prompts.js        (250 lines) — system/user/structured-output prompts
+  prompts.js        (637 lines) — intro/opening/DM system/user/structured-output prompts
   db.js            (1360 lines) — SQLite schema, migrations, row mappers, queries
   character.js      (368 lines) — CoC 7e sheet normalization and skill lookup
   dice.js           (441 lines) — CoC 7e dice, checks, opposed checks, luck/pushed rolls
@@ -64,13 +69,13 @@ src/
   privateHub.js      (63 lines) — player-specific SSE delivery
 
 public/
-  app.js          (2561 lines) — main frontend logic
+  app.js          (2567 lines) — main frontend logic
 
 test/
   comprehensive-ai.test.mjs (765 lines) — full AI detection and event coverage
   aiOutput.test.mjs         (835 lines) — parser/validator/inference regressions
   frontend.e2e.mjs          (556 lines) — Playwright browser coverage for visible controls
-  app.test.mjs              (741 lines) — API integration tests
+  app.test.mjs             (1262 lines) — API integration tests
   db.test.mjs               (797 lines) — persistence tests
   fixtures/
     comprehensive-test-module.json — reusable CoC 7e test module
@@ -460,6 +465,36 @@ Verification after this update:
 - Server systemd/Nginx/health checks — OK
 - Public deployment audit — OK, room `UEQJXT`, `aiConfigured: true`
 - Targeted local drift check against `测试模组 新/Lina-现实的荒原.json` — `hasVoidSphere: true`, `hasDrift: false`
+
+## 2026-06-17 Deferred Opening Scene Update
+
+This supersedes the previous "five-section intro" behavior. Preparation mode should now read like a player-facing campaign briefing, not a DM scene prompt.
+
+What changed:
+- Preparation intro now requires only four sections: `模组简介`, `玩家公开前提`, `调查员创建指南`, and `注意事项`.
+- `## 开局场景` is explicitly disallowed in preparation output. If the model includes it anyway, `ensureCompleteIntroContent()` strips that section before saving.
+- Preparation context is built only from player-public module fields. `keeper_overview`, hidden NPC roles, global keeper rules, and `suggested_intro_text` are not included in the prep prompt.
+- `suggested_intro_text`, `default_opening`, and `initial_scene` are reserved for the actual first scene after the owner starts the game.
+- When room status changes from `PREPARING` to `ACTIVE`, `PATCH /api/rooms/:code/status` creates an idempotent opening task (`opening:<code>`) and queues `generateOpeningScene()`.
+- Opening scene output streams as an `AI DM` message, uses a separate opening-scene prompt, and is sanitized by `ensureOpeningSceneContent()`.
+- The opening-scene sanitizer strips preparation headings and still repairs known critical drift such as `直径约一米的完美球形凹陷` -> `直径一米的完美球形空缺`.
+- The frontend now accepts `openingTask` from the status response so the AI queue/status UI immediately reflects the automatic opening task.
+
+Regression coverage:
+- `test/prompts.test.mjs` verifies prep prompts no longer require or keep `## 开局场景`, and that opening-scene prompts include opening text only after play starts.
+- `test/app.test.mjs` verifies `/start-intro` saves a complete public prep briefing without opening scene leakage.
+- `test/app.test.mjs` verifies starting the game automatically queues and completes the opening scene, with critical void terminology repaired.
+- Existing AI/check tests were adjusted so the automatic opening task does not mask later player-action tasks.
+- `scripts/audit_deployment.mjs` now waits for the automatic opening task and then tracks the specific task uid returned by the audited player action, preventing false failures while AI is still streaming.
+
+Verification after this update:
+- Local `npm run check`
+- Local `npm test` — 127/127 passed
+- Local `npm run test:e2e` — 9/9 passed
+- Server `npm run check`
+- Server `npm test` — 127/127 passed
+- Server systemd/Nginx/health checks — OK
+- Public deployment audit — OK, room `R6X9AV`, `aiConfigured: true`
 
 ### Current Recommended Next Work
 
