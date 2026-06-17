@@ -91,7 +91,8 @@ AI DM 运行时会特别依赖：
 - 有主动对手的行动不要写成普通 `checks` 的唯一机制；应在 NPC、场景和 `ai_dm_instruction` 中明确这是社交/潜行/战斗对抗，运行时会转为 `opposed_checks`。
 - 需要对 NPC 撒谎、说服、恐吓、魅惑、潜行绕过、偷窃、攻击时，AI DM 必须请求服务器对抗检定，不得自行判定结果。
 - 模组 `checks[*].difficulty` 必须使用 `REGULAR`、`HARD` 或 `EXTREME`。
-- `checks[*].skill` 使用当前角色卡/骰点系统能识别的技能或属性名，例如：`侦查`、`聆听`、`图书馆使用`、`会计`、`锁匠`、`急救`、`医学`、`驾驶汽车`、`攀爬`、`跳跃`、`投掷`、`追踪`、`神秘学`、`法律`、`估价`、`导航`、`博物学`、`机械维修`、`电气维修`、`化学`、`物理学`、`药学`、`话术`、`说服`、`恐吓`、`魅惑`、`潜行`、`妙手`、`乔装`、`格斗`、`射击`，或属性 `STR/CON/SIZ/DEX/APP/INT/POW/EDU/Luck`。
+- `checks[*].skill` 使用当前角色卡/骰点系统能识别的技能或属性名，例如：`侦查`、`聆听`、`图书馆使用`、`会计`、`锁匠`、`急救`、`医学`、`驾驶汽车`、`攀爬`、`跳跃`、`投掷`、`追踪`、`神秘学`、`法律`、`估价`、`导航`、`博物学`、`机械维修`、`电气维修`、`化学`、`物理学`、`药学`、`话术`、`说服`、`恐吓`、`魅惑`、`潜行`、`妙手`、`乔装`、`格斗`、`射击`、`外语`，或属性 `STR/CON/SIZ/DEX/APP/INT/POW/EDU/Luck`。
+- 不要把 `checks[*].skill` 写成当前系统不识别的技能名。原文出现“语言学、语言、未知语言、陌生文字、古代文字、翻译、刻字、铭文、录音语音片段”等语言类判定时，统一写 `外语`；如果原文明确是母语读写或文学表达，才使用 `母语`。
 
 NPC 技能和属性是关键数字信息，不能丢失。请尽量为重要 NPC 写 `skills` 和 `attributes`：
 
@@ -132,6 +133,9 @@ NPC 技能和属性是关键数字信息，不能丢失。请尽量为重要 NPC
 7. 按章节/地点拆分 `scenes`，每个场景只写该场景相关信息，并保留入口/出口条件，避免流程跳跃。
 8. 为所有重要人物建立 `npcs`，原样保留原文给出的 `skills`、`attributes`、HP、护甲、武器、法术、特殊能力和其他数值。
 9. 把所有可发现信息拆成 `clues`，每条线索必须有 `reveal_condition`，核心线索必须进入 `story_progression.required_core_clues`。
+   - 任何 `is_core_clue: true` 的线索都必须出现在 `story_progression.required_core_clues`。
+   - `story_progression.optional_clues` 只能放非核心线索；不要把核心线索同时放进 optional。
+   - 每条核心线索必须有自己的 `fallback_reveal_method`，不能只依赖全局兜底说明。
 10. 把需要骰点的静态障碍拆成 `checks`，每个检定应有清晰 `trigger`、`success`、`failure`、`difficulty` 和相关 `reveals_clue_ids`。
 11. 把会伤害、追逐、感染、陷阱、怪物袭击等写入 `danger_events`，原样保留伤害、护甲、回合、逃脱条件和失败后果。
 12. 把理智损失写入 `sanity_events`，原样保留 `0/1D3`、`1/1D6` 等 SAN 损失格式。
@@ -653,5 +657,7 @@ NPC 技能和属性是关键数字信息，不能丢失。请尽量为重要 NPC
 21. 所有估计数值都在 `uncertainty_notes` 中说明，且不得覆盖原文给出的明确数值。
 22. 每个核心线索的 `fallback_reveal_method` 或 `story_progression.fallback_methods` 中至少有一个卡关补救路径。
 23. 对已压缩或省略的低风险信息，写入 `quality_control.compressed_low_risk_details`，不得把关键剧情写进这个列表。
+24. 每个 `is_core_clue: true` 的线索都出现在 `story_progression.required_core_clues`，且不出现在 `story_progression.optional_clues`。
+25. 语言类、翻译类、刻字/铭文/未知文字/录音语音片段检定使用 `外语` 或明确的 `母语`，不得使用 `语言学` 这类系统未知技能名。
 
 现在开始处理上传材料，并只输出最终 JSON。
