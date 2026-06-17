@@ -7,6 +7,7 @@ const requireAi = args.includes('--require-ai');
 const baseArg = args.find((arg) => !arg.startsWith('--')) || 'http://127.0.0.1:4173';
 const baseUrl = baseArg.replace(/\/+$/, '');
 const aiStreamTimeoutMs = Number(process.env.DEPLOYMENT_AUDIT_AI_TIMEOUT_MS || 300_000);
+const TERMINAL_TASK_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
 
 function timeoutSignal(ms) {
   const controller = new AbortController();
@@ -59,6 +60,31 @@ async function expectHttpError(path, expectedStatus, options = {}) {
   } finally {
     timeout.cancel();
   }
+}
+
+async function waitForRoomState(code, playerId, predicate, timeoutMs = aiStreamTimeoutMs) {
+  const startedAt = Date.now();
+  let latest = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    latest = await jsonRequest(`/api/rooms/${code}?playerId=${encodeURIComponent(playerId)}`);
+    if (predicate(latest)) return latest;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`Timed out waiting for room state. Active task: ${JSON.stringify(latest?.activeAiTask || null)}`);
+}
+
+async function waitForTaskDone(code, playerId, taskUid) {
+  const state = await waitForRoomState(code, playerId, (roomState) =>
+    roomState.aiTasks.some((task) => task.uid === taskUid && TERMINAL_TASK_STATUSES.has(task.status))
+  );
+  return state.aiTasks.find((task) => task.uid === taskUid);
+}
+
+async function waitForRoomIdle(code, playerId) {
+  return waitForRoomState(code, playerId, (roomState) =>
+    roomState.activeAiTask === null &&
+    roomState.aiTasks.every((task) => TERMINAL_TASK_STATUSES.has(task.status))
+  );
 }
 
 async function multipartRequest(path, { fields = {}, file }) {
@@ -218,6 +244,8 @@ async function waitForStreamedDm(code, playerId, sendMessage) {
   let completedMessage = null;
   let errorMessage = null;
   let reader = null;
+  let targetTaskUid = '';
+  let targetMessageId = null;
 
   try {
     const response = await fetch(`${baseUrl}/api/rooms/${code}/events?playerId=${encodeURIComponent(playerId)}`, {
@@ -228,7 +256,9 @@ async function waitForStreamedDm(code, playerId, sendMessage) {
 
     reader = response.body.getReader();
     const decoder = new TextDecoder();
-    const sent = sendMessage();
+    const sent = await sendMessage();
+    targetTaskUid = sent.aiTask?.uid || '';
+    assert.ok(targetTaskUid, 'expected sent message to queue an AI task');
 
     while (!completedMessage) {
       const { done, value } = await reader.read();
@@ -236,18 +266,23 @@ async function waitForStreamedDm(code, playerId, sendMessage) {
       buffer += decoder.decode(value, { stream: true });
       buffer = parseSseChunk(buffer, (event, data) => {
         events.push(event);
-        if (event === 'message_delta') sawDelta = true;
-        if (event === 'message_error' && data.message?.authorType === 'dm') {
+        if (event === 'ai_task_updated' && data.task?.uid === targetTaskUid && data.task.dmMessageId) {
+          targetMessageId = data.task.dmMessageId;
+        }
+        if (event === 'message_created' && data.message?.authorType === 'dm' && targetMessageId === null) {
+          targetMessageId = data.message.id;
+        }
+        if (event === 'message_delta' && data.id === targetMessageId) sawDelta = true;
+        if (event === 'message_error' && data.message?.id === targetMessageId) {
           errorMessage = data.message;
         }
-        if (event === 'message_completed' && data.message?.authorType === 'dm') {
+        if (event === 'message_completed' && data.message?.id === targetMessageId) {
           completedMessage = data.message;
         }
       });
       if (errorMessage) break;
     }
 
-    await sent;
     if (errorMessage) {
       throw new Error(`DM generation failed: ${errorMessage.content || 'unknown error'}`);
     }
@@ -366,6 +401,10 @@ async function main() {
     })
   });
   assert.equal(activeRoom.room.status, 'ACTIVE');
+  if (activeRoom.openingTask) {
+    const openingTask = await waitForTaskDone(created.room.code, ownerId, activeRoom.openingTask.uid);
+    assert.equal(openingTask.status, 'COMPLETED');
+  }
 
   const dmMessage = await waitForStreamedDm(created.room.code, ownerId, () => jsonRequest(
     `/api/rooms/${created.room.code}/messages`,
@@ -380,7 +419,7 @@ async function main() {
     }
   ));
 
-  const finalRoom = await jsonRequest(`/api/rooms/${created.room.code}?playerId=${ownerId}`);
+  const finalRoom = await waitForRoomIdle(created.room.code, ownerId);
   assert.ok(finalRoom.messages.some((message) => message.id === dmMessage.id));
   assert.ok(finalRoom.room.summary);
   assert.ok(finalRoom.aiTasks.some((task) => task.dmMessageId === dmMessage.id && task.status === 'COMPLETED'));
