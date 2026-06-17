@@ -91,16 +91,27 @@ export function buildDmUserContext({
 }
 
 // ============================================================
-// 准备阶段 — 模组介绍 + 角色创建指南
+// 准备阶段 — 玩家可见剧情简介
 // ============================================================
 const INTRO_REQUIRED_HEADINGS = [
-  '## 模组简介',
-  '## 玩家公开前提',
-  '## 调查员创建指南',
-  '## 注意事项'
+  '## 剧情简介'
 ];
 
-const INTRO_DISALLOWED_HEADINGS = ['开局场景'];
+const INTRO_DISALLOWED_HEADINGS = [
+  '模组简介',
+  '玩家公开前提',
+  '调查员创建指南',
+  '角色创建指南',
+  '注意事项',
+  '开局场景',
+  '已知信息',
+  '你已经知道',
+  '公开目标',
+  '已知人物',
+  '已知地点',
+  '已知物件',
+  '已知资料'
+];
 
 function compactValue(value, limit = 260) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
@@ -303,38 +314,71 @@ function stripMarkdownSections(content, titlesToStrip = []) {
   return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+function normalizeIntroHeading(content) {
+  const text = String(content || '').trim();
+  if (!text) return '';
+  if (hasMarkdownHeading(text, '## 剧情简介')) return text;
+  if (hasMarkdownHeading(text, '## 模组简介')) {
+    return text.replace(/^#{2,3}\s*模组简介\s*$/m, '## 剧情简介').trim();
+  }
+  return `## 剧情简介\n\n${text}`.trim();
+}
+
+function keepOnlyIntroSynopsis(content) {
+  const text = normalizeIntroHeading(content);
+  const lines = text.split(/\r?\n/);
+  const kept = [];
+  let keeping = false;
+  for (const line of lines) {
+    const match = line.match(/^#{2,3}\s*(.+?)\s*$/);
+    if (match) {
+      const title = headingTitle(match[1]);
+      if (title === '剧情简介') {
+        keeping = true;
+        kept.push('## 剧情简介');
+      } else if (keeping) {
+        break;
+      }
+      continue;
+    }
+    if (keeping) kept.push(line);
+  }
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function scrubPrepIntroPhrases(content) {
+  return String(content || '')
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(?:[-*]\s*)?(?:你们?|调查员|角色)?(?:已(?:经)?知道|公开目标|已知(?:人物|地点|物件|资料|线索)|推荐技能|适合职业|创建角色|注意事项|时代与地点|氛围主题|游玩规模)\s*[:：]/.test(line))
+    .join('\n')
+    .replace(/你们?已经知道[:：]?/g, '')
+    .replace(/调查员已经知道[:：]?/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function buildIntroSynopsis(guide) {
+  const title = guide.moduleTitle && guide.moduleTitle !== '未命名模组'
+    ? `《${guide.moduleTitle}》`
+    : '本模组';
+  const mood = uniqueValues([
+    ...guide.themes,
+    guide.tone,
+    guide.setting
+  ], 5);
+  const moodText = mood.length ? mood.join('、') : '克制、悬疑、逐渐失序';
+  return [
+    '## 剧情简介',
+    '',
+    `${title}是一段围绕${moodText}展开的克苏鲁式调查故事。它不急着把谜底摆到桌面上，而是让日常生活里细小的不协调逐渐扩大，直到现实本身开始显得不再可靠。`,
+    '',
+    '故事的重心会落在压力、选择与未知带来的迟疑上：调查员面对的不是一开始就张牙舞爪的怪物，而是某种无法轻易命名、却已经改变周围世界的异常。'
+  ].join('\n');
+}
+
 function buildIntroSections(guide) {
   return {
-    '## 模组简介': [
-      '## 模组简介',
-      `- **时代与地点**：${joinValues([guide.timePeriod, guide.location, guide.setting])}`,
-      `- **氛围主题**：${joinValues([guide.tone, ...guide.themes], '悬疑、调查、未知威胁')}`,
-      `- **游玩规模**：${guide.recommendedPlayers || `${guide.maxPlayers || 5} 名调查员`}；预计时长：${guide.estimatedDuration || '由房主控制'}`
-    ].join('\n'),
-    '## 玩家公开前提': [
-      '## 玩家公开前提',
-      `- ${guide.publicInformation || '调查员收到一项需要共同处理的异常委托。'}`,
-      `- **公开目标**：${guide.objective || '弄清异常事件的原因，并带回足够可靠的答案。'}`,
-      guide.criticalPublicFacts?.length ? `- **不可改写的公开事实**：${guide.criticalPublicFacts.join('；')}` : '',
-      guide.knownNpcs.length ? `- **已知人物**：${guide.knownNpcs.join('；')}` : '',
-      guide.knownLocations.length ? `- **已知地点**：${guide.knownLocations.join('；')}` : '',
-      guide.knownHandouts.length ? `- **已知物件/资料**：${guide.knownHandouts.join('；')}` : ''
-    ].filter(Boolean).join('\n'),
-    '## 调查员创建指南': [
-      '## 调查员创建指南',
-      `- **适合职业**：${guide.occupationHooks.join('、')}。角色应该有足够理由接受委托或参与调查。`,
-      `- **推荐技能**：${guide.recommendedSkills.join('、')}。这些技能能帮助调查、观察、沟通或处理现场证据。`,
-      '- **人物关系**：建议至少给角色写一个现实压力、债务、人情、事业失败或必须赚钱的理由，让他们愿意接下这份不体面的工作。',
-      '- **组队方式**：调查员可以彼此认识，也可以是被同一委托临时聚到一起的人；保持每个人都有发言空间。'
-    ].join('\n'),
-    '## 注意事项': [
-      '## 注意事项',
-      '- 不要在准备阶段泄露幕后真相、怪物身份、隐藏反派或结局。',
-      '- 创建角色时必须填写调查员姓名；属性值范围 0-100，建议核心属性不低于 40。',
-      '- 技能默认值已预设，可根据职业调整；所有玩家准备好角色后，房主即可开始游戏。',
-      '- 正式开场叙事会在房主开始游戏后自动出现；准备阶段先完成角色和关系。',
-      guide.contentWarnings.length ? `- **内容提醒**：${guide.contentWarnings.join('、')}。` : ''
-    ].filter(Boolean).join('\n')
+    '## 剧情简介': buildIntroSynopsis(guide)
   };
 }
 
@@ -366,30 +410,17 @@ export function buildIntroPublicGuide({ moduleTitle, maxPlayers = 5, moduleJson 
     knownHandouts: collectKnownHandouts(data, opening),
     occupationHooks: deriveOccupationHooks(data),
     recommendedSkills: deriveIntroSkills(data),
-    sourceContext: compactValue(moduleContext, 2400),
+    sourceContext: Object.keys(data).length > 0 ? '' : compactValue(moduleContext, 2400),
     requiredHeadings: INTRO_REQUIRED_HEADINGS
   };
   guide.criticalPublicFacts = deriveCriticalPublicFacts(guide);
   const sections = buildIntroSections(guide);
-  const facts = [
+  const synopsisFacts = [
     `标题：${guide.moduleTitle}`,
-    `建议人数：${guide.recommendedPlayers || `${maxPlayers} 人`}`,
-    guide.estimatedDuration ? `预计时长：${guide.estimatedDuration}` : '',
-    guide.timePeriod ? `时代：${guide.timePeriod}` : '',
-    guide.location ? `地点：${guide.location}` : '',
-    guide.setting ? `设定：${guide.setting}` : '',
-    guide.tone ? `氛围：${guide.tone}` : '',
-    guide.themes.length ? `主题：${guide.themes.join('、')}` : '',
-    guide.publicInformation ? `玩家公开前提：${guide.publicInformation}` : '',
-    guide.objective ? `玩家公开目标：${guide.objective}` : '',
-    guide.knownNpcs.length ? `玩家已知NPC：${guide.knownNpcs.join('；')}` : '',
-    guide.knownLocations.length ? `玩家已知地点：${guide.knownLocations.join('；')}` : '',
-    guide.knownHandouts.length ? `玩家已知道具/资料：${guide.knownHandouts.join('；')}` : '',
-    guide.criticalPublicFacts.length ? `不可改写的公开事实：${guide.criticalPublicFacts.join('；')}` : '',
-    guide.recommendedSkills.length ? `可推荐技能：${guide.recommendedSkills.join('、')}` : '',
-    guide.occupationHooks.length ? `可推荐职业方向：${guide.occupationHooks.join('、')}` : '',
-    guide.contentWarnings.length ? `内容提醒：${guide.contentWarnings.join('、')}` : '',
-    guide.sourceContext ? `原始片段摘要：${guide.sourceContext}` : ''
+    guide.setting ? `可参考背景气质：${guide.setting}` : '',
+    guide.tone ? `可参考叙事气质：${guide.tone}` : '',
+    guide.themes.length ? `可参考主题：${guide.themes.join('、')}` : '',
+    guide.sourceContext ? `原始片段摘要（仅供提炼氛围，不得复述具体开场、人名、地点、线索、目标、物件或数值）：${guide.sourceContext}` : ''
   ].filter(Boolean).join('\n');
 
   return {
@@ -397,71 +428,62 @@ export function buildIntroPublicGuide({ moduleTitle, maxPlayers = 5, moduleJson 
     sections,
     fallbackMarkdown: INTRO_REQUIRED_HEADINGS.map((heading) => sections[heading]).filter(Boolean).join('\n\n'),
     contextText: [
-      '=== 公开开场简报（只能使用玩家可知信息） ===',
-      facts,
+      '=== 准备阶段剧情简介素材（仅用于生成非剧透引入） ===',
+      synopsisFacts,
       '',
-      '必须完整覆盖以下标题：',
-      INTRO_REQUIRED_HEADINGS.join('\n')
+      '只允许输出一个标题：## 剧情简介'
     ].filter(Boolean).join('\n')
   };
 }
 
 export function ensureCompleteIntroContent(content, introGuide) {
   const guide = introGuide || buildIntroPublicGuide();
-  const text = stripMarkdownSections(content, INTRO_DISALLOWED_HEADINGS);
+  const stripped = stripMarkdownSections(content, INTRO_DISALLOWED_HEADINGS);
+  const text = scrubPrepIntroPhrases(keepOnlyIntroSynopsis(stripped));
   const sections = guide.sections || buildIntroSections(guide);
   if (!text) return guide.fallbackMarkdown || INTRO_REQUIRED_HEADINGS.map((heading) => sections[heading]).join('\n\n');
 
   const missing = (guide.requiredHeadings || INTRO_REQUIRED_HEADINGS)
     .filter((heading) => !hasMarkdownHeading(text, heading));
-  if (missing.length === 0) return correctCriticalIntroDrift(text, guide);
+  if (missing.length === 0) return text;
 
   const additions = missing.map((heading) => sections[heading]).filter(Boolean);
-  return correctCriticalIntroDrift([text, ...additions].filter(Boolean).join('\n\n'), guide);
+  return [text, ...additions].filter(Boolean).join('\n\n');
 }
 
 export function buildIntroSystemPrompt(roomCfg = {}) {
   return [
     '你是 CoC Online 的 AI 守秘人（Keeper）。当前房间刚创建，处于准备阶段。',
-    '你的任务是：向即将加入的玩家讲清楚本次模组的公开前提、角色应如何接入，并指导他们创建适合的调查员角色。',
+    '你的任务是：只写一段给玩家看的剧情简介/引入，让他们感受到本模组的题材、气质和压力。',
     '',
-    '必须使用 Markdown，并完整输出以下四个二级标题；任何一个都不能省略，不能只写“模组简介”：',
-    '## 模组简介',
-    '## 玩家公开前提',
-    '## 调查员创建指南',
-    '## 注意事项',
+    '必须使用 Markdown，但只允许输出一个二级标题：',
+    '## 剧情简介',
     '',
-    '每个标题下必须覆盖：',
-    '- 模组简介：时代、地点、类型、氛围。',
-    '- 玩家公开前提：调查员知道什么、为什么会参与、公开目标是什么、已知人物/地点/资料是什么。',
-    '- 调查员创建指南：2-5个职业方向、5-8个推荐技能、角色关系/动机钩子。',
-    '- 注意事项：角色卡创建提醒、内容边界提醒、不要泄露秘密；说明正式开场会在房主开始游戏后出现。',
+    '内容要求：',
+    '- 标题下写 1-3 段自然中文简介，像书背简介或跑团邀请语，不要像表格资料。',
+    '- 只概括题材、氛围、核心情绪和大致压力；不要交代玩家已经知道什么。',
+    '- 不要按“时代/地点/类型/氛围”分类，不要使用项目符号、字段名或清单格式。',
+    '- 不要输出“你已经知道：”“调查员已经知道：”“公开目标：”等句式。',
+    '- 不要写 NPC、地点、handout、线索、委托细节、具体数值、调查目标、开局场景或行动起点。',
+    '- 不要写角色创建指南、推荐职业、推荐技能、注意事项或内容警告。',
+    '- 正式开场、具体已知信息和第一幕画面会在房主切换到游玩阶段后自动生成。',
     '',
     '重要规则：',
     '- 不要泄露守秘人秘密、幕后真相、未发现的线索、NPC隐藏身份、反派身份或结局。',
-    '- NPC 的 role 字段可能包含隐藏身份；准备阶段不要直接复述 role，只能说玩家公开可见的信息。',
-    '- 不要替玩家决定角色的背景故事，只提供建议方向',
-    '- 不要输出“## 开局场景”、第一幕朗读文本、具体入场画面或场景行动开端；这些内容会在房主切换到游玩阶段后自动生成。',
-    '- 必须保留“不可改写的公开事实”里的关键名词、数字、地点、距离、物件和目标；可以改写语气，但不能改写事实。',
-    '- 遇到异常几何、空洞、虚无、照片等核心意象时，必须保留原词。资料写“球形空缺/完美的无/现实缺了一块”时，不得改成“凹陷”“坑洞”“黑洞”“传送门”或普通圆洞。',
-    '- 如果照片、传闻和现场真实现象存在视角差异，准备阶段只说公开目标和已知资料，不要展开现场开场描写。',
-    '- 输出长度建议 900-1800 个中文字符；宁可条理清楚，也不要文学化堆砌。',
-    '- 回复末尾不要列举游玩行动选项；准备阶段只说明公开前提和角色创建建议。',
-    '- 回复应友好、专业，适合直接展示给所有玩家',
+    '- 即使素材中有具体开场信息，也只能把它抽象成气质，不得复述。',
+    '- 输出长度建议 150-450 个中文字符；自然、克制、可直接展示给所有玩家。',
     `叙事风格：${roomCfg.dmStyle || '悬疑、克制，不替玩家做决定'}`,
     `规则严格度：${roomCfg.rulesStrictness || 'STANDARD'}`
   ].join('\n');
 }
 
-export function buildIntroUserContext({ moduleTitle, maxPlayers, moduleContext, introGuide = null }) {
+export function buildIntroUserContext({ moduleTitle, moduleContext, introGuide = null }) {
   return [
     `模组名称：${moduleTitle || '未知模组'}`,
-    `游玩人数：${maxPlayers || 5} 人`,
-    `系统：Call of Cthulhu 7th Edition`,
     '',
     introGuide?.contextText || moduleContext || '暂无模组内容',
     '',
-    '请基于上面的公开信息生成准备阶段引入。必须完整覆盖指定四个标题，不要只写世界观简介；不要写开局场景。'
+    '请基于上面的素材生成准备阶段剧情简介。只输出 ## 剧情简介，不要写开局场景、已知信息、调查目标、角色指南或注意事项。'
   ].join('\n');
 }
 

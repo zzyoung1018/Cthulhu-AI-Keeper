@@ -229,11 +229,14 @@ async function startFakeAiServer(responseText, { chunkDelayMs = 0 } = {}) {
   };
 }
 
-test('module intro fills missing public premise and character guidance without opening scene', async () => {
+test('module intro keeps preparation briefing as a high-level synopsis only', async () => {
   const fakeAi = await startFakeAiServer([
-    '## 模组简介',
+    '## 剧情简介',
     '',
-    '2008年末，底特律正在经济危机中下沉。'
+    '经济危机像沉重的灰尘落在每个人肩上，某种无法解释的空白正在现实边缘扩大。',
+    '',
+    '## 玩家公开前提',
+    '你已经知道：前往废弃汽车工会大厅调查直径一米的完美球形空缺。'
   ].join('\n'));
   const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
   const app = createApp({
@@ -287,20 +290,24 @@ test('module intro fills missing public premise and character guidance without o
 
     const intro = state.messages.find((message) => message.displayName === 'AI 守秘人');
     assert.ok(intro);
-    assert.match(intro.content, /## 模组简介/);
-    assert.match(intro.content, /## 玩家公开前提/);
-    assert.match(intro.content, /## 调查员创建指南/);
+    assert.match(intro.content, /## 剧情简介/);
+    assert.doesNotMatch(intro.content, /## 模组简介/);
+    assert.doesNotMatch(intro.content, /## 玩家公开前提/);
+    assert.doesNotMatch(intro.content, /## 调查员创建指南/);
+    assert.doesNotMatch(intro.content, /## 注意事项/);
     assert.doesNotMatch(intro.content, /## 开局场景/);
-    assert.match(intro.content, /前往废弃汽车工会大厅/);
-    assert.match(intro.content, /直径一米的完美球形空缺/);
-    assert.match(intro.content, /预付款牛皮纸信封/);
+    assert.doesNotMatch(intro.content, /前往废弃汽车工会大厅/);
+    assert.doesNotMatch(intro.content, /直径一米的完美球形空缺/);
+    assert.doesNotMatch(intro.content, /预付款牛皮纸信封|牛皮纸信封|模糊照片/);
     assert.doesNotMatch(intro.content, /球形凹陷|凹陷|坑洞|黑洞/);
     assert.doesNotMatch(intro.content, /奈亚拉托提普化身/);
     assert.ok(fakeAi.requests[0].body.messages.some((message) =>
       message.role === 'user' &&
-      /公开开场简报/.test(message.content) &&
-      /必须完整覆盖以下标题/.test(message.content) &&
-      /直径一米的完美球形空缺/.test(message.content) &&
+      /准备阶段剧情简介素材/.test(message.content) &&
+      /只允许输出一个标题：## 剧情简介/.test(message.content) &&
+      !/直径一米的完美球形空缺/.test(message.content) &&
+      !/前往废弃汽车工会大厅/.test(message.content) &&
+      !/牛皮纸信封/.test(message.content) &&
       !/建议开场文本/.test(message.content)
     ));
   } finally {

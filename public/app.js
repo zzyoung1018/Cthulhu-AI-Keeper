@@ -183,8 +183,8 @@ const aiLogStageLabels = {
   'rejected-events': '事件被拒绝',
   'dm-completed': 'AI 回复完成',
   'dm-failed': 'AI 回复失败',
-  'intro-completed': '开场介绍完成',
-  'intro-failed': '开场介绍失败',
+  'intro-completed': '剧情简介完成',
+  'intro-failed': '剧情简介失败',
   'npc-skill-fallback': 'NPC 技能回退',
   'clue-state-updated': '线索写入状态',
   'clue-state-skipped': '线索未写入',
@@ -2007,7 +2007,7 @@ function connectEvents() {
 
   source.addEventListener('connected', async () => {
     setConnection('online', `房间 ${state.room.code}`);
-    // 房主在准备阶段且没有 AI 消息时，请求生成模组介绍
+    // 房主在准备阶段且没有 AI 消息时，请求生成剧情简介
     if (isOwner() && state.room.status === 'PREPARING' && !state.messages.some(m => m.authorType === 'dm')) {
       try {
         const payload = await api(`/api/rooms/${state.room.code}/start-intro`, {
