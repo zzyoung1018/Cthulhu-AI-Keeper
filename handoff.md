@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-17 13:05 CST
+Last updated: 2026-06-17 13:32 CST
 
 ## Current State
 
@@ -12,15 +12,20 @@ Last updated: 2026-06-17 13:05 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `1814fda fix: complete module intro briefing`
-- Latest deployed app commit: `1814fda fix: complete module intro briefing`
-- Deployment verified on 2026-06-17 13:04 CST: server `npm run check` OK, server `npm test` 123/123 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
+- Latest completed local app commit: `5479566 fix: guard intro critical fact drift`
+- Latest deployed app commit: `5479566 fix: guard intro critical fact drift`
+- Latest Lina module nested repo commit: `62278db fix: preserve Lina void opening facts`
+- Deployment verified on 2026-06-17 13:31 CST: server `npm run check` OK, server `npm test` 124/124 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
 - Local worktree has the nested `测试模组 新/` directory untracked from the parent repo; leave it alone unless the user explicitly asks.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent App Commits
 
+- `5479566` fix: guard intro critical fact drift
+- `effb1f4` chore: checkpoint before intro drift guard
+- `b16fd69` fix: preserve intro anomaly facts
+- `b9328ba` chore: checkpoint before void intro fidelity fix
 - `1814fda` fix: complete module intro briefing
 - `6194355` chore: checkpoint before intro flow improvements
 - `9ebd7da` feat: run preflight checks from ai queue
@@ -414,6 +419,48 @@ Verification after this update:
 - Server systemd/Nginx/health checks — OK
 - Public deployment audit — OK, room `BP3G3A`, `aiConfigured: true`
 
+## 2026-06-17 Void Opening Fidelity Update
+
+User reported the latest generated intro still failed the original module premise: the PDF explicitly says there is an "empty sphere" / `直径一米的完美球形空缺`, but the AI-generated intro in `/Users/young/Downloads/dm-online-FN8CVX.json` described it as `直径约一米的完美球形凹陷`.
+
+Comparison result:
+- PDF source is correct:
+  - p.2 module intro: `底特律郊区一座废弃的汽车工会大厅里，出现了一个直径一米的完美球形空缺。`
+  - p.4 opening handout/photo: the blurry photo shows a `圆形空缺`, not the full phenomenon.
+  - p.5 first contact: the actual site contains `一个直径一米的球形空缺`.
+- Lina JSON was partly correct but lossy in the opening:
+  - `player_opening.initial_public_information` and `union_hall_void` scene already preserved the sphere.
+  - `player_opening.suggested_intro_text` only said the photo had `一个完美的圆`.
+  - The model then drifted from "空缺" to "凹陷".
+
+What changed:
+- `src/prompts.js`
+  - `buildIntroPublicGuide()` now extracts `criticalPublicFacts` from public information, objective, opening text, initial scene, known locations, and known handouts.
+  - `buildIntroSystemPrompt()` tells the model to preserve immutable public facts, exact geometry, numbers, locations, distances, objects, and objectives.
+  - `ensureCompleteIntroContent()` now runs deterministic drift correction even when the model already returned all required headings. For this module, `直径约一米的完美球形凹陷` is corrected to `直径一米的完美球形空缺`.
+- `测试模组（json）/prompt.md`
+  - Added a "关键意象和开场保真" section requiring converters to keep handout/photo facts separate from actual scene facts.
+- Nested module repo `测试模组 新/`
+  - `Lina-现实的荒原.json` now distinguishes the photo's circular cutout from the real `直径一米的完美球形空缺`.
+  - `prompt.md` has the same key-imagery fidelity rules.
+  - `build_lina_wasteland_json.py` is still untracked in that nested repo but was updated on disk to match the JSON; decide explicitly before adding it to version control.
+
+Regression coverage:
+- `test/prompts.test.mjs` now asserts the public guide includes `不可改写的公开事实` and `直径一米的完美球形空缺`.
+- New regression: an AI intro that already has all required headings but says `直径约一米的完美球形凹陷` is corrected to `直径一米的完美球形空缺`.
+- `test/app.test.mjs` asserts the persisted intro includes the sphere fact and excludes the drift phrase.
+
+Verification after this update:
+- Local `npm run check`
+- Local `npm test` — 124/124 passed
+- Local `npm run test:e2e` — 9/9 passed
+- `python3 -m json.tool "测试模组 新/Lina-现实的荒原.json"` — OK
+- Server `npm run check`
+- Server `npm test` — 124/124 passed
+- Server systemd/Nginx/health checks — OK
+- Public deployment audit — OK, room `UEQJXT`, `aiConfigured: true`
+- Targeted local drift check against `测试模组 新/Lina-现实的荒原.json` — `hasVoidSphere: true`, `hasDrift: false`
+
 ### Current Recommended Next Work
 
 1. Split large frontend/server files before the next broad feature.
@@ -520,15 +567,15 @@ AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restore
 
 Local:
 ```bash
-npm run check     # passed on 2026-06-16 23:09 CST
-npm test          # 114/114 passed on 2026-06-16 23:09 CST
-npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-16 23:10 CST
+npm run check     # passed on 2026-06-17 13:30 CST
+npm test          # 124/124 passed on 2026-06-17 13:30 CST
+npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-17 13:30 CST
 ```
 
 Server:
 ```bash
 cd /opt/dm-online && npm run check
-cd /opt/dm-online && npm test                  # 114/114 passed
+cd /opt/dm-online && npm test                  # 124/124 passed
 systemctl restart dm-online
 curl -fsS http://127.0.0.1:4173/api/health     # ok: true, aiConfigured: true
 systemctl is-active dm-online                    # active
@@ -538,7 +585,7 @@ nginx -t                                         # successful
 Public deployment audit:
 ```bash
 npm run audit:deployment -- http://8.153.147.137
-# ok: true, aiConfigured: true, roomCode: YF9WQA
+# ok: true, aiConfigured: true, roomCode: UEQJXT
 ```
 
 ## Deployment Commands
@@ -552,6 +599,11 @@ sshpass -e rsync -az --delete \
   --exclude 'node_modules/' \
   --exclude 'data/' \
   --exclude '.env' \
+  --exclude 'reports/' \
+  --exclude 'test-results/' \
+  --exclude 'playwright-report/' \
+  --exclude '测试模组 新/' \
+  --exclude '.DS_Store' \
   -e 'ssh -p 2233 -o StrictHostKeyChecking=no' \
   ./ root@8.153.147.137:/opt/dm-online/
 ```
