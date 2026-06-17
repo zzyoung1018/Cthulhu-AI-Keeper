@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-18 00:46 CST
+Last updated: 2026-06-18 00:59 CST
 
 ## Current State
 
@@ -12,17 +12,20 @@ Last updated: 2026-06-18 00:46 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `3f42a13 feat: surface preflight checks in ai logs`
+- Latest completed local app commit: `ed4e26a feat: import playtest exports as replay rooms`
 - Latest local utility commit: `07396ff fix: wait for audited ai tasks to finish`
-- Latest deployed app commit: `3f42a13 feat: surface preflight checks in ai logs`
+- Latest deployed app commit: `ed4e26a feat: import playtest exports as replay rooms`
 - Latest Lina module nested repo commit: `62278db fix: preserve Lina void opening facts`
-- Deployment verified on 2026-06-18 00:46 CST: server `npm run check` OK, server `npm test` 127/127 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`XJVAU3`).
+- Deployment verified on 2026-06-18 00:59 CST: server `npm run check` OK, server `npm test` 129/129 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`5ANVDK`).
 - Local worktree has the nested `测试模组 新/` directory untracked from the parent repo; leave it alone unless the user explicitly asks.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent App Commits
 
+- `ed4e26a` feat: import playtest exports as replay rooms
+- `212570b` chore: checkpoint before playtest import
+- `f859c06` docs: update handoff after preflight log visibility
 - `3f42a13` feat: surface preflight checks in ai logs
 - `1a17782` fix: clarify intro and opening pacing prompts
 - `3da6cf2` fix: preserve prep synopsis facts and export context
@@ -62,13 +65,13 @@ Do not write server credentials into committed files. Use the conversation conte
 
 ```text
 src/
-  app.js           (1320 lines) — HTTP routes, room lifecycle, AI orchestration
-  aiOutput.js      (1676 lines) — AI JSON extraction, validation, detection inference
+  app.js           (1334 lines) — HTTP routes, room lifecycle, AI orchestration
+  aiOutput.js      (1699 lines) — AI JSON extraction, validation, detection inference
   aiEvents.js       (566 lines) — applies AI structured events to rolls/state/summary
   aiClient.js       (430 lines) — streaming client and scene-aware AI context assembly
-  prompts.js        (659 lines) — intro/opening/DM system/user/structured-output prompts
-  db.js            (1360 lines) — SQLite schema, migrations, row mappers, queries
-  character.js      (368 lines) — CoC 7e sheet normalization and skill lookup
+  prompts.js        (687 lines) — intro/opening/DM system/user/structured-output prompts
+  db.js            (1662 lines) — SQLite schema, migrations, row mappers, queries
+  character.js      (392 lines) — CoC 7e sheet normalization and skill lookup
   dice.js           (441 lines) — CoC 7e dice, checks, opposed checks, luck/pushed rolls
   moduleParser.js   (347 lines) — JSON module validation and segment extraction
   playerState.js    (123 lines) — structured player state sent to AI
@@ -76,14 +79,14 @@ src/
   privateHub.js      (63 lines) — player-specific SSE delivery
 
 public/
-  app.js          (2567 lines) — main frontend logic
+  app.js          (2667 lines) — main frontend logic
 
 test/
   comprehensive-ai.test.mjs (765 lines) — full AI detection and event coverage
-  aiOutput.test.mjs         (835 lines) — parser/validator/inference regressions
-  frontend.e2e.mjs          (556 lines) — Playwright browser coverage for visible controls
-  app.test.mjs             (1269 lines) — API integration tests
-  db.test.mjs               (797 lines) — persistence tests
+  aiOutput.test.mjs         (882 lines) — parser/validator/inference regressions
+  frontend.e2e.mjs          (610 lines) — Playwright browser coverage for visible controls
+  app.test.mjs             (1346 lines) — API integration tests
+  db.test.mjs               (918 lines) — persistence tests
   fixtures/
     comprehensive-test-module.json — reusable CoC 7e test module
 ```
@@ -592,16 +595,52 @@ Verification after this update:
 - Server systemd/Nginx/health checks — OK
 - Public deployment audit — OK, room `XJVAU3`, `aiConfigured: true`
 
+## 2026-06-18 Playtest Import / Replay Room Update
+
+Completed the next owner-facing debug workflow: an owner JSON export can now be imported into a fresh replay/debug room.
+
+What changed:
+- Owner exports now preserve round-trip identity fields:
+  - participants include `isOwner`
+  - messages include `playerId` and `privateTarget`
+  - dice rolls include `playerId` and `isPrivate`
+- `src/db.js` now has `importPlaytestExport({ exportData, ownerPlayerId, displayName, roomName })`.
+- `POST /api/imports/playtest` accepts `{ playerId, displayName, roomName?, export }` and returns the same room payload shape the frontend already knows how to render.
+- The create-room dialog now has an `导入回放（owner JSON）` file input and `导入回放` action.
+- Importing creates a new module and room owned by the importing user, restores module text/segments, participants, character sheets, participant state, room summary, scene state, messages, dice rolls, and AI logs.
+- Old exports without message/dice `playerId` are still usable: the importer maps by display name where possible and otherwise falls back to the new owner.
+- Private messages from old exports without a target are mapped to the new owner so they remain inspectable in replay.
+
+Scope and limits:
+- This is a replay/debug room, not a perfect continuation of the original live queue.
+- It intentionally does not restore original live AI task rows or rollback rounds as active mutable state.
+- Use it to inspect a bad playtest, compare module context/logs/messages/dice, and quickly reproduce frontend-visible state.
+
+Regression coverage:
+- `test/db.test.mjs` verifies owner export identity fields, imported room/module/participants/messages/dice/AI logs/summary/scene state, and owner visibility for imported private messages.
+- `test/app.test.mjs` verifies the HTTP import endpoint creates a replay room from a real owner export and preserves AI logs.
+- `test/frontend.e2e.mjs` verifies importing through the create dialog renders the replay room, chat content, player count, and AI log details.
+
+Verification after this update:
+- Local `npm run check`
+- Local `npm test` — 129/129 passed
+- Local `npm run test:e2e` — 10/10 passed
+- Server `npm run check`
+- Server `npm test` — 129/129 passed
+- Server systemd/Nginx/health checks — OK
+- Public deployment audit — OK, room `5ANVDK`, `aiConfigured: true`
+
 ### Current Recommended Next Work
 
 1. Split large frontend/server files before the next broad feature.
-   - `public/app.js` is now 2567 lines; `src/db.js`, `src/app.js`, and `src/aiOutput.js` are also large.
+   - `public/app.js` is now 2667 lines; `src/db.js`, `src/app.js`, and `src/aiOutput.js` are also large.
    - Best first split: move character-sheet UI, AI log UI, and chat rendering into focused frontend modules.
    - Keep tests green between each extraction; avoid a big-bang refactor.
 
-2. Add an owner-facing import/replay flow for playtest exports.
-   - Owner JSON export now includes chat, character cards, state, summary, AI logs, module data, module segments, rounds, and scene state.
-   - The next step is importing that bundle into a local replay/debug room or converting it into regression fixtures automatically.
+2. Add fixture generation from owner replay exports.
+   - The import flow now makes bad sessions inspectable in the browser.
+   - The next step is a script that converts an owner export or imported replay into targeted regression fixtures for `aiOutput`, `app`, and Playwright tests.
+   - Good output would include redacted messages, expected checks, expected clue/state changes, and linked AI log snippets.
 
 3. Split `aiOutput.js` before more detection tuning.
    - It now mixes JSON extraction, validation, narrative cleanup, required-check inference, opposed-check inference, module matching, and NPC matching.
@@ -616,9 +655,10 @@ Verification after this update:
    - `ZZL4KB` report regressions are now covered for several social and required checks.
    - Add future reports as fixtures before changing broad keyword rules; prefer module-specific anchors so normal roleplay does not trigger excessive rolls.
 
-5. Add export/import for a complete playtest session.
-   - Chat, character cards, state, summary, AI logs, and module data are all persisted.
-   - A single owner export would make bug reports and future regression fixtures much easier to produce.
+5. Make replay rooms more explicit in the UI.
+   - Imported rooms are functional now, but the UI does not yet label them as replay/debug rooms.
+   - Add a subtle owner-only banner with source room code, import counts, and "do not treat as live canonical session" wording.
+   - Consider adding one-click "export regression fixture" from that banner after the fixture script exists.
 
 ### Lower-Priority Cleanup
 
@@ -694,15 +734,15 @@ AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restore
 
 Local:
 ```bash
-npm run check     # passed on 2026-06-18 00:41 CST
-npm test          # 127/127 passed on 2026-06-18 00:41 CST
-npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-18 00:41 CST
+npm run check     # passed on 2026-06-18 00:59 CST
+npm test          # 129/129 passed on 2026-06-18 00:59 CST
+npm run test:e2e  # 10/10 Playwright tests passed on 2026-06-18 00:59 CST
 ```
 
 Server:
 ```bash
 cd /opt/dm-online && npm run check
-cd /opt/dm-online && npm test                  # 127/127 passed
+cd /opt/dm-online && npm test                  # 129/129 passed
 systemctl restart dm-online
 curl -fsS http://127.0.0.1:4173/api/health     # ok: true, aiConfigured: true
 systemctl is-active dm-online                    # active
@@ -712,7 +752,7 @@ nginx -t                                         # successful
 Public deployment audit:
 ```bash
 npm run audit:deployment -- http://8.153.147.137
-# ok: true, aiConfigured: true, roomCode: XJVAU3
+# ok: true, aiConfigured: true, roomCode: 5ANVDK
 ```
 
 ## Deployment Commands
@@ -765,12 +805,13 @@ DEPLOYMENT_AUDIT_AI_TIMEOUT_MS=180000 npm run audit:deployment -- --require-ai h
 - The test fixture `test/fixtures/comprehensive-test-module.json` can be uploaded via the API to manually test AI detection in a real room.
 - If changing AI detection, add regression tests in `test/aiOutput.test.mjs` and/or `test/comprehensive-ai.test.mjs`.
 - When debugging game sessions, request the owner JSON export (`GET /api/rooms/:code/export?format=json`) to see messages, diceRolls, aiTasks, AI logs, module data, module segments, rounds, scene state, and participant state in context.
+- Owner JSON exports can now be imported through the create-room dialog or `POST /api/imports/playtest` to create a replay/debug room. Use this before manually recreating bad sessions.
 - The AI detection log endpoint (`GET /api/rooms/:code/ai-log`) is owner-only and now reads persistent SQLite `ai_logs`.
 - `latestPlayerAction` now prefers explicit `triggerMessageId` and skips `aiProcessedTaskUid` actions — if AI check inference stops working unexpectedly, inspect `ai_tasks.trigger_message_id` and `messages.ai_processed_task_uid` first.
 
 ## Potential Follow-Ups
 
-- Add import/replay tooling for the richer owner JSON export so bad sessions can become local fixtures quickly.
+- Add fixture-generation tooling for imported replay rooms so bad sessions can become local regression tests quickly.
 - Tune module check matching with newer real playtest logs from `reports/` after another session.
 - Cache NPC candidates per room/task (currently rebuilt every AI call in `npcCandidates()`).
 - Split `aiOutput.js`, `db.js`, `app.js`, and `public/app.js` along existing boundaries when next touching those files.
