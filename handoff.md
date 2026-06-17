@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-17 12:39 CST
+Last updated: 2026-06-17 13:05 CST
 
 ## Current State
 
@@ -12,15 +12,17 @@ Last updated: 2026-06-17 12:39 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `9ebd7da feat: run preflight checks from ai queue`
-- Latest deployed app commit: `9ebd7da feat: run preflight checks from ai queue`
-- Deployment verified on 2026-06-17 12:40 CST: server `npm run check` OK, server `npm test` 119/119 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
+- Latest completed local app commit: `1814fda fix: complete module intro briefing`
+- Latest deployed app commit: `1814fda fix: complete module intro briefing`
+- Deployment verified on 2026-06-17 13:04 CST: server `npm run check` OK, server `npm test` 123/123 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
 - Local worktree has the nested `测试模组 新/` directory untracked from the parent repo; leave it alone unless the user explicitly asks.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent App Commits
 
+- `1814fda` fix: complete module intro briefing
+- `6194355` chore: checkpoint before intro flow improvements
 - `9ebd7da` feat: run preflight checks from ai queue
 - `29dfb01` chore: checkpoint before queued preflight improvements
 - `2dddd99` docs: clarify module skill and clue rules
@@ -387,6 +389,30 @@ Verification after this update:
 - `npm run check`
 - `npm test` — 119/119 passed
 - `npm run test:e2e` — 9/9 passed
+
+## 2026-06-17 Intro Briefing Update
+
+Fixed a real playtest issue from export `dm-online-FN8CVX.json`: the preparation intro for `Lina-现实的荒原` only produced a short "模组简介" and did not explain the public premise, character hooks, or opening scene.
+
+What changed:
+- `buildIntroSystemPrompt()` now requires five public sections: `模组简介`, `玩家公开前提`, `调查员创建指南`, `开局场景`, and `注意事项`.
+- `buildIntroPublicGuide()` extracts a public briefing from JSON module fields such as `module_info`, `player_opening`, initial scene, known locations, known handouts, and checks.
+- `ensureCompleteIntroContent()` appends missing sections from backend-derived public data if the model stops early or omits required headings.
+- The public intro intentionally avoids NPC `role`, keeper secrets, and `keeper_overview.investigation_goal`; it prefers first impressions/public descriptions and excludes hidden identities.
+- Recommended prep skills filter out attributes and `克苏鲁神话`; `语言学` is presented as `外语`.
+
+Regression coverage:
+- `test/prompts.test.mjs` covers required headings, public guide extraction, hidden-role non-leakage, and missing-section completion.
+- `test/app.test.mjs` covers the HTTP `/start-intro` path where a fake AI returns only `## 模组简介`; the final persisted intro includes public premise, character guidance, opening scene, and no hidden NPC identity.
+
+Verification after this update:
+- `npm run check`
+- `npm test` — 123/123 passed
+- `npm run test:e2e` — 9/9 passed
+- Server `npm run check`
+- Server `npm test` — 123/123 passed
+- Server systemd/Nginx/health checks — OK
+- Public deployment audit — OK, room `BP3G3A`, `aiConfigured: true`
 
 ### Current Recommended Next Work
 
