@@ -229,14 +229,14 @@ async function startFakeAiServer(responseText, { chunkDelayMs = 0 } = {}) {
   };
 }
 
-test('module intro keeps preparation briefing as a high-level synopsis only', async () => {
+test('module intro keeps a natural synopsis while preserving core hook facts', async () => {
   const fakeAi = await startFakeAiServer([
     '## 剧情简介',
     '',
-    '经济危机像沉重的灰尘落在每个人肩上，某种无法解释的空白正在现实边缘扩大。',
+    '经济危机像沉重的灰尘落在每个人肩上，调查员会被一项关于废弃汽车工会大厅里直径一米的完美球形空缺的委托卷入。这个故事的压力来自贫困、现实缺失，以及那个无法用常识命名的问题。',
     '',
     '## 玩家公开前提',
-    '你已经知道：前往废弃汽车工会大厅调查直径一米的完美球形空缺。'
+    '你已经知道：银行家给了现金和照片。'
   ].join('\n'));
   const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
   const app = createApp({
@@ -296,18 +296,19 @@ test('module intro keeps preparation briefing as a high-level synopsis only', as
     assert.doesNotMatch(intro.content, /## 调查员创建指南/);
     assert.doesNotMatch(intro.content, /## 注意事项/);
     assert.doesNotMatch(intro.content, /## 开局场景/);
-    assert.doesNotMatch(intro.content, /前往废弃汽车工会大厅/);
-    assert.doesNotMatch(intro.content, /直径一米的完美球形空缺/);
-    assert.doesNotMatch(intro.content, /预付款牛皮纸信封|牛皮纸信封|模糊照片/);
+    assert.match(intro.content, /废弃汽车工会大厅/);
+    assert.match(intro.content, /直径一米的完美球形空缺/);
+    assert.doesNotMatch(intro.content, /你已经知道/);
+    assert.doesNotMatch(intro.content, /预付款牛皮纸信封|牛皮纸信封|模糊照片|现金和照片/);
     assert.doesNotMatch(intro.content, /球形凹陷|凹陷|坑洞|黑洞/);
     assert.doesNotMatch(intro.content, /奈亚拉托提普化身/);
     assert.ok(fakeAi.requests[0].body.messages.some((message) =>
       message.role === 'user' &&
       /准备阶段剧情简介素材/.test(message.content) &&
       /只允许输出一个标题：## 剧情简介/.test(message.content) &&
-      !/直径一米的完美球形空缺/.test(message.content) &&
-      !/前往废弃汽车工会大厅/.test(message.content) &&
-      !/牛皮纸信封/.test(message.content) &&
+      /直径一米的完美球形空缺/.test(message.content) &&
+      /前往废弃汽车工会大厅/.test(message.content) &&
+      !/玩家已知NPC|玩家已知地点|玩家已知道具/.test(message.content) &&
       !/建议开场文本/.test(message.content)
     ));
   } finally {

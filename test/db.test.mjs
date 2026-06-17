@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDatabase } from '../src/db.js';
 import { HttpError } from '../src/errors.js';
+import { exportGameJson } from '../src/export.js';
 import { computeRollback } from '../src/rounds.js';
 
 function withDb() {
@@ -745,7 +746,7 @@ test('rollback by task uid restores snapshots, summary, scene state, and marks m
   }
 });
 
-test('export state includes all messages and dice rolls', () => {
+test('export state includes full owner context and hides private module from non-owners', () => {
   const { database, cleanup } = withDb();
   try {
     const mod = createModule(database, 'keeper');
@@ -755,6 +756,9 @@ test('export state includes all messages and dice rolls', () => {
       displayName: 'Keeper',
       moduleId: mod.id
     });
+    database.joinRoom({ code: room.code, playerId: 'player2', displayName: 'Player 2' });
+    database.forceUpdateSceneState(room.id, { currentScene: 'old_house' });
+    database.updateSummary({ code: room.code, playerId: 'keeper', summary: '调查开始。' });
 
     database.createPlayerMessage({ code: room.code, playerId: 'keeper', content: 'msg1', messageType: 'IC' });
     database.createPlayerMessage({ code: room.code, playerId: 'keeper', content: 'msg2', messageType: 'ACTION' });
@@ -766,12 +770,37 @@ test('export state includes all messages and dice rolls', () => {
       label: '侦察',
       result: { total: 41, target: 60, successLevel: 'REGULAR', passed: true }
     });
+    database.createAiLog({
+      code: room.code,
+      taskUid: 'task-1',
+      stage: 'structured-events',
+      entry: { eventKeys: ['summary_update'] }
+    });
 
     const exportState = database.getExportState(room.code, 'keeper');
     assert.equal(exportState.messages.length, 2);
     assert.equal(exportState.diceRolls.length, 1);
     assert.equal(exportState.room.code, room.code);
-    assert.equal(exportState.participants.length, 1);
+    assert.equal(exportState.room.summary, '调查开始。');
+    assert.equal(JSON.parse(exportState.room.sceneState).currentScene, 'old_house');
+    assert.equal(exportState.participants.length, 2);
+    assert.equal(exportState.isOwnerExport, true);
+    assert.equal(exportState.module.title, '死亡之光');
+    assert.match(exportState.module.parsedText, /旧宅/);
+    assert.equal(exportState.moduleSegments.length, 1);
+    assert.equal(exportState.aiLogs.length, 1);
+    const exportedJson = JSON.parse(exportGameJson(exportState));
+    assert.equal(exportedJson.isOwnerExport, true);
+    assert.equal(exportedJson.room.sceneState, exportState.room.sceneState);
+    assert.match(exportedJson.module.parsedText, /旧宅/);
+    assert.equal(exportedJson.moduleSegments[0].content, '调查员来到旧宅。');
+    assert.equal(exportedJson.aiLogs[0].stage, 'structured-events');
+
+    const playerExport = database.getExportState(room.code, 'player2');
+    assert.equal(playerExport.isOwnerExport, false);
+    assert.equal(playerExport.module, null);
+    assert.deepEqual(playerExport.moduleSegments, []);
+    assert.deepEqual(playerExport.aiLogs, []);
   } finally {
     cleanup();
   }

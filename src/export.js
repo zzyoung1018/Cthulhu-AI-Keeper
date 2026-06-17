@@ -111,23 +111,62 @@ export function exportGameMarkdown(state) {
 }
 
 export function exportGameJson(state) {
-  const { room, participants, messages, diceRolls, aiTasks = [] } = state;
+  const {
+    room,
+    participants,
+    messages,
+    diceRolls,
+    aiTasks = [],
+    rounds = [],
+    module = null,
+    moduleSegments = [],
+    aiLogs = [],
+    isOwnerExport = false
+  } = state;
 
   return JSON.stringify({
     exportedAt: new Date().toISOString(),
+    isOwnerExport,
     room: {
       code: room.code,
       name: room.name,
+      moduleId: room.moduleId,
       moduleTitle: room.moduleTitle,
+      moduleParseStatus: room.moduleParseStatus,
       status: room.status,
+      maxPlayers: room.maxPlayers,
       summary: room.summary,
+      sceneState: room.sceneState,
       createdAt: room.createdAt
     },
+    module: module ? {
+      id: module.id,
+      title: module.title,
+      originalName: module.originalName,
+      fileType: module.fileType,
+      contentType: module.contentType,
+      sizeBytes: module.sizeBytes,
+      parseStatus: module.parseStatus,
+      segmentCount: module.segmentCount,
+      parsedText: module.parsedText || '',
+      createdAt: module.createdAt,
+      updatedAt: module.updatedAt
+    } : null,
+    moduleSegments: moduleSegments.map((segment) => ({
+      sortOrder: segment.sortOrder,
+      title: segment.title,
+      scene: segment.scene,
+      content: segment.content
+    })),
     participants: participants.map((p) => ({
       displayName: p.displayName,
       playerId: p.playerId,
       characterSheet: p.characterSheet,
+      characterRevision: p.characterRevision,
       isReady: p.isReady,
+      state: p.state,
+      discoveredClues: p.discoveredClues,
+      knownNpcs: p.knownNpcs,
       joinedAt: p.joinedAt
     })),
     messages: messages.map((m) => ({
@@ -151,6 +190,8 @@ export function exportGameJson(state) {
       error: t.error || '',
       createdAt: t.createdAt,
       completedAt: t.completedAt || ''
-    }))
+    })),
+    rounds,
+    aiLogs
   }, null, 2);
 }

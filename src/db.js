@@ -1340,6 +1340,7 @@ export function createDatabase(dbPath) {
     getExportState(code, playerId) {
       const room = ensureRoom(code);
       const { participant } = this.getParticipant(code, playerId);
+      const isOwner = participant.playerId === room.ownerPlayerId;
       const participants = statements.listParticipants.all(room.id).map((row) => rowToParticipant(row, room));
       const messages = statements.listAllMessages
         .all(room.id, 2000)
@@ -1354,7 +1355,25 @@ export function createDatabase(dbPath) {
         .map(rowToAiTask)
         .reverse();
       const rounds = this.listRoundStates(room.id, 50);
-      return { room, participants, messages, diceRolls, aiTasks, rounds };
+      const module = isOwner && room.moduleId
+        ? rowToModule(statements.getModuleById.get(room.moduleId), { includeText: true })
+        : null;
+      const moduleSegments = module
+        ? statements.listModuleSegments.all(room.moduleId, 1000).map(rowToModuleSegment)
+        : [];
+      const aiLogs = isOwner ? this.listAiLogs({ code, limit: 300 }) : [];
+      return {
+        room,
+        participants,
+        messages,
+        diceRolls,
+        aiTasks,
+        rounds,
+        module,
+        moduleSegments,
+        aiLogs,
+        isOwnerExport: isOwner
+      };
     },
 
     getRoomByCode(code) {

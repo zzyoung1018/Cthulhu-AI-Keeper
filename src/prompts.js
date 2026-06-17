@@ -137,11 +137,6 @@ function uniqueValues(values, limit = 12) {
   return result;
 }
 
-function joinValues(values, fallback = '暂无明确公开信息') {
-  const list = uniqueValues(values);
-  return list.length > 0 ? list.join('、') : fallback;
-}
-
 function objectList(value) {
   return Array.isArray(value) ? value.filter((item) => item && typeof item === 'object') : [];
 }
@@ -216,6 +211,19 @@ function deriveCriticalPublicFacts(guide) {
     ...guide.knownHandouts
   ].flatMap(splitPublicFacts);
   return uniqueValues(candidates.filter(hasCriticalPublicDetail), 10);
+}
+
+function deriveIntroHookFacts(guide) {
+  return uniqueValues([
+    ...splitPublicFacts(guide.publicInformation),
+    ...splitPublicFacts(guide.objective)
+  ].filter(hasCriticalPublicDetail), 6);
+}
+
+function filterIntroThemes(themes = []) {
+  return listValues(themes)
+    .filter((theme) => !/(奈亚|奈亚拉托提普|阿撒托斯|犹格|莎布|克苏鲁|邪神|反派|幕后|真相)/i.test(theme))
+    .slice(0, 6);
 }
 
 function correctCriticalIntroDrift(content, guide) {
@@ -349,7 +357,12 @@ function keepOnlyIntroSynopsis(content) {
 function scrubPrepIntroPhrases(content) {
   return String(content || '')
     .split(/\r?\n/)
-    .filter((line) => !/^\s*(?:[-*]\s*)?(?:你们?|调查员|角色)?(?:已(?:经)?知道|公开目标|已知(?:人物|地点|物件|资料|线索)|推荐技能|适合职业|创建角色|注意事项|时代与地点|氛围主题|游玩规模)\s*[:：]/.test(line))
+    .filter((line) => !/^\s*(?:[-*]\s*)?(?:推荐技能|适合职业|创建角色|角色创建|注意事项|时代与地点|氛围主题|游玩规模)\s*[:：]/.test(line))
+    .map((line) => line.replace(
+      /^\s*(?:[-*]\s*)?(?:(?:你们?|调查员|角色)?已(?:经)?知道|公开目标|已知(?:人物|地点|物件|资料|线索))\s*[:：]\s*/,
+      ''
+    ))
+    .filter((line) => line.trim())
     .join('\n')
     .replace(/你们?已经知道[:：]?/g, '')
     .replace(/调查员已经知道[:：]?/g, '')
@@ -362,17 +375,23 @@ function buildIntroSynopsis(guide) {
     ? `《${guide.moduleTitle}》`
     : '本模组';
   const mood = uniqueValues([
-    ...guide.themes,
+    ...(guide.introThemes || guide.themes),
     guide.tone,
     guide.setting
-  ], 5);
+  ], 4);
   const moodText = mood.length ? mood.join('、') : '克制、悬疑、逐渐失序';
+  const hook = guide.publicInformation
+    || guide.objective
+    || '调查员会被卷入一件表面寻常、却逐渐显露异常纹理的事件。';
+  const objective = guide.objective && guide.objective !== guide.publicInformation
+    ? `故事的早期推动力来自一个清楚却令人不安的问题：${guide.objective}`
+    : '故事的早期推动力来自一个清楚却令人不安的问题，而答案不会轻易以常识的方式出现。';
   return [
     '## 剧情简介',
     '',
-    `${title}是一段围绕${moodText}展开的克苏鲁式调查故事。它不急着把谜底摆到桌面上，而是让日常生活里细小的不协调逐渐扩大，直到现实本身开始显得不再可靠。`,
+    `${title}是一段围绕${moodText}展开的克苏鲁式调查故事。${hook}`,
     '',
-    '故事的重心会落在压力、选择与未知带来的迟疑上：调查员面对的不是一开始就张牙舞爪的怪物，而是某种无法轻易命名、却已经改变周围世界的异常。'
+    `${objective}调查员面对的不是一开始就张牙舞爪的怪物，而是某种无法轻易命名、却已经改变周围世界的异常。`
   ].join('\n');
 }
 
@@ -398,6 +417,7 @@ export function buildIntroPublicGuide({ moduleTitle, maxPlayers = 5, moduleJson 
     location: mi.location || '',
     setting: mi.setting || '',
     themes: listValues(mi.themes).slice(0, 8),
+    introThemes: filterIntroThemes(mi.themes),
     tone: mi.tone || '',
     contentWarnings: listValues(mi.content_warnings).slice(0, 8),
     publicInformation: opening.initial_public_information || '',
@@ -414,13 +434,17 @@ export function buildIntroPublicGuide({ moduleTitle, maxPlayers = 5, moduleJson 
     requiredHeadings: INTRO_REQUIRED_HEADINGS
   };
   guide.criticalPublicFacts = deriveCriticalPublicFacts(guide);
+  guide.introHookFacts = deriveIntroHookFacts(guide);
   const sections = buildIntroSections(guide);
   const synopsisFacts = [
     `标题：${guide.moduleTitle}`,
+    guide.publicInformation ? `剧情引入素材：${guide.publicInformation}` : '',
+    guide.objective ? `早期推动问题：${guide.objective}` : '',
     guide.setting ? `可参考背景气质：${guide.setting}` : '',
     guide.tone ? `可参考叙事气质：${guide.tone}` : '',
-    guide.themes.length ? `可参考主题：${guide.themes.join('、')}` : '',
-    guide.sourceContext ? `原始片段摘要（仅供提炼氛围，不得复述具体开场、人名、地点、线索、目标、物件或数值）：${guide.sourceContext}` : ''
+    guide.introThemes.length ? `可参考主题：${guide.introThemes.join('、')}` : '',
+    guide.introHookFacts.length ? `必须保留的引入事实：${guide.introHookFacts.join('；')}` : '',
+    guide.sourceContext ? `原始片段摘要（仅供提炼剧情引入，不得加入素材外的新现象或新设定）：${guide.sourceContext}` : ''
   ].filter(Boolean).join('\n');
 
   return {
@@ -461,17 +485,20 @@ export function buildIntroSystemPrompt(roomCfg = {}) {
     '',
     '内容要求：',
     '- 标题下写 1-3 段自然中文简介，像书背简介或跑团邀请语，不要像表格资料。',
-    '- 只概括题材、氛围、核心情绪和大致压力；不要交代玩家已经知道什么。',
+    '- 必须自然保留素材里的核心剧情引入：谁/什么压力把调查员推向事件、异常或委托大致是什么、早期故事会围绕什么问题展开。',
+    '- 可以写公开剧情钩子，但不要用“玩家已经知道什么”的资料口吻。',
     '- 不要按“时代/地点/类型/氛围”分类，不要使用项目符号、字段名或清单格式。',
     '- 不要输出“你已经知道：”“调查员已经知道：”“公开目标：”等句式。',
-    '- 不要写 NPC、地点、handout、线索、委托细节、具体数值、调查目标、开局场景或行动起点。',
+    '- 不要写成可操作清单；不要列已知 NPC、已知地点、handout、线索目录、推荐技能或行动选项。',
+    '- 可以保留剧情简介必需的地点/异常/任务名词；但不要展开第一幕现场朗读、具体入场动作、对话细节或 handout 外观。',
     '- 不要写角色创建指南、推荐职业、推荐技能、注意事项或内容警告。',
     '- 正式开场、具体已知信息和第一幕画面会在房主切换到游玩阶段后自动生成。',
     '',
     '重要规则：',
     '- 不要泄露守秘人秘密、幕后真相、未发现的线索、NPC隐藏身份、反派身份或结局。',
-    '- 即使素材中有具体开场信息，也只能把它抽象成气质，不得复述。',
-    '- 输出长度建议 150-450 个中文字符；自然、克制、可直接展示给所有玩家。',
+    '- 不要为了文学化而编造素材外的新现象、新地点、新档案、新梦境或新规则；缺什么就保持克制，不要补设定。',
+    '- 如果素材给出核心异常或关键数字，简介可以保留；不得改写成其他形态。',
+    '- 输出长度建议 250-700 个中文字符；自然、克制、可直接展示给所有玩家。',
     `叙事风格：${roomCfg.dmStyle || '悬疑、克制，不替玩家做决定'}`,
     `规则严格度：${roomCfg.rulesStrictness || 'STANDARD'}`
   ].join('\n');
@@ -483,7 +510,7 @@ export function buildIntroUserContext({ moduleTitle, moduleContext, introGuide =
     '',
     introGuide?.contextText || moduleContext || '暂无模组内容',
     '',
-    '请基于上面的素材生成准备阶段剧情简介。只输出 ## 剧情简介，不要写开局场景、已知信息、调查目标、角色指南或注意事项。'
+    '请基于上面的素材生成准备阶段剧情简介。只输出 ## 剧情简介，不要写开局场景、已知信息清单、角色指南或注意事项。'
   ].join('\n');
 }
 
