@@ -178,6 +178,8 @@ const aiTaskLabels = {
 };
 
 const aiLogStageLabels = {
+  'preflight-check': '服务器预检定',
+  'preflight-skipped': '预检定跳过',
   'structured-events': '结构化事件检测',
   'apply-events': '执行结构化事件',
   'rejected-events': '事件被拒绝',
@@ -622,6 +624,33 @@ function eventNames(keys = []) {
   return keys.map((key) => aiLogEventLabels[key] || key);
 }
 
+function preflightTypeLabel(type) {
+  return {
+    required: '必要检定',
+    opposed: '对抗检定'
+  }[type] || '检定';
+}
+
+function formatPreflightReason(reason = '') {
+  const text = String(reason || '').trim();
+  const known = {
+    'action-already-processed': '行动已被处理',
+    'no-check': '未识别到需要检定的行动',
+    'not-action': '不是正式行动消息',
+    'opposed-npc-unresolved': '未能确定对抗目标 NPC',
+    'opposed-validation-failed': '对抗检定未通过房间校验',
+    'required-validation-failed': '必要检定未通过房间校验',
+    'no-check-message-created': '未能创建检定消息'
+  };
+  if (known[text]) return known[text];
+  if (text.startsWith('preflight-generic-')) return `通用规则：${text.replace('preflight-generic-', '')}`;
+  if (text.startsWith('preflight-module-')) return `模组规则：${text.replace('preflight-module-', '')}`;
+  if (text.startsWith('preflight-social')) return '社交对抗规则';
+  if (text.startsWith('preflight-stealth')) return '潜行对抗规则';
+  if (text.startsWith('preflight-combat')) return '战斗对抗规则';
+  return text || '未记录原因';
+}
+
 function chip(text, className = '') {
   const node = document.createElement('span');
   node.className = ['ai-log-chip', className].filter(Boolean).join(' ');
@@ -673,11 +702,20 @@ function aiLogSummaryLines(entry) {
     lines.push(`NPC ${entry.npcName || entry.npcId || '未命名'} 已更新：${[entry.disposition, entry.location, entry.isPresent === false ? '离场' : '在场'].filter(Boolean).join(' · ')}`);
   } else if (entry.stage === 'npc-skill-fallback') {
     lines.push(`${entry.npcName || 'NPC'} 的 ${entry.passiveSkill || '技能'} 无有效数值，使用 ${entry.fallback}`);
+  } else if (entry.stage === 'preflight-check') {
+    lines.push(`服务器已在 AI 回复前完成${preflightTypeLabel(entry.type)}，避免模型先叙事后补骰。`);
+    if (entry.reason) lines.push(`触发来源：${formatPreflightReason(entry.reason)}`);
+    if (entry.eventKeys?.length) lines.push(`执行事件：${eventNames(entry.eventKeys).join('、')}`);
+    if (entry.actionMessageId) lines.push(`关联行动消息 #${entry.actionMessageId}`);
+  } else if (entry.stage === 'preflight-skipped') {
+    lines.push(`服务器未执行预检定：${formatPreflightReason(entry.reason)}`);
+    if (entry.actionMessageId) lines.push(`关联行动消息 #${entry.actionMessageId}`);
   } else if (entry.error) {
     lines.push(`错误：${entry.error}`);
   }
 
   if (entry.issues?.length) lines.push(`问题：${entry.issues.join('；')}`);
+  if (entry.warnings?.length) lines.push(`提示：${entry.warnings.join('；')}`);
   return lines.length > 0 ? lines : ['无额外摘要'];
 }
 
@@ -735,6 +773,7 @@ function renderAiLogStats(logs = filteredAiLogs()) {
 
   const warnings = state.aiLogEntries.filter(isAiLogWarning).length;
   const taskCount = uniqueTaskCount(state.aiLogEntries);
+  const preflightCount = state.aiLogEntries.filter((entry) => entry.stage === 'preflight-check').length;
   const latest = [...state.aiLogEntries]
     .sort((left, right) => new Date(right.time || 0) - new Date(left.time || 0))[0];
   const latestLabel = latest
@@ -747,6 +786,7 @@ function renderAiLogStats(logs = filteredAiLogs()) {
     stateChip('警告', String(warnings), warnings ? 'error' : ''),
     stateChip('任务', String(taskCount))
   );
+  if (preflightCount) els.aiLogStats.append(stateChip('预检', String(preflightCount), 'ok'));
   if (latestLabel) els.aiLogStats.append(stateChip('最近', latestLabel));
 }
 
@@ -765,7 +805,7 @@ function renderAiLogEntry(entry) {
 
   const chips = document.createElement('div');
   chips.className = 'ai-log-chips';
-  if (entry.stage) chips.append(chip(entry.stage, 'muted'));
+  if (entry.stage) chips.append(chip(aiLogStageLabels[entry.stage] || entry.stage, 'muted'));
   if (entry.taskUid) chips.append(chip(aiLogTaskLabel(entry.taskUid)));
   for (const key of eventNames(entry.validKeys || entry.keys || [])) chips.append(chip(key, 'ok'));
   for (const key of eventNames(entry.rejectedKeys || entry.rejected || [])) chips.append(chip(`拒绝 ${key}`, 'warn'));

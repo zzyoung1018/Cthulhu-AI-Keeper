@@ -223,6 +223,28 @@ function seedActiveRoom(database, extraPlayers = []) {
   database.createAiLog({
     code: room.code,
     taskUid: task.uid,
+    stage: 'preflight-check',
+    entry: {
+      stage: 'preflight-check',
+      taskUid: task.uid,
+      actionMessageId: action.id,
+      playerId: 'owner',
+      type: 'required',
+      reason: 'preflight-generic-侦查',
+      eventKeys: ['required_checks'],
+      detection: {
+        source: 'generic',
+        kind: 'required',
+        ruleId: 'generic:侦查',
+        skill: '侦查',
+        confidence: 0.74,
+        notes: ['keyword']
+      }
+    }
+  });
+  database.createAiLog({
+    code: room.code,
+    taskUid: task.uid,
     stage: 'structured-events',
     entry: {
       stage: 'structured-events',
@@ -326,6 +348,9 @@ test('renders readable AI detection logs for the owner', async ({ page }) => {
 
     await page.locator('#btnAiLog').click();
     const dialog = page.locator('#aiLogDialog');
+    await expect(dialog).toContainText('服务器预检定');
+    await expect(dialog).toContainText('服务器已在 AI 回复前完成必要检定');
+    await expect(dialog).toContainText('触发来源：通用规则：侦查');
     await expect(dialog).toContainText('结构化事件检测');
     await expect(dialog).toContainText('模型 JSON：无');
     await expect(dialog).toContainText('后端补充必要检定：generic-侦查');
@@ -352,11 +377,12 @@ test('shows clear AI queue and log status summaries', async ({ page }) => {
     await page.locator('#btnAiLog').click();
     const stats = page.locator('#aiLogStats');
     await expect(stats).toContainText('总数');
-    await expect(stats).toContainText('2');
+    await expect(stats).toContainText('3');
     await expect(stats).toContainText('命中');
     await expect(stats).toContainText('警告');
     await expect(stats).toContainText('1');
     await expect(stats).toContainText('任务');
+    await expect(stats).toContainText('预检');
 
     await page.locator('#aiLogWarningOnly').check();
     await expect(stats).toContainText('命中');
