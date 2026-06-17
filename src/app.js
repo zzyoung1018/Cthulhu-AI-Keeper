@@ -5,7 +5,13 @@ import { join, resolve } from 'node:path';
 import { buildDmMessages, streamChatCompletion } from './aiClient.js';
 import { createEventApplier } from './aiEvents.js';
 import { enhanceStructuredEvents, extractStructuredEvents, planPreflightCheck, validateStructuredEvents } from './aiOutput.js';
-import { buildIntroSystemPrompt, buildIntroUserContext, buildStructuredOutputPrompt } from './prompts.js';
+import {
+  buildIntroPublicGuide,
+  buildIntroSystemPrompt,
+  buildIntroUserContext,
+  buildStructuredOutputPrompt,
+  ensureCompleteIntroContent
+} from './prompts.js';
 import { RoomAiQueue } from './aiQueue.js';
 import { assertAiSettingsInput, roomRuntimeAiConfig } from './aiSettings.js';
 import { getSkillTarget } from './character.js';
@@ -501,11 +507,19 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         .map((s) => `[${s.scene || s.title}]\n${s.content}`).join('\n\n');
     }
 
+    const introGuide = buildIntroPublicGuide({
+      moduleTitle: state.room.moduleTitle,
+      maxPlayers: state.room.maxPlayers,
+      moduleJson: jsonData,
+      moduleContext
+    });
+
     const systemMsg = buildIntroSystemPrompt(roomCfg);
     const userMsg = buildIntroUserContext({
       moduleTitle: state.room.moduleTitle,
       maxPlayers: state.room.maxPlayers,
-      moduleContext
+      moduleContext,
+      introGuide
     });
 
     setAiTaskStatus(code, taskUid, 'GENERATING');
@@ -541,9 +555,10 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       }
 
       setAiTaskStatus(code, taskUid, 'VALIDATING');
+      const completedContent = ensureCompleteIntroContent(content.trim(), introGuide);
       const completed = database.updateMessage({
         id: dmMessage.id,
-        content: content.trim() || '（AI 未能生成模组介绍，请房主手动说明。）',
+        content: completedContent || '（AI 未能生成模组介绍，请房主手动说明。）',
         status: 'complete'
       });
       addAiLog(code, { stage: 'intro-completed', taskUid });

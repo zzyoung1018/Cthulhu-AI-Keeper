@@ -93,46 +93,306 @@ export function buildDmUserContext({
 // ============================================================
 // 准备阶段 — 模组介绍 + 角色创建指南
 // ============================================================
+const INTRO_REQUIRED_HEADINGS = [
+  '## 模组简介',
+  '## 玩家公开前提',
+  '## 调查员创建指南',
+  '## 开局场景',
+  '## 注意事项'
+];
+
+function compactValue(value, limit = 260) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
+function listValues(value) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+}
+
+function uniqueValues(values, limit = 12) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    result.push(text);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
+function joinValues(values, fallback = '暂无明确公开信息') {
+  const list = uniqueValues(values);
+  return list.length > 0 ? list.join('、') : fallback;
+}
+
+function objectList(value) {
+  return Array.isArray(value) ? value.filter((item) => item && typeof item === 'object') : [];
+}
+
+function resolveByIds(items, ids, idFields, formatter) {
+  const wanted = new Set(listValues(ids));
+  if (wanted.size === 0) return [];
+  return objectList(items)
+    .filter((item) => idFields.some((field) => wanted.has(String(item[field] || ''))))
+    .map(formatter)
+    .filter(Boolean);
+}
+
+function publicSceneText(scene) {
+  if (!scene) return '';
+  const name = scene.name || scene.scene_id || scene.location_id || scene.map_id || '';
+  const description = scene.player_visible_description || scene.public_description || scene.when_players_enter || '';
+  return [name, compactValue(description, 180)].filter(Boolean).join('：');
+}
+
+function publicNpcText(npc) {
+  if (!npc) return '';
+  const name = npc.name || npc.npc_id || '';
+  // Never use role here; role often contains keeper-only identity such as monster/villain.
+  // Prefer first impression/public description. Some modules put keeper pacing notes in player_visible_info.
+  const description = npc.first_impression || npc.public_description || '';
+  return [name, compactValue(description, 140)].filter(Boolean).join('：');
+}
+
+function publicObjectText(item) {
+  if (!item) return '';
+  const name = item.name || item.asset_id || item.object_id || item.item_id || '';
+  const description = item.player_visible_description || item.public_description || item.description || '';
+  return [name, compactValue(description, 160)].filter(Boolean).join('：');
+}
+
+function collectKnownLocations(moduleJson, opening) {
+  const ids = opening.known_locations || [];
+  return uniqueValues([
+    ...resolveByIds(moduleJson.scenes, ids, ['scene_id', 'id'], publicSceneText),
+    ...resolveByIds(moduleJson.locations, ids, ['location_id', 'id'], publicSceneText),
+    ...resolveByIds(moduleJson.maps, ids, ['map_id', 'id'], publicSceneText)
+  ], 8);
+}
+
+function collectKnownHandouts(moduleJson, opening) {
+  const ids = opening.known_handouts || [];
+  return uniqueValues([
+    ...resolveByIds(moduleJson.visual_assets, ids, ['asset_id', 'id'], publicObjectText),
+    ...resolveByIds(moduleJson.objects, ids, ['object_id', 'asset_id', 'item_id', 'id'], publicObjectText),
+    ...resolveByIds(moduleJson.items_and_equipment, ids, ['item_id', 'id'], publicObjectText)
+  ], 8);
+}
+
+function deriveIntroSkills(moduleJson) {
+  const excluded = new Set(['STR', 'CON', 'SIZ', 'DEX', 'APP', 'INT', 'POW', 'EDU', 'LUCK', 'Luck', '克苏鲁神话']);
+  const preferred = ['侦查', '聆听', '图书馆使用', '心理学', '话术', '说服', '会计', '医学', '急救', '外语', '驾驶汽车', '导航'];
+  const fromChecks = objectList(moduleJson?.checks)
+    .map((check) => String(check.skill || '').trim())
+    .map((skill) => skill === '语言学' ? '外语' : skill)
+    .filter((skill) => !excluded.has(skill))
+    .filter(Boolean);
+  const set = new Set(fromChecks);
+  return uniqueValues([
+    ...preferred.filter((skill) => set.has(skill)),
+    ...fromChecks,
+    ...preferred.slice(0, 5)
+  ], 8);
+}
+
+function deriveOccupationHooks(moduleJson) {
+  const mi = moduleJson?.module_info || {};
+  const text = [
+    mi.setting,
+    mi.location,
+    ...(mi.themes || []),
+    moduleJson?.player_opening?.initial_public_information,
+    moduleJson?.player_opening?.initial_objective
+  ].filter(Boolean).join(' ');
+
+  if (/经济|金融|银行|失业|工会|汽车|底特律/.test(text)) {
+    return ['失业工人或前工会成员', '记者或自由调查员', '私家侦探', '会计/金融从业者', '退伍军人或流浪者'];
+  }
+  if (/政府|统计|人口|乡村|疾病|警|调查组/.test(text)) {
+    return ['政府调查员', '记者', '医生或公共卫生人员', '警员', '民俗/历史研究者'];
+  }
+  return ['记者', '私家侦探', '医生', '学者', '退伍军人'];
+}
+
+function headingTitle(heading) {
+  return String(heading || '').replace(/^#+\s*/, '').trim();
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hasMarkdownHeading(content, heading) {
+  const title = escapeRegExp(headingTitle(heading));
+  return new RegExp(`^#{2,3}\\s*${title}\\s*$`, 'm').test(String(content || ''));
+}
+
+function buildIntroSections(guide) {
+  return {
+    '## 模组简介': [
+      '## 模组简介',
+      `- **时代与地点**：${joinValues([guide.timePeriod, guide.location, guide.setting])}`,
+      `- **氛围主题**：${joinValues([guide.tone, ...guide.themes], '悬疑、调查、未知威胁')}`,
+      `- **游玩规模**：${guide.recommendedPlayers || `${guide.maxPlayers || 5} 名调查员`}；预计时长：${guide.estimatedDuration || '由房主控制'}`
+    ].join('\n'),
+    '## 玩家公开前提': [
+      '## 玩家公开前提',
+      `- ${guide.publicInformation || '调查员收到一项需要共同处理的异常委托。'}`,
+      `- **公开目标**：${guide.objective || '弄清异常事件的原因，并带回足够可靠的答案。'}`,
+      guide.knownNpcs.length ? `- **已知人物**：${guide.knownNpcs.join('；')}` : '',
+      guide.knownLocations.length ? `- **已知地点**：${guide.knownLocations.join('；')}` : '',
+      guide.knownHandouts.length ? `- **已知物件/资料**：${guide.knownHandouts.join('；')}` : ''
+    ].filter(Boolean).join('\n'),
+    '## 调查员创建指南': [
+      '## 调查员创建指南',
+      `- **适合职业**：${guide.occupationHooks.join('、')}。角色应该有足够理由接受委托或参与调查。`,
+      `- **推荐技能**：${guide.recommendedSkills.join('、')}。这些技能能帮助调查、观察、沟通或处理现场证据。`,
+      '- **人物关系**：建议至少给角色写一个现实压力、债务、人情、事业失败或必须赚钱的理由，让他们愿意接下这份不体面的工作。',
+      '- **组队方式**：调查员可以彼此认识，也可以是被同一委托临时聚到一起的人；保持每个人都有发言空间。'
+    ].join('\n'),
+    '## 开局场景': [
+      '## 开局场景',
+      guide.openingText || guide.defaultOpening || '调查员在约定地点集合，委托或异常事件已经摆在眼前。',
+      guide.initialScene ? `\n当前公开场景：${guide.initialScene}` : '',
+      guide.objective ? `\n开局后，玩家需要先确认角色如何回应这项委托，并准备围绕“${guide.objective}”展开调查。` : ''
+    ].filter(Boolean).join('\n\n'),
+    '## 注意事项': [
+      '## 注意事项',
+      '- 不要在准备阶段泄露幕后真相、怪物身份、隐藏反派或结局。',
+      '- 创建角色时必须填写调查员姓名；属性值范围 0-100，建议核心属性不低于 40。',
+      '- 技能默认值已预设，可根据职业调整；所有玩家准备好角色后，房主即可开始游戏。',
+      guide.contentWarnings.length ? `- **内容提醒**：${guide.contentWarnings.join('、')}。` : ''
+    ].filter(Boolean).join('\n')
+  };
+}
+
+export function buildIntroPublicGuide({ moduleTitle, maxPlayers = 5, moduleJson = null, moduleContext = '' } = {}) {
+  const data = moduleJson && typeof moduleJson === 'object' ? moduleJson : {};
+  const mi = data.module_info || {};
+  const opening = data.player_opening || {};
+  const ko = data.keeper_overview || {};
+  const initialScene = objectList(data.scenes).find((scene) => scene.scene_id === opening.initial_scene_id);
+  const knownNpcs = resolveByIds(data.npcs, opening.known_npcs, ['npc_id', 'id'], publicNpcText);
+  const guide = {
+    moduleTitle: mi.title || moduleTitle || '未命名模组',
+    maxPlayers,
+    recommendedPlayers: mi.recommended_players || '',
+    estimatedDuration: mi.estimated_duration || '',
+    timePeriod: mi.time_period || '',
+    location: mi.location || '',
+    setting: mi.setting || '',
+    themes: listValues(mi.themes).slice(0, 8),
+    tone: mi.tone || '',
+    contentWarnings: listValues(mi.content_warnings).slice(0, 8),
+    publicInformation: opening.initial_public_information || '',
+    objective: opening.initial_objective || '',
+    openingText: opening.suggested_intro_text || ko.default_opening || '',
+    defaultOpening: ko.default_opening || '',
+    initialScene: publicSceneText(initialScene),
+    knownNpcs,
+    knownLocations: collectKnownLocations(data, opening),
+    knownHandouts: collectKnownHandouts(data, opening),
+    occupationHooks: deriveOccupationHooks(data),
+    recommendedSkills: deriveIntroSkills(data),
+    sourceContext: compactValue(moduleContext, 2400),
+    requiredHeadings: INTRO_REQUIRED_HEADINGS
+  };
+  const sections = buildIntroSections(guide);
+  const facts = [
+    `标题：${guide.moduleTitle}`,
+    `建议人数：${guide.recommendedPlayers || `${maxPlayers} 人`}`,
+    guide.estimatedDuration ? `预计时长：${guide.estimatedDuration}` : '',
+    guide.timePeriod ? `时代：${guide.timePeriod}` : '',
+    guide.location ? `地点：${guide.location}` : '',
+    guide.setting ? `设定：${guide.setting}` : '',
+    guide.tone ? `氛围：${guide.tone}` : '',
+    guide.themes.length ? `主题：${guide.themes.join('、')}` : '',
+    guide.publicInformation ? `玩家公开前提：${guide.publicInformation}` : '',
+    guide.objective ? `玩家公开目标：${guide.objective}` : '',
+    guide.openingText ? `建议开局文本：${guide.openingText}` : '',
+    guide.initialScene ? `初始场景：${guide.initialScene}` : '',
+    guide.knownNpcs.length ? `玩家已知NPC：${guide.knownNpcs.join('；')}` : '',
+    guide.knownLocations.length ? `玩家已知地点：${guide.knownLocations.join('；')}` : '',
+    guide.knownHandouts.length ? `玩家已知道具/资料：${guide.knownHandouts.join('；')}` : '',
+    guide.recommendedSkills.length ? `可推荐技能：${guide.recommendedSkills.join('、')}` : '',
+    guide.occupationHooks.length ? `可推荐职业方向：${guide.occupationHooks.join('、')}` : '',
+    guide.contentWarnings.length ? `内容提醒：${guide.contentWarnings.join('、')}` : '',
+    guide.sourceContext ? `原始片段摘要：${guide.sourceContext}` : ''
+  ].filter(Boolean).join('\n');
+
+  return {
+    ...guide,
+    sections,
+    fallbackMarkdown: INTRO_REQUIRED_HEADINGS.map((heading) => sections[heading]).filter(Boolean).join('\n\n'),
+    contextText: [
+      '=== 公开开场简报（只能使用玩家可知信息） ===',
+      facts,
+      '',
+      '必须完整覆盖以下标题：',
+      INTRO_REQUIRED_HEADINGS.join('\n')
+    ].filter(Boolean).join('\n')
+  };
+}
+
+export function ensureCompleteIntroContent(content, introGuide) {
+  const guide = introGuide || buildIntroPublicGuide();
+  const text = String(content || '').trim();
+  const sections = guide.sections || buildIntroSections(guide);
+  if (!text) return guide.fallbackMarkdown || INTRO_REQUIRED_HEADINGS.map((heading) => sections[heading]).join('\n\n');
+
+  const missing = (guide.requiredHeadings || INTRO_REQUIRED_HEADINGS)
+    .filter((heading) => !hasMarkdownHeading(text, heading));
+  if (missing.length === 0) return text;
+
+  const additions = missing.map((heading) => sections[heading]).filter(Boolean);
+  return [text, ...additions].filter(Boolean).join('\n\n').trim();
+}
+
 export function buildIntroSystemPrompt(roomCfg = {}) {
   return [
     '你是 CoC Online 的 AI 守秘人（Keeper）。当前房间刚创建，处于准备阶段。',
-    '你的任务是：向即将加入的玩家介绍本次模组，并指导他们创建适合的调查员角色。',
+    '你的任务是：向即将加入的玩家讲清楚本次模组的公开前提、角色应如何接入、第一幕从哪里开始，并指导他们创建适合的调查员角色。',
     '',
-    '请按以下结构输出(使用Markdown格式)：',
+    '必须使用 Markdown，并完整输出以下五个二级标题；任何一个都不能省略，不能只写“模组简介”：',
     '## 模组简介',
-    '- 时代背景、地理位置、整体氛围',
-    '- 调查员的公开身份和调查目标',
-    '',
+    '## 玩家公开前提',
     '## 调查员创建指南',
-    '- 建议的职业方向（列出2-4个适合的职业及理由）',
-    '- 推荐的核心技能（列出5-8个，说明为什么重要）',
-    '- 角色关系建议（调查员之间、或与NPC的关系）',
-    '',
+    '## 开局场景',
     '## 注意事项',
-    '- 创建角色时必须填写调查员姓名',
-    '- 属性值范围0-100，建议核心属性不低于40',
-    '- 技能默认值已预设，可根据职业调整',
-    '- 所有玩家准备好角色后，房主即可开始游戏',
+    '',
+    '每个标题下必须覆盖：',
+    '- 模组简介：时代、地点、类型、氛围。',
+    '- 玩家公开前提：调查员知道什么、为什么会参与、公开目标是什么、已知人物/地点/资料是什么。',
+    '- 调查员创建指南：2-5个职业方向、5-8个推荐技能、角色关系/动机钩子。',
+    '- 开局场景：把模组给出的 suggested_intro_text 或 default_opening 改写成可直接朗读的第一幕，并说明玩家此刻身处何处、面前有什么公开问题。',
+    '- 注意事项：角色卡创建提醒、内容边界提醒、不要泄露秘密。',
     '',
     '重要规则：',
-    '- 不要泄露守秘人秘密、幕后真相或未发现的线索',
+    '- 不要泄露守秘人秘密、幕后真相、未发现的线索、NPC隐藏身份、反派身份或结局。',
+    '- NPC 的 role 字段可能包含隐藏身份；准备阶段不要直接复述 role，只能说玩家公开可见的信息。',
     '- 不要替玩家决定角色的背景故事，只提供建议方向',
-    '- 回复末尾不要列举行动选项（禁止"你们可以…"等句式）',
+    '- 输出长度建议 900-1800 个中文字符；宁可条理清楚，也不要文学化堆砌。',
+    '- 回复末尾不要列举游玩行动选项；准备阶段只说明开局状态和角色创建建议。',
     '- 回复应友好、专业，适合直接展示给所有玩家',
     `叙事风格：${roomCfg.dmStyle || '悬疑、克制，不替玩家做决定'}`,
     `规则严格度：${roomCfg.rulesStrictness || 'STANDARD'}`
   ].join('\n');
 }
 
-export function buildIntroUserContext({ moduleTitle, maxPlayers, moduleContext }) {
+export function buildIntroUserContext({ moduleTitle, maxPlayers, moduleContext, introGuide = null }) {
   return [
     `模组名称：${moduleTitle || '未知模组'}`,
     `游玩人数：${maxPlayers || 5} 人`,
     `系统：Call of Cthulhu 7th Edition`,
     '',
-    moduleContext || '暂无模组内容',
+    introGuide?.contextText || moduleContext || '暂无模组内容',
     '',
-    '请生成准备阶段的模组介绍和角色创建指南。'
+    '请基于上面的公开信息生成准备阶段引入。必须完整覆盖指定五个标题，不要只写世界观简介。'
   ].join('\n');
 }
 

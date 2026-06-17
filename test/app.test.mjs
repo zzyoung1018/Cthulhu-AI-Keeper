@@ -44,6 +44,90 @@ function createModule(database, ownerPlayerId) {
   });
 }
 
+function createIntroJsonModule(database, ownerPlayerId) {
+  const moduleJson = {
+    schema_version: '1.0',
+    module_info: {
+      title: '现实的荒原',
+      system: 'Call of Cthulhu 7th Edition',
+      recommended_players: '1-6名调查员',
+      estimated_duration: '8-20小时',
+      setting: '2008年次贷危机后的美国。',
+      time_period: '2008年末至2009年初',
+      location: '美国底特律郊区一座废弃汽车工会大厅。',
+      themes: ['经济崩溃', '绝望', '现实缺失'],
+      tone: '文学化、压抑、冷幽默。',
+      content_warnings: ['经济危机与失业', '精神崩溃']
+    },
+    player_opening: {
+      initial_public_information: '调查员是被现实碾碎的人。一个富有银行家在底特律近郊酒吧给出现金预付款和一张模糊照片。',
+      initial_scene_id: 'bar_commission',
+      initial_objective: '前往废弃汽车工会大厅，观察空洞，弄清它是什么、是否会扩张、能否填上。',
+      suggested_intro_text: '门口风铃响起，炭灰色西装的中年人把厚厚的牛皮纸信封放在你的桌前。',
+      known_npcs: ['npc_patron'],
+      known_locations: ['bar_commission', 'union_hall_void'],
+      known_handouts: ['asset_blurry_void_photo', 'asset_cash_envelope']
+    },
+    keeper_overview: {
+      truth: '委托人是奈亚拉托提普化身。',
+      investigation_goal: '回答空洞的三个问题。',
+      default_opening: '调查员在底特律近郊酒吧收到委托。'
+    },
+    scenes: [
+      {
+        scene_id: 'bar_commission',
+        name: '底特律近郊酒吧委托',
+        player_visible_description: '即将倒闭的酒吧里，富有银行家用现金信封和模糊照片雇佣绝望中的调查员。'
+      },
+      {
+        scene_id: 'union_hall_void',
+        name: '废弃汽车工会大厅与空洞',
+        player_visible_description: '主厅中央有直径一米的完美球形空缺。'
+      }
+    ],
+    npcs: [
+      {
+        npc_id: 'npc_patron',
+        name: '富有的银行家',
+        role: '委托人，奈亚拉托提普化身'
+      }
+    ],
+    visual_assets: [
+      {
+        asset_id: 'asset_blurry_void_photo',
+        name: '模糊的空洞照片',
+        player_visible_description: '照片里有一个完美圆形空缺，像某物被精确切走。'
+      },
+      {
+        asset_id: 'asset_cash_envelope',
+        name: '预付款牛皮纸信封',
+        player_visible_description: '里面现金大概够调查员生活一周。'
+      }
+    ],
+    checks: [
+      { check_id: 'spot_void', skill: '侦查' },
+      { check_id: 'listen_hall', skill: '聆听' },
+      { check_id: 'read_records', skill: '图书馆使用' }
+    ]
+  };
+
+  return database.createModule({
+    ownerPlayerId,
+    title: moduleJson.module_info.title,
+    originalName: 'lina.json',
+    fileType: 'json',
+    contentType: 'application/json',
+    sizeBytes: 1000,
+    storagePath: '/tmp/lina.json',
+    parsedText: JSON.stringify(moduleJson, null, 2),
+    parseStatus: 'PARSED',
+    segments: [
+      { title: '现实的荒原', scene: '模组概览', content: moduleJson.module_info.setting },
+      { title: '开场信息', scene: '玩家开场', content: moduleJson.player_opening.initial_public_information }
+    ]
+  });
+}
+
 function characterSheet() {
   return {
     investigator: { name: '林娜', occupation: '记者' },
@@ -119,6 +203,85 @@ async function startFakeAiServer(responseText, { chunkDelayMs = 0 } = {}) {
     close: () => new Promise((resolveClose) => server.close(resolveClose))
   };
 }
+
+test('module intro fills missing public premise, character guidance, and opening scene', async () => {
+  const fakeAi = await startFakeAiServer([
+    '## 模组简介',
+    '',
+    '2008年末，底特律正在经济危机中下沉。'
+  ].join('\n'));
+  const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
+  const app = createApp({
+    config: {
+      dbPath: join(dir, 'test.db'),
+      dataDir: dir,
+      publicDir: resolve('public'),
+      ai: {
+        baseUrl: fakeAi.baseUrl,
+        apiKey: 'test-key',
+        model: 'test-model',
+        temperature: 0.1,
+        timeoutMs: 10_000,
+        localFallback: false
+      }
+    },
+    publicDir: resolve('public')
+  });
+
+  try {
+    const baseUrl = await new Promise((resolveListen) => {
+      app.server.listen(0, '127.0.0.1', () => {
+        const address = app.server.address();
+        resolveListen(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    const module = createIntroJsonModule(app.database, 'keeper');
+    const created = await jsonRequest(baseUrl, '/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'keeper',
+        displayName: 'Keeper',
+        roomName: 'Intro Room',
+        moduleId: module.id
+      })
+    });
+
+    const queued = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/start-intro`, {
+      method: 'POST',
+      body: JSON.stringify({ playerId: 'keeper' })
+    });
+    assert.equal(queued.created, true);
+
+    const state = await waitForState(
+      baseUrl,
+      created.room.code,
+      'keeper',
+      (roomState) => roomState.aiTasks.some((task) => task.uid === queued.task.uid && task.status === 'COMPLETED')
+    );
+
+    const intro = state.messages.find((message) => message.displayName === 'AI 守秘人');
+    assert.ok(intro);
+    assert.match(intro.content, /## 模组简介/);
+    assert.match(intro.content, /## 玩家公开前提/);
+    assert.match(intro.content, /## 调查员创建指南/);
+    assert.match(intro.content, /## 开局场景/);
+    assert.match(intro.content, /前往废弃汽车工会大厅/);
+    assert.match(intro.content, /炭灰色西装/);
+    assert.match(intro.content, /预付款牛皮纸信封/);
+    assert.doesNotMatch(intro.content, /奈亚拉托提普化身/);
+    assert.ok(fakeAi.requests[0].body.messages.some((message) =>
+      message.role === 'user' &&
+      /公开开场简报/.test(message.content) &&
+      /必须完整覆盖以下标题/.test(message.content)
+    ));
+  } finally {
+    await new Promise((resolveClose) => app.server.close(resolveClose));
+    app.database.close();
+    await fakeAi.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('skill rolls use the server-side character sheet target', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
