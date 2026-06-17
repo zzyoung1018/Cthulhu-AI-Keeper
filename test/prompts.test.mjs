@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import {
   buildIntroPublicGuide,
   buildIntroSystemPrompt,
-  ensureCompleteIntroContent
+  buildOpeningSceneSystemPrompt,
+  buildOpeningSceneUserContext,
+  ensureCompleteIntroContent,
+  ensureOpeningSceneContent
 } from '../src/prompts.js';
 
 const INTRO_MODULE = {
@@ -76,7 +79,8 @@ test('intro prompt requires complete public opening sections', () => {
   const prompt = buildIntroSystemPrompt();
   assert.match(prompt, /不能只写“模组简介”/);
   assert.match(prompt, /## 玩家公开前提/);
-  assert.match(prompt, /## 开局场景/);
+  assert.doesNotMatch(prompt, /^## 开局场景$/m);
+  assert.match(prompt, /不要输出“## 开局场景”/);
   assert.match(prompt, /NPC 的 role 字段可能包含隐藏身份/);
   assert.match(prompt, /不可改写的公开事实/);
   assert.match(prompt, /球形空缺\/完美的无\/现实缺了一块/);
@@ -91,6 +95,7 @@ test('buildIntroPublicGuide extracts public opening without leaking hidden NPC r
   assert.match(guide.contextText, /不可改写的公开事实/);
   assert.match(guide.contextText, /直径一米的完美球形空缺/);
   assert.match(guide.contextText, /侦查、聆听、图书馆使用/);
+  assert.doesNotMatch(guide.contextText, /建议开场文本/);
   assert.doesNotMatch(guide.contextText, /奈亚拉托提普化身/);
 });
 
@@ -105,10 +110,9 @@ test('ensureCompleteIntroContent appends missing opening sections from module JS
   assert.match(completed, /## 模组简介/);
   assert.match(completed, /## 玩家公开前提/);
   assert.match(completed, /## 调查员创建指南/);
-  assert.match(completed, /## 开局场景/);
+  assert.doesNotMatch(completed, /## 开局场景/);
   assert.match(completed, /前往废弃汽车工会大厅/);
   assert.match(completed, /直径一米的完美球形空缺/);
-  assert.match(completed, /炭灰色西装/);
   assert.doesNotMatch(completed, /球形凹陷|凹陷|坑洞|黑洞/);
   assert.doesNotMatch(completed, /奈亚拉托提普化身/);
 });
@@ -129,6 +133,32 @@ test('ensureCompleteIntroContent repairs core anomaly term drift even when headi
   ].join('\n\n');
 
   const completed = ensureCompleteIntroContent(driftedIntro, guide);
+  assert.match(completed, /直径一米的完美球形空缺/);
+  assert.doesNotMatch(completed, /## 开局场景/);
+  assert.doesNotMatch(completed, /炭灰色西装的中年人把信封放在桌上/);
+  assert.doesNotMatch(completed, /球形凹陷|直径约一米/);
+});
+
+test('opening scene prompt uses opening text only after play starts', () => {
+  const guide = buildIntroPublicGuide({ moduleJson: INTRO_MODULE, moduleTitle: '现实的荒原', maxPlayers: 5 });
+  const prompt = buildOpeningSceneSystemPrompt();
+  const context = buildOpeningSceneUserContext({ moduleTitle: '现实的荒原', maxPlayers: 5, introGuide: guide });
+  assert.match(prompt, /刚从准备阶段进入游玩阶段/);
+  assert.match(context, /建议开场文本/);
+  assert.match(context, /炭灰色西装/);
+  assert.match(context, /直径一米的完美球形空缺/);
+});
+
+test('ensureOpeningSceneContent removes prep headings and repairs anomaly drift', () => {
+  const guide = buildIntroPublicGuide({ moduleJson: INTRO_MODULE, moduleTitle: '现实的荒原', maxPlayers: 5 });
+  const content = [
+    '## 模组简介',
+    '这不是准备简报。',
+    '## 开局场景',
+    '底特律郊区出现了直径约一米的完美球形凹陷。'
+  ].join('\n\n');
+  const completed = ensureOpeningSceneContent(content, guide);
+  assert.doesNotMatch(completed, /## 模组简介|## 玩家公开前提|## 调查员创建指南|## 注意事项/);
   assert.match(completed, /直径一米的完美球形空缺/);
   assert.doesNotMatch(completed, /球形凹陷|直径约一米/);
 });

@@ -9,8 +9,11 @@ import {
   buildIntroPublicGuide,
   buildIntroSystemPrompt,
   buildIntroUserContext,
+  buildOpeningSceneSystemPrompt,
+  buildOpeningSceneUserContext,
   buildStructuredOutputPrompt,
-  ensureCompleteIntroContent
+  ensureCompleteIntroContent,
+  ensureOpeningSceneContent
 } from './prompts.js';
 import { RoomAiQueue } from './aiQueue.js';
 import { assertAiSettingsInput, roomRuntimeAiConfig } from './aiSettings.js';
@@ -449,12 +452,13 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     queue.enqueue(room.id, () => generateModuleIntro(code, taskUid));
   }
 
-  async function generateModuleIntro(code, taskUid) {
-    setAiTaskStatus(code, taskUid, 'RETRIEVING');
+  function enqueueOpeningScene(code, taskUid) {
+    const { room } = database.getRoomState(code, 1);
+    queue.enqueue(room.id, () => generateOpeningScene(code, taskUid));
+  }
 
-    const state = database.getRoomState(code, 80);
-    const roomCfg = state.room.aiConfig || {};
-    const moduleSegments = database.getRoomModuleSegments(code, 40);
+  function loadPublicModuleGuide(code, state, { segmentLimit = 40, includeOpening = false } = {}) {
+    const moduleSegments = database.getRoomModuleSegments(code, segmentLimit);
 
     // Try to extract structured JSON module data
     let jsonData = null;
@@ -475,11 +479,9 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     if (jsonData) {
       const mi = jsonData.module_info || {};
       const po = jsonData.player_opening || {};
-      const ko = jsonData.keeper_overview || {};
-      const rules = jsonData.ai_dm_global_rules || {};
 
       moduleContext = [
-        '=== 模组结构化信息 ===',
+        '=== 模组玩家公开结构化信息 ===',
         `标题：${mi.title || state.room.moduleTitle}`,
         mi.time_period ? `时代：${mi.time_period}` : '',
         mi.location ? `地点：${mi.location}` : '',
@@ -492,18 +494,13 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         '',
         po.initial_public_information ? `=== 玩家公开信息 ===\n${po.initial_public_information}` : '',
         po.initial_objective ? `初始目标：${po.initial_objective}` : '',
-        po.suggested_intro_text ? `建议开场文本：${po.suggested_intro_text}` : '',
+        includeOpening && po.suggested_intro_text ? `建议开场文本：${po.suggested_intro_text}` : '',
         po.known_npcs?.length ? `已知NPC：${po.known_npcs.join('、')}` : '',
         po.known_locations?.length ? `已知地点：${po.known_locations.join('、')}` : '',
-        '',
-        ko.investigation_goal ? `调查目标：${ko.investigation_goal}` : '',
-        ko.default_opening ? `默认开场方式：${ko.default_opening}` : '',
-        '',
-        rules.style ? `AI风格要求：叙述长度=${rules.style.narration_length || ''}, 语气=${rules.style.tone || ''}` : '',
-        rules.must_follow?.length ? `AI必须遵守：\n${rules.must_follow.map((r, i) => `${i + 1}. ${r}`).join('\n')}` : '',
+        po.known_handouts?.length ? `已知资料/物件：${po.known_handouts.join('、')}` : ''
       ].filter(Boolean).join('\n');
     } else {
-      moduleContext = moduleSegments.slice(0, 8)
+      moduleContext = moduleSegments.slice(0, includeOpening ? 10 : 8)
         .map((s) => `[${s.scene || s.title}]\n${s.content}`).join('\n\n');
     }
 
@@ -512,6 +509,19 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       maxPlayers: state.room.maxPlayers,
       moduleJson: jsonData,
       moduleContext
+    });
+
+    return { jsonData, moduleContext, introGuide };
+  }
+
+  async function generateModuleIntro(code, taskUid) {
+    setAiTaskStatus(code, taskUid, 'RETRIEVING');
+
+    const state = database.getRoomState(code, 80);
+    const roomCfg = state.room.aiConfig || {};
+    const { moduleContext, introGuide } = loadPublicModuleGuide(code, state, {
+      segmentLimit: 40,
+      includeOpening: false
     });
 
     const systemMsg = buildIntroSystemPrompt(roomCfg);
@@ -572,6 +582,79 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         status: 'error'
       });
       setAiTaskStatus(code, taskUid, 'FAILED', publicError(error));
+      hub.broadcast(code, 'message_error', { message: failed });
+    }
+  }
+
+  async function generateOpeningScene(code, taskUid) {
+    setAiTaskStatus(code, taskUid, 'RETRIEVING');
+
+    const state = database.getRoomState(code, 80);
+    const roomCfg = state.room.aiConfig || {};
+    const { moduleContext, introGuide } = loadPublicModuleGuide(code, state, {
+      segmentLimit: 40,
+      includeOpening: true
+    });
+
+    const systemMsg = buildOpeningSceneSystemPrompt(roomCfg);
+    const userMsg = buildOpeningSceneUserContext({
+      moduleTitle: state.room.moduleTitle,
+      maxPlayers: state.room.maxPlayers,
+      moduleContext,
+      introGuide
+    });
+
+    setAiTaskStatus(code, taskUid, 'GENERATING');
+    const dmMessage = database.createMessage({
+      code,
+      authorType: 'dm',
+      messageType: 'AI_DM',
+      displayName: 'AI DM',
+      content: '',
+      status: 'streaming'
+    });
+    broadcastAiTask(code, database.attachAiTaskMessage({ taskUid, messageId: dmMessage.id }));
+    hub.broadcast(code, 'message_created', { message: dmMessage });
+    setAiTaskStatus(code, taskUid, 'STREAMING');
+
+    let content = '';
+    let lastPersistedAt = Date.now();
+
+    try {
+      const taskAiConfig = roomRuntimeAiConfig(config.ai, database.getRoomAiSettings(code));
+      for await (const chunk of streamChatCompletion(taskAiConfig, [
+        { role: 'system', content: systemMsg },
+        { role: 'user', content: userMsg }
+      ])) {
+        assertTaskNotCancelled(taskUid);
+        content += chunk;
+        hub.broadcast(code, 'message_delta', { id: dmMessage.id, delta: chunk, content });
+
+        if (Date.now() - lastPersistedAt > 750) {
+          database.updateMessage({ id: dmMessage.id, content, status: 'streaming' });
+          lastPersistedAt = Date.now();
+        }
+      }
+
+      setAiTaskStatus(code, taskUid, 'VALIDATING');
+      const openingContent = ensureOpeningSceneContent(content.trim(), introGuide);
+      const completed = database.updateMessage({
+        id: dmMessage.id,
+        content: openingContent,
+        status: 'complete'
+      });
+      addAiLog(code, { stage: 'opening-completed', taskUid });
+      setAiTaskStatus(code, taskUid, 'COMPLETED');
+      hub.broadcast(code, 'message_completed', { message: completed });
+    } catch (error) {
+      const cancelled = error instanceof AiTaskCancelled;
+      addAiLog(code, { stage: 'opening-failed', taskUid, cancelled, error: publicError(error) });
+      const failed = database.updateMessage({
+        id: dmMessage.id,
+        content: `${content}\n\n[AI 开场${cancelled ? '已取消' : '生成失败：' + publicError(error)}]`.trim(),
+        status: 'error'
+      });
+      setAiTaskStatus(code, taskUid, cancelled ? 'CANCELLED' : 'FAILED', cancelled ? '' : publicError(error));
       hub.broadcast(code, 'message_error', { message: failed });
     }
   }
@@ -792,16 +875,31 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       if (request.method === 'PATCH' && parts[3] === 'status') {
         const body = await readJson(request);
         const playerId = assertString(body.playerId, 'playerId', 80);
+        const nextStatus = assertString(body.status, 'status', 20);
+        const beforeState = database.getRoomState(code, 1);
         const room = database.setRoomStatus({
           code,
           playerId,
-          status: assertString(body.status, 'status', 20)
+          status: nextStatus
         });
         const message = createSystemMessage(code, `房间状态变更为：${STATUS_LABELS[room.status] || room.status}`);
+        let openingTask = null;
+        let openingCreated = false;
+        if (beforeState.room.status === 'PREPARING' && room.status === 'ACTIVE') {
+          const result = database.createAiTask({
+            code,
+            playerId,
+            idempotencyKey: `opening:${code}`
+          });
+          openingTask = result.task;
+          openingCreated = result.created;
+          broadcastAiTask(code, openingTask);
+        }
         const state = database.getRoomState(code);
         hub.broadcast(code, 'room_state', state);
         hub.broadcast(code, 'message_created', { message });
-        sendJson(response, 200, { ...state, message });
+        if (openingTask && openingCreated) enqueueOpeningScene(code, openingTask.uid);
+        sendJson(response, 200, { ...state, message, openingTask, openingCreated });
         return;
       }
 

@@ -161,6 +161,29 @@ async function waitForState(baseUrl, code, playerId, predicate, timeoutMs = 3000
   throw new Error(`Timed out waiting for room state. Latest task: ${JSON.stringify(latest?.activeAiTask || null)}`);
 }
 
+async function activateRoom(baseUrl, code, playerId) {
+  const payload = await jsonRequest(baseUrl, `/api/rooms/${code}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ playerId, status: 'ACTIVE' })
+  });
+  if (payload.openingTask) {
+    await waitForState(
+      baseUrl,
+      code,
+      playerId,
+      (roomState) => roomState.aiTasks.some((task) =>
+        task.uid === payload.openingTask.uid &&
+        ['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status)
+      )
+    );
+  }
+  return payload;
+}
+
+function findAiRequest(requests, predicate) {
+  return requests.find((request) => predicate(request.body.messages || []));
+}
+
 async function waitForPredicate(predicate, timeoutMs = 3000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -172,10 +195,12 @@ async function waitForPredicate(predicate, timeoutMs = 3000) {
 
 async function startFakeAiServer(responseText, { chunkDelayMs = 0 } = {}) {
   const requests = [];
-  const encoderChunks = String(responseText).match(/.{1,24}/gs) || [''];
+  const responses = Array.isArray(responseText) ? responseText.map(String) : [String(responseText)];
   const server = createServer(async (request, response) => {
     let body = '';
     for await (const chunk of request) body += chunk;
+    const responseTextForRequest = responses[Math.min(requests.length, responses.length - 1)] || '';
+    const encoderChunks = responseTextForRequest.match(/.{1,24}/gs) || [''];
     requests.push({ url: request.url, method: request.method, body: JSON.parse(body || '{}') });
 
     response.writeHead(200, {
@@ -204,7 +229,7 @@ async function startFakeAiServer(responseText, { chunkDelayMs = 0 } = {}) {
   };
 }
 
-test('module intro fills missing public premise, character guidance, and opening scene', async () => {
+test('module intro fills missing public premise and character guidance without opening scene', async () => {
   const fakeAi = await startFakeAiServer([
     '## 模组简介',
     '',
@@ -265,10 +290,9 @@ test('module intro fills missing public premise, character guidance, and opening
     assert.match(intro.content, /## 模组简介/);
     assert.match(intro.content, /## 玩家公开前提/);
     assert.match(intro.content, /## 调查员创建指南/);
-    assert.match(intro.content, /## 开局场景/);
+    assert.doesNotMatch(intro.content, /## 开局场景/);
     assert.match(intro.content, /前往废弃汽车工会大厅/);
     assert.match(intro.content, /直径一米的完美球形空缺/);
-    assert.match(intro.content, /炭灰色西装/);
     assert.match(intro.content, /预付款牛皮纸信封/);
     assert.doesNotMatch(intro.content, /球形凹陷|凹陷|坑洞|黑洞/);
     assert.doesNotMatch(intro.content, /奈亚拉托提普化身/);
@@ -276,7 +300,97 @@ test('module intro fills missing public premise, character guidance, and opening
       message.role === 'user' &&
       /公开开场简报/.test(message.content) &&
       /必须完整覆盖以下标题/.test(message.content) &&
-      /直径一米的完美球形空缺/.test(message.content)
+      /直径一米的完美球形空缺/.test(message.content) &&
+      !/建议开场文本/.test(message.content)
+    ));
+  } finally {
+    await new Promise((resolveClose) => app.server.close(resolveClose));
+    app.database.close();
+    await fakeAi.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('starting the game automatically queues the opening scene', async () => {
+  const fakeAi = await startFakeAiServer('门口风铃响起，炭灰色西装的中年人把信封放下。照片里提到的地方，在西边七英里的工会大厅中呈现为直径约一米的完美球形凹陷。');
+  const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
+  const app = createApp({
+    config: {
+      dbPath: join(dir, 'test.db'),
+      dataDir: dir,
+      publicDir: resolve('public'),
+      ai: {
+        baseUrl: fakeAi.baseUrl,
+        apiKey: 'test-key',
+        model: 'test-model',
+        temperature: 0.1,
+        timeoutMs: 10_000,
+        localFallback: false
+      }
+    },
+    publicDir: resolve('public')
+  });
+
+  try {
+    const baseUrl = await new Promise((resolveListen) => {
+      app.server.listen(0, '127.0.0.1', () => {
+        const address = app.server.address();
+        resolveListen(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    const module = createIntroJsonModule(app.database, 'keeper');
+    const created = await jsonRequest(baseUrl, '/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'keeper',
+        displayName: 'Keeper',
+        roomName: 'Opening Room',
+        moduleId: module.id
+      })
+    });
+
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/character`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        playerId: 'keeper',
+        displayName: 'Keeper',
+        characterSheet: characterSheet()
+      })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/ready`, {
+      method: 'PATCH',
+      body: JSON.stringify({ playerId: 'keeper', isReady: true })
+    });
+
+    const started = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ playerId: 'keeper', status: 'ACTIVE' })
+    });
+    assert.equal(started.openingCreated, true);
+    assert.ok(started.openingTask);
+
+    const state = await waitForState(
+      baseUrl,
+      created.room.code,
+      'keeper',
+      (roomState) => roomState.aiTasks.some((task) => task.uid === started.openingTask.uid && task.status === 'COMPLETED')
+    );
+
+    const opening = state.messages.find((message) => message.displayName === 'AI DM');
+    assert.ok(opening);
+    assert.match(opening.content, /炭灰色西装/);
+    assert.match(opening.content, /直径一米的完美球形空缺/);
+    assert.doesNotMatch(opening.content, /球形凹陷|直径约一米/);
+    assert.ok(fakeAi.requests[0].body.messages.some((message) =>
+      message.role === 'system' &&
+      /刚从准备阶段进入游玩阶段/.test(message.content) &&
+      /不要输出 structured JSON/.test(message.content)
+    ));
+    assert.ok(fakeAi.requests[0].body.messages.some((message) =>
+      message.role === 'user' &&
+      /建议开场文本/.test(message.content) &&
+      /炭灰色西装/.test(message.content)
     ));
   } finally {
     await new Promise((resolveClose) => app.server.close(resolveClose));
@@ -329,10 +443,7 @@ test('skill rolls use the server-side character sheet target', async () => {
       method: 'PATCH',
       body: JSON.stringify({ playerId: 'p1', isReady: true })
     });
-    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ playerId: 'p1', status: 'ACTIVE' })
-    });
+    await activateRoom(baseUrl, created.room.code, 'p1');
 
     const rolled = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/rolls`, {
       method: 'POST',
@@ -454,7 +565,7 @@ test('AI required_checks are executed as server-side rolls', async () => {
     }, null, 2),
     '```'
   ].join('\n');
-  const fakeAi = await startFakeAiServer(aiText);
+  const fakeAi = await startFakeAiServer(['开场叙事。', aiText]);
   const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
   const app = createApp({
     config: {
@@ -504,12 +615,9 @@ test('AI required_checks are executed as server-side rolls', async () => {
       method: 'PATCH',
       body: JSON.stringify({ playerId: 'p1', isReady: true })
     });
-    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ playerId: 'p1', status: 'ACTIVE' })
-    });
+    await activateRoom(baseUrl, created.room.code, 'p1');
 
-    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
+    const submitted = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
       method: 'POST',
       body: JSON.stringify({
         playerId: 'p1',
@@ -522,14 +630,15 @@ test('AI required_checks are executed as server-side rolls', async () => {
       baseUrl,
       created.room.code,
       'p1',
-      (roomState) => roomState.aiTasks.some((task) => task.status === 'COMPLETED')
+      (roomState) => roomState.aiTasks.some((task) => task.uid === submitted.aiTask.uid && task.status === 'COMPLETED')
     );
 
-    assert.equal(fakeAi.requests.length, 1);
-    assert.equal(fakeAi.requests[0].url, '/v1/chat/completions');
-    assert.ok(fakeAi.requests[0].body.messages.some((message) =>
+    assert.equal(fakeAi.requests.length, 2);
+    const structuredRequest = findAiRequest(fakeAi.requests, (messages) => messages.some((message) =>
       message.role === 'system' && /required_checks/.test(message.content) && /JSON\.parse/.test(message.content)
     ));
+    assert.ok(structuredRequest);
+    assert.equal(structuredRequest.url, '/v1/chat/completions');
 
     const roll = state.diceRolls.find((item) => item.label === '侦查');
     assert.ok(roll);
@@ -555,7 +664,10 @@ test('AI required_checks are executed as server-side rolls', async () => {
 });
 
 test('preflight required checks roll before AI continuation', async () => {
-  const fakeAi = await startFakeAiServer('骰点结果出来后，书桌下沿的划痕显得更清楚。\n\n```json\n{}\n```');
+  const fakeAi = await startFakeAiServer([
+    '开场叙事。',
+    '骰点结果出来后，书桌下沿的划痕显得更清楚。\n\n```json\n{}\n```'
+  ]);
   const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
   const app = createApp({
     config: {
@@ -605,10 +717,7 @@ test('preflight required checks roll before AI continuation', async () => {
       method: 'PATCH',
       body: JSON.stringify({ playerId: 'p1', isReady: true })
     });
-    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ playerId: 'p1', status: 'ACTIVE' })
-    });
+    await activateRoom(baseUrl, created.room.code, 'p1');
 
     const submitted = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
       method: 'POST',
@@ -630,10 +739,11 @@ test('preflight required checks roll before AI continuation', async () => {
       (roomState) => roomState.aiTasks.some((task) => task.uid === submitted.aiTask.uid && task.status === 'COMPLETED')
     );
 
-    assert.equal(fakeAi.requests.length, 1);
-    assert.ok(fakeAi.requests[0].body.messages.some((message) =>
+    assert.equal(fakeAi.requests.length, 2);
+    const continuationRequest = findAiRequest(fakeAi.requests, (messages) => messages.some((message) =>
       message.role === 'system' && /检定结果后的继续叙事/.test(message.content)
     ));
+    assert.ok(continuationRequest);
 
     const rolls = state.diceRolls.filter((roll) => roll.label === '侦查');
     assert.equal(rolls.length, 1);
@@ -657,7 +767,9 @@ test('preflight required checks roll before AI continuation', async () => {
 
     assert.equal(rolledBack.rolledBack, true);
     assert.equal(rolledBack.messages.some((message) => message.displayName === '必要检定'), false);
-    assert.equal(rolledBack.messages.some((message) => message.authorType === 'dm'), false);
+    assert.equal(rolledBack.messages.some((message) =>
+      message.authorType === 'dm' && /骰点结果出来后/.test(message.content)
+    ), false);
     assert.equal(rolledBack.diceRolls.some((roll) => roll.label === '侦查'), false);
   } finally {
     await new Promise((resolveClose) => app.server.close(resolveClose));
@@ -668,7 +780,10 @@ test('preflight required checks roll before AI continuation', async () => {
 });
 
 test('regenerating a preflighted task keeps check continuation context', async () => {
-  const fakeAi = await startFakeAiServer('骰点结果被重新整理成更清晰的叙事。\n\n```json\n{}\n```');
+  const fakeAi = await startFakeAiServer([
+    '开场叙事。',
+    '骰点结果被重新整理成更清晰的叙事。\n\n```json\n{}\n```'
+  ]);
   const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
   const app = createApp({
     config: {
@@ -718,10 +833,7 @@ test('regenerating a preflighted task keeps check continuation context', async (
       method: 'PATCH',
       body: JSON.stringify({ playerId: 'p1', isReady: true })
     });
-    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ playerId: 'p1', status: 'ACTIVE' })
-    });
+    await activateRoom(baseUrl, created.room.code, 'p1');
 
     const submitted = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
       method: 'POST',
@@ -753,8 +865,8 @@ test('regenerating a preflighted task keeps check continuation context', async (
       )
     );
 
-    assert.equal(fakeAi.requests.length, 2);
-    assert.ok(fakeAi.requests[1].body.messages.some((message) =>
+    assert.equal(fakeAi.requests.length, 3);
+    assert.ok(fakeAi.requests[2].body.messages.some((message) =>
       message.role === 'system' && /检定结果后的继续叙事/.test(message.content)
     ));
     assert.equal(state.messages.filter((message) => message.displayName === '必要检定').length, 1);
@@ -767,7 +879,10 @@ test('regenerating a preflighted task keeps check continuation context', async (
 });
 
 test('preflight opposed checks use recent NPC context before AI narration', async () => {
-  const fakeAi = await startFakeAiServer('检定结果让陈友的态度出现了细微变化。\n\n```json\n{}\n```');
+  const fakeAi = await startFakeAiServer([
+    '开场叙事。',
+    '检定结果让陈友的态度出现了细微变化。\n\n```json\n{}\n```'
+  ]);
   const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
   const app = createApp({
     config: {
@@ -817,10 +932,7 @@ test('preflight opposed checks use recent NPC context before AI narration', asyn
       method: 'PATCH',
       body: JSON.stringify({ playerId: 'p1', isReady: true })
     });
-    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ playerId: 'p1', status: 'ACTIVE' })
-    });
+    await activateRoom(baseUrl, created.room.code, 'p1');
 
     app.database.createMessage({
       code: created.room.code,
@@ -850,9 +962,10 @@ test('preflight opposed checks use recent NPC context before AI narration', asyn
       (roomState) => roomState.aiTasks.some((task) => task.uid === submitted.aiTask.uid && task.status === 'COMPLETED')
     );
 
-    assert.ok(fakeAi.requests[0].body.messages.some((message) =>
+    const continuationRequest = findAiRequest(fakeAi.requests, (messages) => messages.some((message) =>
       message.role === 'system' && /检定结果后的继续叙事/.test(message.content)
     ));
+    assert.ok(continuationRequest);
 
     const opposedRolls = state.diceRolls.filter((roll) => roll.rollType === 'contested_check');
     assert.equal(opposedRolls.length, 1);
@@ -875,7 +988,10 @@ test('preflight opposed checks use recent NPC context before AI narration', asyn
 
 test('queued actions run preflight checks when their AI turn starts', async () => {
   const fakeAi = await startFakeAiServer(
-    '检定结果推动场景继续发展，AI 根据服务器骰点补上后续叙事。\n\n```json\n{}\n```',
+    [
+      '开场叙事。',
+      '检定结果推动场景继续发展，AI 根据服务器骰点补上后续叙事。\n\n```json\n{}\n```'
+    ],
     { chunkDelayMs: 60 }
   );
   const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
@@ -927,10 +1043,7 @@ test('queued actions run preflight checks when their AI turn starts', async () =
       method: 'PATCH',
       body: JSON.stringify({ playerId: 'p1', isReady: true })
     });
-    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ playerId: 'p1', status: 'ACTIVE' })
-    });
+    await activateRoom(baseUrl, created.room.code, 'p1');
 
     const first = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
       method: 'POST',
@@ -940,7 +1053,7 @@ test('queued actions run preflight checks when their AI turn starts', async () =
         content: '我仔细侦查房间，检查书桌下面有没有隐藏痕迹。'
       })
     });
-    await waitForPredicate(() => fakeAi.requests.length === 1);
+    await waitForPredicate(() => fakeAi.requests.length === 2);
 
     const second = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
       method: 'POST',
@@ -960,7 +1073,7 @@ test('queued actions run preflight checks when their AI turn starts', async () =
       created.room.code,
       'p1',
       (roomState) =>
-        fakeAi.requests.length === 2 &&
+        fakeAi.requests.length === 3 &&
         roomState.aiTasks.filter((task) =>
           [first.aiTask.uid, second.aiTask.uid].includes(task.uid) &&
           task.status === 'COMPLETED'
@@ -978,10 +1091,10 @@ test('queued actions run preflight checks when their AI turn starts', async () =
     const secondTask = state.aiTasks.find((task) => task.uid === second.aiTask.uid);
     assert.equal(firstTask.triggerMessageId, spotHidden.id);
     assert.equal(secondTask.triggerMessageId, listenHallway.id);
-    assert.ok(fakeAi.requests[0].body.messages.some((message) =>
+    assert.ok(fakeAi.requests[1].body.messages.some((message) =>
       message.role === 'system' && /检定结果后的继续叙事/.test(message.content)
     ));
-    assert.ok(fakeAi.requests[1].body.messages.some((message) =>
+    assert.ok(fakeAi.requests[2].body.messages.some((message) =>
       message.role === 'system' && /检定结果后的继续叙事/.test(message.content)
     ));
 
@@ -1000,7 +1113,10 @@ test('queued actions run preflight checks when their AI turn starts', async () =
 });
 
 test('continue endpoint queues AI without creating a visible player action', async () => {
-  const fakeAi = await startFakeAiServer('陈友看着刚才的检定结果，态度随之改变。\n\n```json\n{}\n```');
+  const fakeAi = await startFakeAiServer([
+    '开场叙事。',
+    '陈友看着刚才的检定结果，态度随之改变。\n\n```json\n{}\n```'
+  ]);
   const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
   const app = createApp({
     config: {
@@ -1050,10 +1166,7 @@ test('continue endpoint queues AI without creating a visible player action', asy
       method: 'PATCH',
       body: JSON.stringify({ playerId: 'p1', isReady: true })
     });
-    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ playerId: 'p1', status: 'ACTIVE' })
-    });
+    await activateRoom(baseUrl, created.room.code, 'p1');
 
     const checkMessage = app.database.createMessage({
       code: created.room.code,
@@ -1077,13 +1190,14 @@ test('continue endpoint queues AI without creating a visible player action', asy
       baseUrl,
       created.room.code,
       'p1',
-      (roomState) => roomState.aiTasks.some((task) => task.status === 'COMPLETED')
+      (roomState) => roomState.aiTasks.some((task) => task.uid === queued.aiTask.uid && task.status === 'COMPLETED')
     );
 
-    assert.equal(fakeAi.requests.length, 1);
-    assert.ok(fakeAi.requests[0].body.messages.some((message) =>
+    assert.equal(fakeAi.requests.length, 2);
+    const continuationRequest = findAiRequest(fakeAi.requests, (messages) => messages.some((message) =>
       message.role === 'system' && /检定结果后的继续叙事/.test(message.content)
     ));
+    assert.ok(continuationRequest);
     assert.equal(state.messages.some((message) =>
       message.authorType === 'player' &&
       message.messageType === 'ACTION' &&

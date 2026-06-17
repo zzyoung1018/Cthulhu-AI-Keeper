@@ -2529,6 +2529,12 @@ async function changeRoomStatus(status) {
     });
     state.room = payload.room;
     state.participants = payload.participants || state.participants;
+    state.aiTasks = payload.aiTasks || state.aiTasks;
+    state.activeAiTask = payload.activeAiTask || findActiveAiTask(state.aiTasks);
+    if (payload.openingTask && !state.aiTasks.some((task) => task.uid === payload.openingTask.uid)) {
+      state.aiTasks.push(payload.openingTask);
+      state.activeAiTask = findActiveAiTask(state.aiTasks);
+    }
     const self = selfFromParticipants(state.participants);
     if (self) state.participant = self;
     render();

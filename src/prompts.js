@@ -97,9 +97,10 @@ const INTRO_REQUIRED_HEADINGS = [
   '## 模组简介',
   '## 玩家公开前提',
   '## 调查员创建指南',
-  '## 开局场景',
   '## 注意事项'
 ];
+
+const INTRO_DISALLOWED_HEADINGS = ['开局场景'];
 
 function compactValue(value, limit = 260) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
@@ -200,9 +201,6 @@ function deriveCriticalPublicFacts(guide) {
   const candidates = [
     guide.publicInformation,
     guide.objective,
-    guide.openingText,
-    guide.defaultOpening,
-    guide.initialScene,
     ...guide.knownLocations,
     ...guide.knownHandouts
   ].flatMap(splitPublicFacts);
@@ -288,6 +286,23 @@ function hasMarkdownHeading(content, heading) {
   return new RegExp(`^#{2,3}\\s*${title}\\s*$`, 'm').test(String(content || ''));
 }
 
+function stripMarkdownSections(content, titlesToStrip = []) {
+  const wanted = new Set(titlesToStrip.map((title) => String(title || '').trim()).filter(Boolean));
+  if (wanted.size === 0) return String(content || '');
+  const lines = String(content || '').split(/\r?\n/);
+  const kept = [];
+  let skipping = false;
+  for (const line of lines) {
+    const match = line.match(/^#{2,3}\s*(.+?)\s*$/);
+    if (match) {
+      const title = headingTitle(match[1]);
+      skipping = wanted.has(title);
+    }
+    if (!skipping) kept.push(line);
+  }
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function buildIntroSections(guide) {
   return {
     '## 模组简介': [
@@ -312,17 +327,12 @@ function buildIntroSections(guide) {
       '- **人物关系**：建议至少给角色写一个现实压力、债务、人情、事业失败或必须赚钱的理由，让他们愿意接下这份不体面的工作。',
       '- **组队方式**：调查员可以彼此认识，也可以是被同一委托临时聚到一起的人；保持每个人都有发言空间。'
     ].join('\n'),
-    '## 开局场景': [
-      '## 开局场景',
-      guide.openingText || guide.defaultOpening || '调查员在约定地点集合，委托或异常事件已经摆在眼前。',
-      guide.initialScene ? `\n当前公开场景：${guide.initialScene}` : '',
-      guide.objective ? `\n开局后，玩家需要先确认角色如何回应这项委托，并准备围绕“${guide.objective}”展开调查。` : ''
-    ].filter(Boolean).join('\n\n'),
     '## 注意事项': [
       '## 注意事项',
       '- 不要在准备阶段泄露幕后真相、怪物身份、隐藏反派或结局。',
       '- 创建角色时必须填写调查员姓名；属性值范围 0-100，建议核心属性不低于 40。',
       '- 技能默认值已预设，可根据职业调整；所有玩家准备好角色后，房主即可开始游戏。',
+      '- 正式开场叙事会在房主开始游戏后自动出现；准备阶段先完成角色和关系。',
       guide.contentWarnings.length ? `- **内容提醒**：${guide.contentWarnings.join('、')}。` : ''
     ].filter(Boolean).join('\n')
   };
@@ -372,8 +382,6 @@ export function buildIntroPublicGuide({ moduleTitle, maxPlayers = 5, moduleJson 
     guide.themes.length ? `主题：${guide.themes.join('、')}` : '',
     guide.publicInformation ? `玩家公开前提：${guide.publicInformation}` : '',
     guide.objective ? `玩家公开目标：${guide.objective}` : '',
-    guide.openingText ? `建议开局文本：${guide.openingText}` : '',
-    guide.initialScene ? `初始场景：${guide.initialScene}` : '',
     guide.knownNpcs.length ? `玩家已知NPC：${guide.knownNpcs.join('；')}` : '',
     guide.knownLocations.length ? `玩家已知地点：${guide.knownLocations.join('；')}` : '',
     guide.knownHandouts.length ? `玩家已知道具/资料：${guide.knownHandouts.join('；')}` : '',
@@ -400,7 +408,7 @@ export function buildIntroPublicGuide({ moduleTitle, maxPlayers = 5, moduleJson 
 
 export function ensureCompleteIntroContent(content, introGuide) {
   const guide = introGuide || buildIntroPublicGuide();
-  const text = String(content || '').trim();
+  const text = stripMarkdownSections(content, INTRO_DISALLOWED_HEADINGS);
   const sections = guide.sections || buildIntroSections(guide);
   if (!text) return guide.fallbackMarkdown || INTRO_REQUIRED_HEADINGS.map((heading) => sections[heading]).join('\n\n');
 
@@ -415,31 +423,30 @@ export function ensureCompleteIntroContent(content, introGuide) {
 export function buildIntroSystemPrompt(roomCfg = {}) {
   return [
     '你是 CoC Online 的 AI 守秘人（Keeper）。当前房间刚创建，处于准备阶段。',
-    '你的任务是：向即将加入的玩家讲清楚本次模组的公开前提、角色应如何接入、第一幕从哪里开始，并指导他们创建适合的调查员角色。',
+    '你的任务是：向即将加入的玩家讲清楚本次模组的公开前提、角色应如何接入，并指导他们创建适合的调查员角色。',
     '',
-    '必须使用 Markdown，并完整输出以下五个二级标题；任何一个都不能省略，不能只写“模组简介”：',
+    '必须使用 Markdown，并完整输出以下四个二级标题；任何一个都不能省略，不能只写“模组简介”：',
     '## 模组简介',
     '## 玩家公开前提',
     '## 调查员创建指南',
-    '## 开局场景',
     '## 注意事项',
     '',
     '每个标题下必须覆盖：',
     '- 模组简介：时代、地点、类型、氛围。',
     '- 玩家公开前提：调查员知道什么、为什么会参与、公开目标是什么、已知人物/地点/资料是什么。',
     '- 调查员创建指南：2-5个职业方向、5-8个推荐技能、角色关系/动机钩子。',
-    '- 开局场景：把模组给出的 suggested_intro_text 或 default_opening 改写成可直接朗读的第一幕，并说明玩家此刻身处何处、面前有什么公开问题。',
-    '- 注意事项：角色卡创建提醒、内容边界提醒、不要泄露秘密。',
+    '- 注意事项：角色卡创建提醒、内容边界提醒、不要泄露秘密；说明正式开场会在房主开始游戏后出现。',
     '',
     '重要规则：',
     '- 不要泄露守秘人秘密、幕后真相、未发现的线索、NPC隐藏身份、反派身份或结局。',
     '- NPC 的 role 字段可能包含隐藏身份；准备阶段不要直接复述 role，只能说玩家公开可见的信息。',
     '- 不要替玩家决定角色的背景故事，只提供建议方向',
+    '- 不要输出“## 开局场景”、第一幕朗读文本、具体入场画面或场景行动开端；这些内容会在房主切换到游玩阶段后自动生成。',
     '- 必须保留“不可改写的公开事实”里的关键名词、数字、地点、距离、物件和目标；可以改写语气，但不能改写事实。',
     '- 遇到异常几何、空洞、虚无、照片等核心意象时，必须保留原词。资料写“球形空缺/完美的无/现实缺了一块”时，不得改成“凹陷”“坑洞”“黑洞”“传送门”或普通圆洞。',
-    '- 如果照片、传闻和现场真实现象存在视角差异，要同时说清“照片显示什么”和“公开目标指向什么”，不要用照片画面覆盖现场事实。',
+    '- 如果照片、传闻和现场真实现象存在视角差异，准备阶段只说公开目标和已知资料，不要展开现场开场描写。',
     '- 输出长度建议 900-1800 个中文字符；宁可条理清楚，也不要文学化堆砌。',
-    '- 回复末尾不要列举游玩行动选项；准备阶段只说明开局状态和角色创建建议。',
+    '- 回复末尾不要列举游玩行动选项；准备阶段只说明公开前提和角色创建建议。',
     '- 回复应友好、专业，适合直接展示给所有玩家',
     `叙事风格：${roomCfg.dmStyle || '悬疑、克制，不替玩家做决定'}`,
     `规则严格度：${roomCfg.rulesStrictness || 'STANDARD'}`
@@ -454,8 +461,66 @@ export function buildIntroUserContext({ moduleTitle, maxPlayers, moduleContext, 
     '',
     introGuide?.contextText || moduleContext || '暂无模组内容',
     '',
-    '请基于上面的公开信息生成准备阶段引入。必须完整覆盖指定五个标题，不要只写世界观简介。'
+    '请基于上面的公开信息生成准备阶段引入。必须完整覆盖指定四个标题，不要只写世界观简介；不要写开局场景。'
   ].join('\n');
+}
+
+export function buildOpeningSceneSystemPrompt(roomCfg = {}) {
+  return [
+    '你是 CoC Online 的 AI DM。当前房间刚从准备阶段进入游玩阶段。',
+    '你的任务是：生成正式游玩的第一幕开场叙事，把玩家带入模组给出的初始场景。',
+    '',
+    '规则：',
+    '- 只使用玩家此刻可见、可知的信息；不要泄露守秘人秘密、NPC隐藏身份、幕后真相或结局。',
+    '- 优先使用 suggested_intro_text、default_opening、initial_scene、已知 NPC/地点/handout 和公开目标。',
+    '- 这是开场叙事，不是准备简报；不要输出“模组简介”“玩家公开前提”“调查员创建指南”“注意事项”等准备阶段标题。',
+    '- 不要要求检定，不要输出 structured JSON，不要写 Markdown 代码块。',
+    '- 不要替玩家决定行动、想法、台词或背景，只描述他们已经公开处在的场面和眼前问题。',
+    '- 结尾停在玩家可以自由行动的瞬间；不要列行动建议、选项列表或“你可以……”。',
+    '- 如果资料写“球形空缺/完美的无/现实缺了一块”，不得改成“凹陷”“坑洞”“黑洞”“传送门”或普通圆洞。',
+    '- 输出 2-5 段中文叙事，适合直接显示在聊天室。',
+    `叙事风格：${roomCfg.dmStyle || '悬疑、克制，不替玩家做决定'}`,
+    `规则严格度：${roomCfg.rulesStrictness || 'STANDARD'}`
+  ].join('\n');
+}
+
+export function buildOpeningSceneUserContext({ moduleTitle, maxPlayers, introGuide = null, moduleContext = '' }) {
+  const guide = introGuide || buildIntroPublicGuide({ moduleTitle, maxPlayers, moduleContext });
+  const facts = [
+    `模组名称：${guide.moduleTitle || moduleTitle || '未知模组'}`,
+    `游玩人数：${maxPlayers || guide.maxPlayers || 5} 人`,
+    '系统：Call of Cthulhu 7th Edition',
+    guide.publicInformation ? `公开前提：${guide.publicInformation}` : '',
+    guide.objective ? `公开目标：${guide.objective}` : '',
+    guide.openingText ? `建议开场文本：${guide.openingText}` : '',
+    guide.defaultOpening && guide.defaultOpening !== guide.openingText ? `默认开场：${guide.defaultOpening}` : '',
+    guide.initialScene ? `初始公开场景：${guide.initialScene}` : '',
+    guide.knownNpcs.length ? `玩家已知NPC：${guide.knownNpcs.join('；')}` : '',
+    guide.knownLocations.length ? `玩家已知地点：${guide.knownLocations.join('；')}` : '',
+    guide.knownHandouts.length ? `玩家已知道具/资料：${guide.knownHandouts.join('；')}` : '',
+    guide.criticalPublicFacts.length ? `不可改写的公开事实：${guide.criticalPublicFacts.join('；')}` : ''
+  ].filter(Boolean).join('\n');
+
+  return [
+    '=== 游玩阶段第一幕资料（只能使用玩家可知信息） ===',
+    facts,
+    '',
+    '请生成切换到游玩阶段后自动出现的第一幕开场叙事。'
+  ].join('\n');
+}
+
+export function ensureOpeningSceneContent(content, introGuide) {
+  const guide = introGuide || buildIntroPublicGuide();
+  const stripped = stripMarkdownSections(content, [
+    ...INTRO_REQUIRED_HEADINGS.map(headingTitle),
+    ...INTRO_DISALLOWED_HEADINGS
+  ]);
+  const text = correctCriticalIntroDrift(stripped, guide);
+  if (text) return text;
+  return correctCriticalIntroDrift(
+    guide.openingText || guide.defaultOpening || guide.initialScene || '游戏开始。调查员已经来到事件的入口，眼前的异常等待他们亲自确认。',
+    guide
+  );
 }
 
 // ============================================================
