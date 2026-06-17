@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-17 21:39 CST
+Last updated: 2026-06-17 22:52 CST
 
 ## Current State
 
@@ -12,17 +12,18 @@ Last updated: 2026-06-17 21:39 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `3da6cf2 fix: preserve prep synopsis facts and export context`
+- Latest completed local app commit: `1a17782 fix: clarify intro and opening pacing prompts`
 - Latest local utility commit: `07396ff fix: wait for audited ai tasks to finish`
-- Latest deployed app commit: `3da6cf2 fix: preserve prep synopsis facts and export context`
+- Latest deployed app commit: `1a17782 fix: clarify intro and opening pacing prompts`
 - Latest Lina module nested repo commit: `62278db fix: preserve Lina void opening facts`
-- Deployment verified on 2026-06-17 21:39 CST: server `npm run check` OK, server `npm test` 127/127 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`GAHKUF`).
+- Deployment verified on 2026-06-17 22:52 CST: server `npm run check` OK, server `npm test` 127/127 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`NNP942`).
 - Local worktree has the nested `测试模组 新/` directory untracked from the parent repo; leave it alone unless the user explicitly asks.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent App Commits
 
+- `1a17782` fix: clarify intro and opening pacing prompts
 - `3da6cf2` fix: preserve prep synopsis facts and export context
 - `eace8dd` chore: checkpoint before prep intro fact restoration
 - `d9e5027` docs: update handoff after prep synopsis simplification
@@ -543,6 +544,28 @@ Verification after this update:
 - Server systemd/Nginx/health checks — OK
 - Public deployment audit — OK, room `GAHKUF`, `aiConfigured: true`
 
+## 2026-06-17 Prompt Pacing / Player-View Update
+
+User asked whether a three-paragraph limit helps or hurts from the player perspective. The conclusion now encoded in prompts:
+- Preparation synopsis may use 1-3 paragraphs, but this is an upper-bound rhythm, not a fixed three-paragraph template.
+- Preparation should prioritize public hook completeness and natural reading flow over exact paragraph count.
+- The old wording "只写一段" conflicted with "1-3 段" and was changed to "只写一个剧情简介/引入".
+- Opening scene after play starts must not be forced into three paragraphs either. It now says "不要求固定三段" and should use 2-5 paragraphs according to scene complexity, with information completeness and player actionability prioritized.
+
+Regression coverage:
+- `test/prompts.test.mjs` now asserts the intro prompt contains `不是固定三段格式` and `信息完整和自然节奏优先`.
+- It also asserts the opening-scene prompt contains `不要求固定三段` and `玩家可行动性优先`.
+
+Verification after this update:
+- Local `npm run check`
+- Local `node --test test/prompts.test.mjs` — 6/6 passed
+- Local `npm test` — 127/127 passed
+- Local `npm run test:e2e` — 9/9 passed
+- Server `npm run check`
+- Server `npm test` — 127/127 passed
+- Server systemd/Nginx/health checks — OK
+- Public deployment audit — OK, room `NNP942`, `aiConfigured: true`
+
 ### Current Recommended Next Work
 
 1. Split large frontend/server files before the next broad feature.
@@ -649,9 +672,9 @@ AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restore
 
 Local:
 ```bash
-npm run check     # passed on 2026-06-17 21:39 CST
-npm test          # 127/127 passed on 2026-06-17 21:39 CST
-npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-17 21:39 CST
+npm run check     # passed on 2026-06-17 22:51 CST
+npm test          # 127/127 passed on 2026-06-17 22:51 CST
+npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-17 22:51 CST
 ```
 
 Server:
@@ -667,7 +690,7 @@ nginx -t                                         # successful
 Public deployment audit:
 ```bash
 npm run audit:deployment -- http://8.153.147.137
-# ok: true, aiConfigured: true, roomCode: GAHKUF
+# ok: true, aiConfigured: true, roomCode: NNP942
 ```
 
 ## Deployment Commands
