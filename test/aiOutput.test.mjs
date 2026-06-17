@@ -21,7 +21,8 @@ function testSheet() {
       妙手: 35,
       乔装: 25,
       格斗: 40,
-      射击: 35
+      射击: 35,
+      外语: 46
     }
   };
 }
@@ -674,7 +675,8 @@ test('regression: detects expanded ordinary skill checks', () => {
     ['锁匠', '我用发卡试着撬开抽屉的锁。'],
     ['医学', '我检查尸体伤口，判断真正死因。'],
     ['驾驶汽车', '我猛踩油门开车甩开后面的车。'],
-    ['神秘学', '我辨认墙上那些怪异符号和仪式痕迹。']
+    ['神秘学', '我辨认墙上那些怪异符号和仪式痕迹。'],
+    ['外语', '我翻译录音里的陌生语言，尝试拼凑那些语音片段。']
   ];
 
   for (const [expectedSkill, action] of cases) {
@@ -757,6 +759,51 @@ test('matches module JSON checks before generic required checks', () => {
   assert.equal(enhanced.diagnostics.inferredRequiredDetection.source, 'module');
   assert.equal(enhanced.diagnostics.inferredRequiredDetection.moduleCheckId, 'spot_register');
   assert.ok(enhanced.diagnostics.inferredRequiredDetection.confidence >= 0.7);
+});
+
+test('normalizes module skill aliases for new module language checks', () => {
+  const state = roomStateForAction('我把枪托拿近一点，辨认上面的陌生刻字。', {
+    moduleJson: {
+      checks: [{
+        check_id: 'check_rifle_inscription_language',
+        scene_id: 'event_old_rifle',
+        trigger: '调查员辨认枪托刻字',
+        skill: '语言学',
+        difficulty: 'REGULAR',
+        success: '确认文字不属于任何已知语言体系。',
+        failure: '只能看出刻字异常且认真。',
+        requires_roll: true
+      }],
+      npcs: []
+    }
+  });
+
+  const plan = planPreflightCheck({ actionMessage: state.action, roomState: state });
+
+  assert.equal(plan.type, 'required');
+  assert.equal(plan.events.required_checks.length, 1);
+  assert.equal(plan.events.required_checks[0].skill, '外语');
+  assert.equal(plan.events.required_checks[0].difficulty, 'REGULAR');
+  assert.equal(plan.detection.source, 'module');
+  assert.equal(plan.detection.moduleCheckId, 'check_rifle_inscription_language');
+  assert.ok(plan.detection.notes.includes('skill-alias:语言学->外语'));
+});
+
+test('keeps model-provided required checks when skill uses a module alias', () => {
+  const state = roomStateForAction('我试着拼凑录音里的语音片段。');
+  const checked = validateStructuredEvents({
+    required_checks: [{
+      targetPlayerId: 'p1',
+      skill: '语言学',
+      difficulty: 'EXTREME',
+      reason: '拼凑空洞录音语音片段'
+    }]
+  }, { roomState: state, defaultPlayerId: 'p1' });
+
+  assert.deepEqual(checked.rejected, []);
+  assert.equal(checked.valid.required_checks.length, 1);
+  assert.equal(checked.valid.required_checks[0].skill, '外语');
+  assert.equal(checked.valid.required_checks[0].difficulty, 'EXTREME');
 });
 
 test('strips trailing action suggestions from AI narrative', () => {

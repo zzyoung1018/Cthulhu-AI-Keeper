@@ -2,7 +2,7 @@
 // AI replies split into narrative text (streamed to players) and structured events
 // parsed after completion. Events are validated before being written to the database.
 
-import { getCheckTarget, getSkillTarget } from './character.js';
+import { canonicalSkillName, getCheckTarget, getSkillTarget } from './character.js';
 
 const EVENT_SCHEMAS = {
   required_checks: {
@@ -194,6 +194,13 @@ const REQUIRED_CHECK_DETECTION_RULES = [
     reason: '玩家查阅资料、档案或文献寻找信息',
     playerHint: '你开始翻阅资料，信息是否足够有用取决于检定结果。',
     pattern: /图书馆使用|查资料|查阅|翻阅|检索|资料|档案|卷宗|文献|书架|书籍|报纸|报刊|记录|名册|登记簿|县志|族谱/
+  },
+  {
+    skill: '外语',
+    difficulty: 'REGULAR',
+    reason: '玩家试图解读陌生语言、文字、刻字或录音片段',
+    playerHint: '这些语言或文字不像普通信息，能否解读取决于检定结果。',
+    pattern: /语言学|外语|翻译|辨认.*(?:文字|语言|语音|录音|刻字|铭文|字迹)|解读.*(?:文字|语言|语音|录音|刻字|铭文|字迹)|拼凑.*(?:录音|语音|句子|片段)|未知语言|陌生语言|陌生文字|古代语言|枪托刻字|刻字|铭文/
   },
   {
     skill: '锁匠',
@@ -556,6 +563,14 @@ function normalizeText(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
 }
 
+function normalizeSkillName(skillName) {
+  return canonicalSkillName(skillName) || normalizeText(skillName);
+}
+
+function sameSkillName(left, right) {
+  return normalizeSkillName(left) === normalizeSkillName(right);
+}
+
 function normalizeDifficulty(value) {
   const difficulty = String(value || 'REGULAR').trim().toUpperCase();
   if (difficulty === 'NORMAL') return 'REGULAR';
@@ -711,7 +726,9 @@ function scoreModuleCheck(actionText, check, roomState) {
   const action = normalizeText(actionText);
   const trigger = normalizeText(check.trigger);
   const checkText = normalizeText(moduleCheckText(check));
-  if (!action || !checkText || !check.skill) return { score: 0, notes: [] };
+  const checkSkill = normalizeText(check.skill);
+  const normalizedCheckSkill = normalizeSkillName(checkSkill);
+  if (!action || !checkText || !checkSkill) return { score: 0, notes: [] };
 
   let score = 0;
   const notes = [];
@@ -722,14 +739,14 @@ function scoreModuleCheck(actionText, check, roomState) {
     anchored = true;
   }
 
-  if (action.includes(String(check.skill))) {
+  if (action.includes(checkSkill) || (normalizedCheckSkill !== checkSkill && action.includes(normalizedCheckSkill))) {
     score += 4;
     notes.push('skill-mentioned');
     anchored = true;
   }
 
   const genericRule = classifyRequiredAction(action, roomState);
-  if (genericRule?.skill === check.skill) {
+  if (genericRule && sameSkillName(genericRule.skill, checkSkill)) {
     score += 4;
     notes.push('generic-same-skill');
     anchored = true;
@@ -770,6 +787,7 @@ function classifyModuleRequiredAction(actionText, roomState = {}) {
 
   let best = null;
   for (const check of checks) {
+    if (check?.requires_roll === false) continue;
     const { score, notes } = scoreModuleCheck(actionText, check, roomState);
     if (score < 5) continue;
     if (!best || score > best.score) best = { check, score, notes };
@@ -777,8 +795,13 @@ function classifyModuleRequiredAction(actionText, roomState = {}) {
 
   if (!best) return null;
   const { check, score, notes } = best;
+  const rawSkill = String(check.skill || '').trim();
+  const skill = normalizeSkillName(rawSkill);
+  const detectionNotes = skill && rawSkill && skill !== rawSkill
+    ? [...notes, `skill-alias:${rawSkill}->${skill}`]
+    : notes;
   return withRequiredMeta({
-    skill: String(check.skill || '').trim(),
+    skill,
     difficulty: normalizeDifficulty(check.difficulty),
     reason: check.trigger ? `模组检定：${check.trigger}` : `模组检定：${check.check_id || check.skill}`,
     playerHint: '这一行动命中了模组预设检定，结果由服务器骰点决定。',
@@ -790,7 +813,7 @@ function classifyModuleRequiredAction(actionText, roomState = {}) {
     ruleId: `module:${check.check_id || check.skill}`,
     confidence: Math.min(0.95, 0.58 + score * 0.04),
     matchedText: normalizeText(check.trigger || check.ai_dm_instruction || check.check_id || ''),
-    notes
+    notes: detectionNotes
   }));
 }
 

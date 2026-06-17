@@ -86,6 +86,17 @@ const DEFAULT_SKILLS = {
   追踪: 10
 };
 
+const SKILL_ALIASES = {
+  语言: '外语',
+  语言学: '外语',
+  语言类: '外语',
+  外国语: '外语',
+  外国语言: '外语',
+  未知语言: '外语',
+  陌生语言: '外语',
+  古代语言: '外语'
+};
+
 const TEXT_FIELDS = [
   'equipment',
   'assets',
@@ -265,18 +276,32 @@ export function hasReadyCharacter(sheet) {
   return Boolean(normalized.investigator.name);
 }
 
-function _lookupSkill(normalizedSheet, skillName) {
+function canonicalSkillName(skillName) {
+  const targetName = trimText(skillName, 80);
+  if (!targetName) return null;
+  if (Object.hasOwn(DEFAULT_SKILLS, targetName)) return targetName;
+  const aliased = SKILL_ALIASES[targetName] || SKILL_ALIASES[targetName.toUpperCase()];
+  return aliased || targetName;
+}
+
+function _findSkill(normalizedSheet, skillName) {
   const targetName = trimText(skillName, 80);
   if (!targetName) return null;
   if (Object.hasOwn(normalizedSheet.skills, targetName)) {
-    return normalizedSheet.skills[targetName];
+    return { name: targetName, value: normalizedSheet.skills[targetName] };
   }
   const found = Object.entries(normalizedSheet.skills).find(([name]) => name.toLowerCase() === targetName.toLowerCase());
-  return found ? found[1] : null;
+  if (found) return { name: found[0], value: found[1] };
+
+  const canonical = canonicalSkillName(targetName);
+  if (canonical && canonical !== targetName && Object.hasOwn(normalizedSheet.skills, canonical)) {
+    return { name: canonical, value: normalizedSheet.skills[canonical] };
+  }
+  return null;
 }
 
 export function getSkillTarget(sheet, skillName) {
-  return _lookupSkill(normalizeCharacterSheet(sheet), skillName);
+  return _findSkill(normalizeCharacterSheet(sheet), skillName)?.value ?? null;
 }
 
 export function getCheckTarget(sheet, checkName) {
@@ -284,10 +309,9 @@ export function getCheckTarget(sheet, checkName) {
   const targetName = trimText(checkName, 80);
   if (!targetName) return null;
 
-  const skillTarget = _lookupSkill(normalized, targetName);
-  if (Number.isInteger(skillTarget)) {
-    const canonicalSkill = Object.keys(normalized.skills).find((name) => name.toLowerCase() === targetName.toLowerCase()) || targetName;
-    return { type: 'skill', label: canonicalSkill, target: skillTarget };
+  const skill = _findSkill(normalized, targetName);
+  if (skill && Number.isInteger(skill.value)) {
+    return { type: 'skill', label: skill.name, target: skill.value };
   }
 
   const directKey = CHARACTERISTIC_KEYS.find((key) => key.toLowerCase() === targetName.toLowerCase());
@@ -365,4 +389,4 @@ export function diffCharacterSheets(before, after) {
     }));
 }
 
-export { CHARACTERISTIC_KEYS, DEFAULT_SKILLS, TEXT_FIELDS };
+export { CHARACTERISTIC_KEYS, DEFAULT_SKILLS, SKILL_ALIASES, TEXT_FIELDS, canonicalSkillName };

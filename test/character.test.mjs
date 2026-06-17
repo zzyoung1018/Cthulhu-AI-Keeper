@@ -67,6 +67,16 @@ test('resolves skill and characteristic targets for checks', () => {
   assert.equal(getCheckTarget(sheet, '不存在'), null);
 });
 
+test('resolves module skill aliases to character sheet skills', () => {
+  const sheet = normalizeCharacterSheet({
+    skills: { 外语: 46, 母语: 60 }
+  });
+
+  assert.equal(getSkillTarget(sheet, '语言学'), 46);
+  assert.equal(getSkillTarget(sheet, '未知语言'), 46);
+  assert.deepEqual(getCheckTarget(sheet, '语言学'), { type: 'skill', label: '外语', target: 46 });
+});
+
 test('diffs individual character fields for history records', () => {
   const before = normalizeCharacterSheet({
     investigator: { name: '旧名' },
