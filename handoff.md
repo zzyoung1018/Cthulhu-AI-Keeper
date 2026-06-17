@@ -12,15 +12,19 @@ Last updated: 2026-06-17 12:39 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `5055948 fix: harden ai checks and rollback side effects`
-- Latest deployed app commit: `5055948 fix: harden ai checks and rollback side effects`
-- Deployment verified on 2026-06-16 23:10 CST: systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
-- Local worktree is clean.
+- Latest completed local app commit: `9ebd7da feat: run preflight checks from ai queue`
+- Latest deployed app commit: `9ebd7da feat: run preflight checks from ai queue`
+- Deployment verified on 2026-06-17 12:40 CST: server `npm run check` OK, server `npm test` 119/119 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK.
+- Local worktree has the nested `测试模组 新/` directory untracked from the parent repo; leave it alone unless the user explicitly asks.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent App Commits
 
+- `9ebd7da` feat: run preflight checks from ai queue
+- `29dfb01` chore: checkpoint before queued preflight improvements
+- `2dddd99` docs: clarify module skill and clue rules
+- `280c4f8` fix: handle new module language checks
 - `5055948` fix: harden ai checks and rollback side effects
 - `da39b3e` chore: checkpoint before bug optimization pass
 - `3d3817f` docs: update handoff after ai preflight checks
