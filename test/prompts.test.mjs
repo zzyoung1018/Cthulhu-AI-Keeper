@@ -112,3 +112,23 @@ test('ensureCompleteIntroContent appends missing opening sections from module JS
   assert.doesNotMatch(completed, /球形凹陷|凹陷|坑洞|黑洞/);
   assert.doesNotMatch(completed, /奈亚拉托提普化身/);
 });
+
+test('ensureCompleteIntroContent repairs core anomaly term drift even when headings are present', () => {
+  const guide = buildIntroPublicGuide({ moduleJson: INTRO_MODULE, moduleTitle: '现实的荒原', maxPlayers: 5 });
+  const driftedIntro = [
+    '## 模组简介',
+    '底特律的废弃工会大厅里出现了直径约一米的完美球形凹陷。',
+    '## 玩家公开前提',
+    '调查员收到银行家的现金和照片。',
+    '## 调查员创建指南',
+    '选择被经济危机压垮、需要钱的人。',
+    '## 开局场景',
+    '炭灰色西装的中年人把信封放在桌上。',
+    '## 注意事项',
+    '不要泄露幕后真相。'
+  ].join('\n\n');
+
+  const completed = ensureCompleteIntroContent(driftedIntro, guide);
+  assert.match(completed, /直径一米的完美球形空缺/);
+  assert.doesNotMatch(completed, /球形凹陷|直径约一米/);
+});

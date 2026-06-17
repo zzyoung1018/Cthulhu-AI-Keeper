@@ -209,6 +209,37 @@ function deriveCriticalPublicFacts(guide) {
   return uniqueValues(candidates.filter(hasCriticalPublicDetail), 10);
 }
 
+function correctCriticalIntroDrift(content, guide) {
+  let text = String(content || '').trim();
+  const criticalFacts = listValues(guide?.criticalPublicFacts);
+  const factText = [
+    guide?.publicInformation,
+    guide?.objective,
+    guide?.openingText,
+    guide?.initialScene,
+    ...criticalFacts
+  ].filter(Boolean).join(' ');
+
+  if (/(球形空缺|完美的“?无”?|现实缺)/.test(factText)) {
+    text = text
+      .replace(/直径约?一米的完美球形凹陷/g, '直径一米的完美球形空缺')
+      .replace(/直径约?一米的球形凹陷/g, '直径一米的球形空缺')
+      .replace(/完美球形凹陷/g, '完美球形空缺')
+      .replace(/球形凹陷/g, '球形空缺')
+      .replace(/圆形凹陷/g, '圆形空缺')
+      .replace(/完美的圆形凹陷/g, '完美的圆形空缺');
+
+    if (!/(球形空缺|完美的“?无”?|现实缺)/.test(text)) {
+      const fact = criticalFacts.find((item) => /球形空缺|完美的“?无”?|现实缺/.test(item));
+      if (fact) {
+        text = `${text}\n\n**公开事实校正**：${fact}`;
+      }
+    }
+  }
+
+  return text.trim();
+}
+
 function deriveIntroSkills(moduleJson) {
   const excluded = new Set(['STR', 'CON', 'SIZ', 'DEX', 'APP', 'INT', 'POW', 'EDU', 'LUCK', 'Luck', '克苏鲁神话']);
   const preferred = ['侦查', '聆听', '图书馆使用', '心理学', '话术', '说服', '会计', '医学', '急救', '外语', '驾驶汽车', '导航'];
@@ -375,10 +406,10 @@ export function ensureCompleteIntroContent(content, introGuide) {
 
   const missing = (guide.requiredHeadings || INTRO_REQUIRED_HEADINGS)
     .filter((heading) => !hasMarkdownHeading(text, heading));
-  if (missing.length === 0) return text;
+  if (missing.length === 0) return correctCriticalIntroDrift(text, guide);
 
   const additions = missing.map((heading) => sections[heading]).filter(Boolean);
-  return [text, ...additions].filter(Boolean).join('\n\n').trim();
+  return correctCriticalIntroDrift([text, ...additions].filter(Boolean).join('\n\n'), guide);
 }
 
 export function buildIntroSystemPrompt(roomCfg = {}) {
