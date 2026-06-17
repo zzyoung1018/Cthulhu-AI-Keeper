@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-17 20:01 CST
+Last updated: 2026-06-17 21:19 CST
 
 ## Current State
 
@@ -12,17 +12,19 @@ Last updated: 2026-06-17 20:01 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `ae8e93f feat: defer opening scene until game start`
+- Latest completed local app commit: `348ff7e fix: simplify preparation synopsis prompt`
 - Latest local utility commit: `07396ff fix: wait for audited ai tasks to finish`
-- Latest deployed app commit: `ae8e93f feat: defer opening scene until game start`
+- Latest deployed app commit: `348ff7e fix: simplify preparation synopsis prompt`
 - Latest Lina module nested repo commit: `62278db fix: preserve Lina void opening facts`
-- Deployment verified on 2026-06-17 20:00 CST: server `npm run check` OK, server `npm test` 127/127 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`R6X9AV`).
+- Deployment verified on 2026-06-17 21:18 CST: server `npm run check` OK, server `npm test` 127/127 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`8Q25W3`).
 - Local worktree has the nested `测试模组 新/` directory untracked from the parent repo; leave it alone unless the user explicitly asks.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent App Commits
 
+- `348ff7e` fix: simplify preparation synopsis prompt
+- `db0c726` chore: checkpoint before intro briefing simplification
 - `07396ff` fix: wait for audited ai tasks to finish
 - `ae8e93f` feat: defer opening scene until game start
 - `3c41fe5` chore: checkpoint before deferred opening scene
@@ -59,7 +61,7 @@ src/
   aiOutput.js      (1676 lines) — AI JSON extraction, validation, detection inference
   aiEvents.js       (566 lines) — applies AI structured events to rolls/state/summary
   aiClient.js       (430 lines) — streaming client and scene-aware AI context assembly
-  prompts.js        (637 lines) — intro/opening/DM system/user/structured-output prompts
+  prompts.js        (659 lines) — intro/opening/DM system/user/structured-output prompts
   db.js            (1360 lines) — SQLite schema, migrations, row mappers, queries
   character.js      (368 lines) — CoC 7e sheet normalization and skill lookup
   dice.js           (441 lines) — CoC 7e dice, checks, opposed checks, luck/pushed rolls
@@ -75,7 +77,7 @@ test/
   comprehensive-ai.test.mjs (765 lines) — full AI detection and event coverage
   aiOutput.test.mjs         (835 lines) — parser/validator/inference regressions
   frontend.e2e.mjs          (556 lines) — Playwright browser coverage for visible controls
-  app.test.mjs             (1262 lines) — API integration tests
+  app.test.mjs             (1269 lines) — API integration tests
   db.test.mjs               (797 lines) — persistence tests
   fixtures/
     comprehensive-test-module.json — reusable CoC 7e test module
@@ -466,23 +468,29 @@ Verification after this update:
 - Public deployment audit — OK, room `UEQJXT`, `aiConfigured: true`
 - Targeted local drift check against `测试模组 新/Lina-现实的荒原.json` — `hasVoidSphere: true`, `hasDrift: false`
 
-## 2026-06-17 Deferred Opening Scene Update
+## 2026-06-17 Preparation Synopsis / Deferred Opening Scene Update
 
-This supersedes the previous "five-section intro" behavior. Preparation mode should now read like a player-facing campaign briefing, not a DM scene prompt.
+This supersedes both the old "five-section intro" behavior and the later "four-section public briefing" behavior. Preparation mode should now show only a natural, non-spoiler story synopsis. Concrete public information is reserved for the automatic opening scene after the owner starts the game.
 
 What changed:
-- Preparation intro now requires only four sections: `模组简介`, `玩家公开前提`, `调查员创建指南`, and `注意事项`.
-- `## 开局场景` is explicitly disallowed in preparation output. If the model includes it anyway, `ensureCompleteIntroContent()` strips that section before saving.
-- Preparation context is built only from player-public module fields. `keeper_overview`, hidden NPC roles, global keeper rules, and `suggested_intro_text` are not included in the prep prompt.
+- Preparation intro now allows exactly one heading: `## 剧情简介`.
+- The generated text should be 1-3 natural paragraphs, like a back-cover pitch or table invitation. It should not be a classified list of era/place/type/atmosphere.
+- Preparation output must not include `## 模组简介`, `## 玩家公开前提`, `## 调查员创建指南`, `## 注意事项`, `## 开局场景`, "你已经知道", public objectives, known NPCs/locations/handouts, skill/occupation guidance, concrete numbers, or action starts.
+- For structured JSON modules, preparation context now includes only high-level synopsis material: title, background mood, tone, and themes. It does not include `player_opening.initial_public_information`, objective, known NPCs, known locations, known handouts, `keeper_overview`, hidden roles, global keeper rules, or `suggested_intro_text`.
+- For unstructured modules, raw snippets are still available only as "internal reference for mood extraction"; the prompt forbids repeating concrete opening facts.
+- `ensureCompleteIntroContent()` now normalizes `## 模组简介` to `## 剧情简介`, keeps only that synopsis section, strips old prep sections, removes "you already know" style lines, and no longer applies critical-fact drift correction in preparation mode.
+- Critical-fact correction such as `直径约一米的完美球形凹陷` -> `直径一米的完美球形空缺` remains in `ensureOpeningSceneContent()` for the actual opening scene.
 - `suggested_intro_text`, `default_opening`, and `initial_scene` are reserved for the actual first scene after the owner starts the game.
 - When room status changes from `PREPARING` to `ACTIVE`, `PATCH /api/rooms/:code/status` creates an idempotent opening task (`opening:<code>`) and queues `generateOpeningScene()`.
 - Opening scene output streams as an `AI DM` message, uses a separate opening-scene prompt, and is sanitized by `ensureOpeningSceneContent()`.
-- The opening-scene sanitizer strips preparation headings and still repairs known critical drift such as `直径约一米的完美球形凹陷` -> `直径一米的完美球形空缺`.
 - The frontend now accepts `openingTask` from the status response so the AI queue/status UI immediately reflects the automatic opening task.
+- AI log labels now call the preparation task `剧情简介` rather than `开场介绍`.
 
 Regression coverage:
-- `test/prompts.test.mjs` verifies prep prompts no longer require or keep `## 开局场景`, and that opening-scene prompts include opening text only after play starts.
-- `test/app.test.mjs` verifies `/start-intro` saves a complete public prep briefing without opening scene leakage.
+- `test/prompts.test.mjs` verifies prep prompts only request a natural non-spoiler synopsis.
+- `test/prompts.test.mjs` verifies structured JSON prep context does not contain opening facts such as the void sphere, photo, envelope, known skills, or hidden role.
+- `test/prompts.test.mjs` verifies `ensureCompleteIntroContent()` strips old sections and does not append opening facts or run critical drift correction during preparation.
+- `test/app.test.mjs` verifies `/start-intro` saves only `## 剧情简介` and strips leaked `玩家公开前提` / "你已经知道" content from model output.
 - `test/app.test.mjs` verifies starting the game automatically queues and completes the opening scene, with critical void terminology repaired.
 - Existing AI/check tests were adjusted so the automatic opening task does not mask later player-action tasks.
 - `scripts/audit_deployment.mjs` now waits for the automatic opening task and then tracks the specific task uid returned by the audited player action, preventing false failures while AI is still streaming.
@@ -494,12 +502,12 @@ Verification after this update:
 - Server `npm run check`
 - Server `npm test` — 127/127 passed
 - Server systemd/Nginx/health checks — OK
-- Public deployment audit — OK, room `R6X9AV`, `aiConfigured: true`
+- Public deployment audit — OK, room `8Q25W3`, `aiConfigured: true`
 
 ### Current Recommended Next Work
 
 1. Split large frontend/server files before the next broad feature.
-   - `public/app.js` is now 2561 lines; `src/db.js`, `src/app.js`, and `src/aiOutput.js` are also large.
+   - `public/app.js` is now 2567 lines; `src/db.js`, `src/app.js`, and `src/aiOutput.js` are also large.
    - Best first split: move character-sheet UI, AI log UI, and chat rendering into focused frontend modules.
    - Keep tests green between each extraction; avoid a big-bang refactor.
 
