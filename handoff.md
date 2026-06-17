@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-17 21:19 CST
+Last updated: 2026-06-17 21:39 CST
 
 ## Current State
 
@@ -12,17 +12,20 @@ Last updated: 2026-06-17 21:19 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `348ff7e fix: simplify preparation synopsis prompt`
+- Latest completed local app commit: `3da6cf2 fix: preserve prep synopsis facts and export context`
 - Latest local utility commit: `07396ff fix: wait for audited ai tasks to finish`
-- Latest deployed app commit: `348ff7e fix: simplify preparation synopsis prompt`
+- Latest deployed app commit: `3da6cf2 fix: preserve prep synopsis facts and export context`
 - Latest Lina module nested repo commit: `62278db fix: preserve Lina void opening facts`
-- Deployment verified on 2026-06-17 21:18 CST: server `npm run check` OK, server `npm test` 127/127 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`8Q25W3`).
+- Deployment verified on 2026-06-17 21:39 CST: server `npm run check` OK, server `npm test` 127/127 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`GAHKUF`).
 - Local worktree has the nested `测试模组 新/` directory untracked from the parent repo; leave it alone unless the user explicitly asks.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent App Commits
 
+- `3da6cf2` fix: preserve prep synopsis facts and export context
+- `eace8dd` chore: checkpoint before prep intro fact restoration
+- `d9e5027` docs: update handoff after prep synopsis simplification
 - `348ff7e` fix: simplify preparation synopsis prompt
 - `db0c726` chore: checkpoint before intro briefing simplification
 - `07396ff` fix: wait for audited ai tasks to finish
@@ -470,15 +473,15 @@ Verification after this update:
 
 ## 2026-06-17 Preparation Synopsis / Deferred Opening Scene Update
 
-This supersedes both the old "five-section intro" behavior and the later "four-section public briefing" behavior. Preparation mode should now show only a natural, non-spoiler story synopsis. Concrete public information is reserved for the automatic opening scene after the owner starts the game.
+This supersedes both the old "five-section intro" behavior and the later "four-section public briefing" behavior. Preparation mode should now show only a natural, non-spoiler story synopsis. However, the synopsis must still preserve the module's public hook facts; over-abstracting the premise causes missing information and model hallucination.
 
 What changed:
 - Preparation intro now allows exactly one heading: `## 剧情简介`.
 - The generated text should be 1-3 natural paragraphs, like a back-cover pitch or table invitation. It should not be a classified list of era/place/type/atmosphere.
-- Preparation output must not include `## 模组简介`, `## 玩家公开前提`, `## 调查员创建指南`, `## 注意事项`, `## 开局场景`, "你已经知道", public objectives, known NPCs/locations/handouts, skill/occupation guidance, concrete numbers, or action starts.
-- For structured JSON modules, preparation context now includes only high-level synopsis material: title, background mood, tone, and themes. It does not include `player_opening.initial_public_information`, objective, known NPCs, known locations, known handouts, `keeper_overview`, hidden roles, global keeper rules, or `suggested_intro_text`.
+- Preparation output must not include `## 模组简介`, `## 玩家公开前提`, `## 调查员创建指南`, `## 注意事项`, `## 开局场景`, "你已经知道", known NPC/location/handout lists, skill/occupation guidance, operational checklists, or first-scene readaloud. It may include public hook facts and critical public numbers when those facts are part of the premise.
+- For structured JSON modules, preparation context includes only public-safe synopsis material: title, `player_opening.initial_public_information`, initial objective, background mood, tone, filtered themes, and must-preserve hook facts. It still excludes known NPCs, known locations, known handouts, `keeper_overview`, hidden roles, global keeper rules, and `suggested_intro_text`.
 - For unstructured modules, raw snippets are still available only as "internal reference for mood extraction"; the prompt forbids repeating concrete opening facts.
-- `ensureCompleteIntroContent()` now normalizes `## 模组简介` to `## 剧情简介`, keeps only that synopsis section, strips old prep sections, removes "you already know" style lines, and no longer applies critical-fact drift correction in preparation mode.
+- `ensureCompleteIntroContent()` now normalizes `## 模组简介` to `## 剧情简介`, keeps only that synopsis section, strips old prep sections, and converts old "you already know" style lines into natural synopsis facts instead of dropping those facts.
 - Critical-fact correction such as `直径约一米的完美球形凹陷` -> `直径一米的完美球形空缺` remains in `ensureOpeningSceneContent()` for the actual opening scene.
 - `suggested_intro_text`, `default_opening`, and `initial_scene` are reserved for the actual first scene after the owner starts the game.
 - When room status changes from `PREPARING` to `ACTIVE`, `PATCH /api/rooms/:code/status` creates an idempotent opening task (`opening:<code>`) and queues `generateOpeningScene()`.
@@ -504,6 +507,42 @@ Verification after this update:
 - Server systemd/Nginx/health checks — OK
 - Public deployment audit — OK, room `8Q25W3`, `aiConfigured: true`
 
+## 2026-06-17 Prep Hook Fact Restoration / Export Context Update
+
+User supplied `/Users/young/Downloads/dm-online-KM93VJ.json` and reported the intro was still wrong/missing information. The export showed the opening scene did contain the true premise, but the preparation synopsis had omitted the core hook and hallucinated unsupported phenomena.
+
+Diagnosis:
+- The previous preparation prompt over-corrected: it hid the module's actual public premise from the model and left mostly mood/theme material.
+- For `Lina-现实的荒原`, that meant the prep synopsis did not reliably preserve the banker, cash/photo commission, Detroit/union hall setup, or the one-meter spherical void.
+- The exported JSON also did not contain enough owner-only module context or AI logs, making a playtest export less useful for debugging.
+
+What changed in `src/prompts.js`:
+- `buildIntroPublicGuide()` now includes `剧情引入素材`, `早期推动问题`, and `必须保留的引入事实` derived conservatively from public opening information and the initial objective.
+- It still avoids known NPC/location/handout expansions, hidden roles, `keeper_overview`, global keeper rules, and `suggested_intro_text`.
+- Intro themes are filtered so keeper-only mythos or secret terms such as `奈亚拉托提普` do not leak into preparation copy.
+- `buildIntroSystemPrompt()` now says the one allowed heading is still only `## 剧情简介`, but core public hook facts, anomaly/task terms, and key public numbers must be preserved without turning them into a checklist.
+- `scrubPrepIntroPhrases()` strips old labels such as `你已经知道:` but keeps the facts after the label, preventing data loss during cleanup.
+- The prompt now explicitly forbids unsupported inventions such as unrelated records, dreams, place changes, or phenomena not present in the source.
+
+What changed in export:
+- Owner exports now include `module`, `moduleSegments`, `aiLogs`, `rounds`, room `sceneState`, module parse metadata, and richer participant state (`state`, `discoveredClues`, `knownNpcs`, `characterRevision`).
+- Non-owner exports still hide private module and AI-log data.
+- This makes future `dm-online-*.json` files useful for diagnosing whether a bug came from source JSON, prompt context, model output, or sanitizer/export behavior.
+
+Regression coverage:
+- `test/prompts.test.mjs` verifies prep context preserves public hook facts while excluding known-list expansions, hidden NPC roles, secret mythos themes, and old briefing sections.
+- `test/app.test.mjs` verifies `/start-intro` keeps the core public premise, strips old headings and `你已经知道`, and does not leak handout/known-list details.
+- `test/db.test.mjs` verifies owner exports include full debugging context and non-owner exports do not.
+
+Verification after this update:
+- Local `npm run check`
+- Local `npm test` — 127/127 passed
+- Local `npm run test:e2e` — 9/9 passed
+- Server `npm run check`
+- Server `npm test` — 127/127 passed
+- Server systemd/Nginx/health checks — OK
+- Public deployment audit — OK, room `GAHKUF`, `aiConfigured: true`
+
 ### Current Recommended Next Work
 
 1. Split large frontend/server files before the next broad feature.
@@ -511,9 +550,9 @@ Verification after this update:
    - Best first split: move character-sheet UI, AI log UI, and chat rendering into focused frontend modules.
    - Keep tests green between each extraction; avoid a big-bang refactor.
 
-2. Add a complete owner-facing playtest export/import flow.
-   - Chat, character cards, state, summary, AI logs, and module data are already persisted.
-   - A single importable bundle would make bug reports, regression fixtures, and cross-machine playtest replay much easier.
+2. Add an owner-facing import/replay flow for playtest exports.
+   - Owner JSON export now includes chat, character cards, state, summary, AI logs, module data, module segments, rounds, and scene state.
+   - The next step is importing that bundle into a local replay/debug room or converting it into regression fixtures automatically.
 
 3. Split `aiOutput.js` before more detection tuning.
    - It now mixes JSON extraction, validation, narrative cleanup, required-check inference, opposed-check inference, module matching, and NPC matching.
@@ -610,15 +649,15 @@ AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restore
 
 Local:
 ```bash
-npm run check     # passed on 2026-06-17 13:30 CST
-npm test          # 124/124 passed on 2026-06-17 13:30 CST
-npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-17 13:30 CST
+npm run check     # passed on 2026-06-17 21:39 CST
+npm test          # 127/127 passed on 2026-06-17 21:39 CST
+npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-17 21:39 CST
 ```
 
 Server:
 ```bash
 cd /opt/dm-online && npm run check
-cd /opt/dm-online && npm test                  # 124/124 passed
+cd /opt/dm-online && npm test                  # 127/127 passed
 systemctl restart dm-online
 curl -fsS http://127.0.0.1:4173/api/health     # ok: true, aiConfigured: true
 systemctl is-active dm-online                    # active
@@ -628,7 +667,7 @@ nginx -t                                         # successful
 Public deployment audit:
 ```bash
 npm run audit:deployment -- http://8.153.147.137
-# ok: true, aiConfigured: true, roomCode: UEQJXT
+# ok: true, aiConfigured: true, roomCode: GAHKUF
 ```
 
 ## Deployment Commands
@@ -680,13 +719,13 @@ DEPLOYMENT_AUDIT_AI_TIMEOUT_MS=180000 npm run audit:deployment -- --require-ai h
 - Playwright browser binaries were installed locally via `npx playwright install chromium`; a new machine may need that command before `npm run test:e2e`.
 - The test fixture `test/fixtures/comprehensive-test-module.json` can be uploaded via the API to manually test AI detection in a real room.
 - If changing AI detection, add regression tests in `test/aiOutput.test.mjs` and/or `test/comprehensive-ai.test.mjs`.
-- When debugging game sessions, request the JSON export (`GET /api/rooms/:code/export?format=json`) to see messages, diceRolls, and aiTasks in context.
+- When debugging game sessions, request the owner JSON export (`GET /api/rooms/:code/export?format=json`) to see messages, diceRolls, aiTasks, AI logs, module data, module segments, rounds, scene state, and participant state in context.
 - The AI detection log endpoint (`GET /api/rooms/:code/ai-log`) is owner-only and now reads persistent SQLite `ai_logs`.
 - `latestPlayerAction` now prefers explicit `triggerMessageId` and skips `aiProcessedTaskUid` actions — if AI check inference stops working unexpectedly, inspect `ai_tasks.trigger_message_id` and `messages.ai_processed_task_uid` first.
 
 ## Potential Follow-Ups
 
-- Add AI log export into `GET /api/rooms/:code/export?format=json` if long playtests need portable diagnostics.
+- Add import/replay tooling for the richer owner JSON export so bad sessions can become local fixtures quickly.
 - Tune module check matching with newer real playtest logs from `reports/` after another session.
 - Cache NPC candidates per room/task (currently rebuilt every AI call in `npcCandidates()`).
 - Split `aiOutput.js`, `db.js`, `app.js`, and `public/app.js` along existing boundaries when next touching those files.
