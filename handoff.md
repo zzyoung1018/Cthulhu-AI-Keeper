@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-17 22:52 CST
+Last updated: 2026-06-18 00:46 CST
 
 ## Current State
 
@@ -12,17 +12,18 @@ Last updated: 2026-06-17 22:52 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `1a17782 fix: clarify intro and opening pacing prompts`
+- Latest completed local app commit: `3f42a13 feat: surface preflight checks in ai logs`
 - Latest local utility commit: `07396ff fix: wait for audited ai tasks to finish`
-- Latest deployed app commit: `1a17782 fix: clarify intro and opening pacing prompts`
+- Latest deployed app commit: `3f42a13 feat: surface preflight checks in ai logs`
 - Latest Lina module nested repo commit: `62278db fix: preserve Lina void opening facts`
-- Deployment verified on 2026-06-17 22:52 CST: server `npm run check` OK, server `npm test` 127/127 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`NNP942`).
+- Deployment verified on 2026-06-18 00:46 CST: server `npm run check` OK, server `npm test` 127/127 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`XJVAU3`).
 - Local worktree has the nested `测试模组 新/` directory untracked from the parent repo; leave it alone unless the user explicitly asks.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent App Commits
 
+- `3f42a13` feat: surface preflight checks in ai logs
 - `1a17782` fix: clarify intro and opening pacing prompts
 - `3da6cf2` fix: preserve prep synopsis facts and export context
 - `eace8dd` chore: checkpoint before prep intro fact restoration
@@ -566,6 +567,31 @@ Verification after this update:
 - Server systemd/Nginx/health checks — OK
 - Public deployment audit — OK, room `NNP942`, `aiConfigured: true`
 
+## 2026-06-18 Preflight Log Visibility Update
+
+Completed a high-value UX/debuggability follow-up: preflight checks are now visible and readable in the owner AI detection log instead of appearing as raw backend stage names.
+
+What changed:
+- `public/app.js` now localizes `preflight-check` as `服务器预检定` and `preflight-skipped` as `预检定跳过`.
+- AI log entries for preflight checks now explain that the server completed the required/opposed check before AI narration, list the trigger source, executed event keys, and linked action message id.
+- Preflight skipped logs now show a Chinese reason, including unresolved NPC targets, validation failures, already-processed actions, and "no check" cases.
+- AI log stats now show a compact `预检` chip when preflight checks exist.
+- AI log chips now display localized stage names instead of raw internal stage ids.
+- Existing warning summaries now also show validation warnings, not just issues.
+
+Regression coverage:
+- `test/frontend.e2e.mjs` seeds a preflight-check log and verifies the owner sees `服务器预检定`, `服务器已在 AI 回复前完成必要检定`, and `触发来源：通用规则：侦查`.
+- The queue/log stats E2E test now verifies the `预检` stat chip.
+
+Verification after this update:
+- Local `npm run check`
+- Local `npm test` — 127/127 passed
+- Local `npm run test:e2e` — 9/9 passed after rerunning outside the sandbox; the first sandboxed run failed only because Chromium could not register its macOS Mach port.
+- Server `npm run check`
+- Server `npm test` — 127/127 passed
+- Server systemd/Nginx/health checks — OK
+- Public deployment audit — OK, room `XJVAU3`, `aiConfigured: true`
+
 ### Current Recommended Next Work
 
 1. Split large frontend/server files before the next broad feature.
@@ -590,11 +616,7 @@ Verification after this update:
    - `ZZL4KB` report regressions are now covered for several social and required checks.
    - Add future reports as fixtures before changing broad keyword rules; prefer module-specific anchors so normal roleplay does not trigger excessive rolls.
 
-5. Surface preflight status in the UI.
-   - Backend logs `preflight-check` and `preflight-skipped`, but the UI currently only shows the resulting system check and AI task.
-   - A compact "服务器已预检定" marker in the AI log/status area would make this behavior easier to understand during playtests.
-
-6. Add export/import for a complete playtest session.
+5. Add export/import for a complete playtest session.
    - Chat, character cards, state, summary, AI logs, and module data are all persisted.
    - A single owner export would make bug reports and future regression fixtures much easier to produce.
 
@@ -672,9 +694,9 @@ AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restore
 
 Local:
 ```bash
-npm run check     # passed on 2026-06-17 22:51 CST
-npm test          # 127/127 passed on 2026-06-17 22:51 CST
-npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-17 22:51 CST
+npm run check     # passed on 2026-06-18 00:41 CST
+npm test          # 127/127 passed on 2026-06-18 00:41 CST
+npm run test:e2e  # 9/9 Playwright tests passed on 2026-06-18 00:41 CST
 ```
 
 Server:
@@ -690,7 +712,7 @@ nginx -t                                         # successful
 Public deployment audit:
 ```bash
 npm run audit:deployment -- http://8.153.147.137
-# ok: true, aiConfigured: true, roomCode: NNP942
+# ok: true, aiConfigured: true, roomCode: XJVAU3
 ```
 
 ## Deployment Commands
