@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-20 16:09 JST
+Last updated: 2026-06-20 17:30 JST
 
 ## Current State
 
@@ -12,17 +12,20 @@ Last updated: 2026-06-20 16:09 JST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `513f7e8 feat: export replay regression fixtures`
+- Latest completed local app commit: `e8d8b34 feat: add owner adjudicated ai assist mode`
 - Latest local utility commit: `07396ff fix: wait for audited ai tasks to finish`
-- Latest deployed app commit: `513f7e8 feat: export replay regression fixtures`
+- Latest deployed app commit: `e8d8b34 feat: add owner adjudicated ai assist mode`
 - Latest Lina module nested repo commit: `62278db fix: preserve Lina void opening facts`
-- Deployment verified on 2026-06-20 16:07 JST: server `npm run check` OK, server `npm test` 129/129 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`6XJ2UA`).
+- Deployment verified on 2026-06-20 17:29 JST: server `npm run check` OK, server `npm test` 130/130 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`FFQUW8`).
 - Local worktree has the nested `测试模组 新/` directory untracked from the parent repo; leave it alone unless the user explicitly asks.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent App Commits
 
+- `e8d8b34` feat: add owner adjudicated ai assist mode
+- `feacefa` chore: checkpoint before ai assisted mode
+- `07b1314` docs: update handoff after replay fixture export
 - `513f7e8` feat: export replay regression fixtures
 - `0375846` chore: checkpoint before replay fixture export
 - `2005a33` docs: update handoff after replay labels
@@ -70,12 +73,12 @@ Do not write server credentials into committed files. Use the conversation conte
 
 ```text
 src/
-  app.js           (1347 lines) — HTTP routes, room lifecycle, AI orchestration
-  aiOutput.js      (1699 lines) — AI JSON extraction, validation, detection inference
+  app.js           (1671 lines) — HTTP routes, room lifecycle, AI orchestration
+  aiOutput.js      (1720 lines) — AI JSON extraction, validation, detection inference
   aiEvents.js       (566 lines) — applies AI structured events to rolls/state/summary
   aiClient.js       (430 lines) — streaming client and scene-aware AI context assembly
   prompts.js        (687 lines) — intro/opening/DM system/user/structured-output prompts
-  db.js            (1686 lines) — SQLite schema, migrations, row mappers, queries
+  db.js            (1700 lines) — SQLite schema, migrations, row mappers, queries
   export.js         (416 lines) — owner exports and replay regression fixture builder
   character.js      (392 lines) — CoC 7e sheet normalization and skill lookup
   dice.js           (441 lines) — CoC 7e dice, checks, opposed checks, luck/pushed rolls
@@ -85,13 +88,13 @@ src/
   privateHub.js      (63 lines) — player-specific SSE delivery
 
 public/
-  app.js          (2721 lines) — main frontend logic
+  app.js          (2977 lines) — main frontend logic
 
 test/
   comprehensive-ai.test.mjs (765 lines) — full AI detection and event coverage
   aiOutput.test.mjs         (882 lines) — parser/validator/inference regressions
-  frontend.e2e.mjs          (623 lines) — Playwright browser coverage for visible controls
-  app.test.mjs             (1362 lines) — API integration tests
+  frontend.e2e.mjs          (657 lines) — Playwright browser coverage for visible controls
+  app.test.mjs             (1512 lines) — API integration tests
   db.test.mjs               (922 lines) — persistence tests
   fixtures/
     comprehensive-test-module.json — reusable CoC 7e test module
@@ -708,19 +711,58 @@ Verification after this update:
 - Server health/systemd/Nginx/static cache-bust checks — OK
 - Public deployment audit — OK, room `6XJ2UA`, `aiConfigured: true`
 
+## 2026-06-20 AI Assisted Mode Update
+
+Completed the new play-mode requested by the user: "AI writes the story, but the room owner decides whether a check happens and which check is used."
+
+What changed:
+- AI settings now include trigger mode `ASSISTED`, shown in the UI as `AI辅助：房主裁定检定`.
+- In assisted mode, player ACTION messages are saved and broadcast, but they do not automatically queue AI and do not run automatic preflight checks.
+- Pending ACTION messages show owner-only controls:
+  - `免检交给 AI`
+  - `裁定检定`
+- Non-owner players see a waiting state (`等待房主裁定检定`) instead of owner controls.
+- New owner-only API: `POST /api/rooms/:code/adjudications`.
+  - `NO_CHECK`: records a `房主裁定` system message and queues AI narration from the player ACTION.
+  - `REQUIRED_CHECK`: rolls a server-side skill/attribute check for a chosen target player, creates a `必要检定` system message, then queues AI continuation from that check result.
+  - `OPPOSED_CHECK`: rolls a server-side opposed check using chosen player skill, NPC/opponent name, opponent skill label, and opponent target value, creates a `对抗检定` system message, then queues AI continuation.
+- In assisted mode, `enhanceStructuredEvents()` receives `disableCheckInference: true`, so AI-provided or backend-inferred `required_checks` / `opposed_checks` are suppressed. AI can still narrate and apply non-check structured events.
+- Original ACTION messages are marked with `ai_processed_task_uid` as soon as the owner adjudicates them, preventing duplicate adjudication.
+- The frontend now merges room-state snapshots by id instead of blindly replacing local state, fixing a race where a fast SSE `message_completed` could be overwritten by an older API response.
+- Static asset cache bust changed to `20260620-assisted-mode`.
+
+Regression coverage:
+- `test/app.test.mjs` verifies assisted ACTION submission does not queue AI, owner adjudication creates the check and queues AI, AI returned check JSON is suppressed, and duplicate adjudication returns 409.
+- `test/frontend.e2e.mjs` verifies the owner sees assisted controls, opens the adjudication dialog, rolls `侦查`, and receives AI continuation in the browser.
+
+Verification after this update:
+- Local `npm run check`
+- Local `node --test test/app.test.mjs` — 14/14 passed
+- Local `npm run test:e2e` — 11/11 passed
+- Local `npm test` — 130/130 passed
+- Server `npm run check`
+- Server `npm test` — 130/130 passed
+- Server health/systemd/Nginx/static cache-bust checks — OK
+- Public deployment audit — OK, room `FFQUW8`, `aiConfigured: true`
+
 ### Current Recommended Next Work
 
 1. Split large frontend/server files before the next broad feature.
-   - `public/app.js` is now 2721 lines; `src/db.js`, `src/app.js`, `src/aiOutput.js`, and `src/export.js` are also carrying multiple responsibilities.
-   - Best first split: move character-sheet UI, AI log UI, and chat rendering into focused frontend modules.
+   - `public/app.js` is now 2977 lines; `src/app.js`, `src/db.js`, `src/aiOutput.js`, and `src/export.js` are also carrying multiple responsibilities.
+   - Best first split: move assisted adjudication UI, character-sheet UI, AI log UI, and chat rendering into focused frontend modules.
    - Keep tests green between each extraction; avoid a big-bang refactor.
 
-2. Add a fixture consumer / test generator for replay fixtures.
+2. Expand AI assisted mode into richer Keeper tools.
+   - Add pushed rolls, spend-luck, sanity checks/loss, and optional private rolls to the adjudication dialog.
+   - For opposed checks, optionally prefill NPC names/skills from module JSON and recent NPC context instead of requiring manual target values.
+   - Consider a compact "pending owner adjudications" queue when multiple players submit actions quickly.
+
+3. Add a fixture consumer / test generator for replay fixtures.
    - Fixture export now exists; the next step is turning `dm-online-replay-fixture/1.0` files into executable regression tests.
    - Good tooling would load fixture JSON, replay expected preflight/check decisions, and generate focused assertions for `aiOutput`, `app`, and Playwright tests.
    - Start with a read-only script that validates a fixture and prints proposed test cases before auto-writing test files.
 
-3. Split `aiOutput.js` before more detection tuning.
+4. Split `aiOutput.js` before more detection tuning.
    - It now mixes JSON extraction, validation, narrative cleanup, required-check inference, opposed-check inference, module matching, and NPC matching.
    - Suggested split:
      - `aiStructuredParser.js` for JSON extraction/validation.
@@ -728,12 +770,12 @@ Verification after this update:
      - `aiNarrativeSanitizer.js` for marker/action-suggestion cleanup.
    - Add tests before splitting so behavior stays stable.
 
-4. Continue tuning module-defined check matching with more playtest logs.
+5. Continue tuning module-defined check matching with more playtest logs.
    - `classifyModuleRequiredAction()` already scores module checks using trigger overlap, skill mention, scene match, and CJK bigram overlap.
    - `ZZL4KB` report regressions are now covered for several social and required checks.
    - Add future reports as fixtures before changing broad keyword rules; prefer module-specific anchors so normal roleplay does not trigger excessive rolls.
 
-5. Add replay-room owner actions.
+6. Add replay-room owner actions.
    - `导出回归用例` is done.
    - The next useful action would open the AI log dialog pre-filtered to warnings/preflight for that replay.
    - Another useful action would copy the fixture API path or show a compact replay diagnostics panel.
@@ -812,15 +854,15 @@ AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restore
 
 Local:
 ```bash
-npm run check     # passed on 2026-06-20 16:05 JST
-npm test          # 129/129 passed on 2026-06-20 16:05 JST
-npm run test:e2e  # 10/10 Playwright tests passed on 2026-06-20 16:05 JST
+npm run check     # passed on 2026-06-20 17:29 JST
+npm test          # 130/130 passed on 2026-06-20 17:29 JST
+npm run test:e2e  # 11/11 Playwright tests passed on 2026-06-20 17:29 JST
 ```
 
 Server:
 ```bash
 cd /opt/dm-online && npm run check
-cd /opt/dm-online && npm test                  # 129/129 passed
+cd /opt/dm-online && npm test                  # 130/130 passed
 systemctl restart dm-online
 curl -fsS http://127.0.0.1:4173/api/health     # ok: true, aiConfigured: true
 systemctl is-active dm-online                    # active
@@ -830,7 +872,7 @@ nginx -t                                         # successful
 Public deployment audit:
 ```bash
 npm run audit:deployment -- http://8.153.147.137
-# ok: true, aiConfigured: true, roomCode: 6XJ2UA
+# ok: true, aiConfigured: true, roomCode: FFQUW8
 ```
 
 ## Deployment Commands
@@ -886,12 +928,14 @@ DEPLOYMENT_AUDIT_AI_TIMEOUT_MS=180000 npm run audit:deployment -- --require-ai h
 - Owner JSON exports can now be imported through the create-room dialog or `POST /api/imports/playtest` to create a replay/debug room. Use this before manually recreating bad sessions.
 - Imported replay rooms now persist `room.roomMeta.replay` and show an owner-only `调试回放` banner. Keep replay/debug metadata in `room_meta_json`, not `sceneState`, so AI scene context stays clean.
 - Imported replay rooms can now export regression fixtures through the banner button `导出回归用例` or `GET /api/rooms/:code/replay-fixture?playerId=...`. The fixture schema is `dm-online-replay-fixture/1.0` and anonymizes participant refs.
+- AI assisted mode is enabled via AI settings trigger mode `ASSISTED` / `AI辅助：房主裁定检定`. In this mode ACTION messages wait for owner adjudication through `POST /api/rooms/:code/adjudications`; AI check events are suppressed and only owner/server check results drive continuation.
 - The AI detection log endpoint (`GET /api/rooms/:code/ai-log`) is owner-only and now reads persistent SQLite `ai_logs`.
 - `latestPlayerAction` now prefers explicit `triggerMessageId` and skips `aiProcessedTaskUid` actions — if AI check inference stops working unexpectedly, inspect `ai_tasks.trigger_message_id` and `messages.ai_processed_task_uid` first.
 
 ## Potential Follow-Ups
 
 - Add fixture-consumer tooling so exported `dm-online-replay-fixture/1.0` files can become local regression tests quickly.
+- Expand assisted adjudication with pushed rolls, luck spending, sanity loss, private rolls, and module/NPC prefill.
 - Add owner actions to the replay banner for warning/preflight AI-log shortcuts and compact replay diagnostics.
 - Tune module check matching with newer real playtest logs from `reports/` after another session.
 - Cache NPC candidates per room/task (currently rebuilt every AI call in `npcCandidates()`).
