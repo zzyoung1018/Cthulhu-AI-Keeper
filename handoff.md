@@ -1,6 +1,6 @@
 # DM Online Handoff
 
-Last updated: 2026-06-18 01:11 CST
+Last updated: 2026-06-20 16:09 JST
 
 ## Current State
 
@@ -12,17 +12,20 @@ Last updated: 2026-06-18 01:11 CST
 - Reverse proxy: Nginx
 - Database: SQLite, server runtime data under `/var/lib/dm-online`
 - Local branch: `main`
-- Latest completed local app commit: `b588b6b feat: label imported replay rooms`
+- Latest completed local app commit: `513f7e8 feat: export replay regression fixtures`
 - Latest local utility commit: `07396ff fix: wait for audited ai tasks to finish`
-- Latest deployed app commit: `b588b6b feat: label imported replay rooms`
+- Latest deployed app commit: `513f7e8 feat: export replay regression fixtures`
 - Latest Lina module nested repo commit: `62278db fix: preserve Lina void opening facts`
-- Deployment verified on 2026-06-18 01:11 CST: server `npm run check` OK, server `npm test` 129/129 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`ET3PKA`).
+- Deployment verified on 2026-06-20 16:07 JST: server `npm run check` OK, server `npm test` 129/129 passed, systemd active, Nginx config OK, `/api/health` OK, public deployment audit OK (`6XJ2UA`).
 - Local worktree has the nested `测试模组 新/` directory untracked from the parent repo; leave it alone unless the user explicitly asks.
 
 Do not write server credentials into committed files. Use the conversation context or ask the user if credentials are needed again.
 
 ## Recent App Commits
 
+- `513f7e8` feat: export replay regression fixtures
+- `0375846` chore: checkpoint before replay fixture export
+- `2005a33` docs: update handoff after replay labels
 - `b588b6b` feat: label imported replay rooms
 - `fdde78a` chore: checkpoint before replay room labels
 - `ed4e26a` feat: import playtest exports as replay rooms
@@ -67,12 +70,13 @@ Do not write server credentials into committed files. Use the conversation conte
 
 ```text
 src/
-  app.js           (1334 lines) — HTTP routes, room lifecycle, AI orchestration
+  app.js           (1347 lines) — HTTP routes, room lifecycle, AI orchestration
   aiOutput.js      (1699 lines) — AI JSON extraction, validation, detection inference
   aiEvents.js       (566 lines) — applies AI structured events to rolls/state/summary
   aiClient.js       (430 lines) — streaming client and scene-aware AI context assembly
   prompts.js        (687 lines) — intro/opening/DM system/user/structured-output prompts
   db.js            (1686 lines) — SQLite schema, migrations, row mappers, queries
+  export.js         (416 lines) — owner exports and replay regression fixture builder
   character.js      (392 lines) — CoC 7e sheet normalization and skill lookup
   dice.js           (441 lines) — CoC 7e dice, checks, opposed checks, luck/pushed rolls
   moduleParser.js   (347 lines) — JSON module validation and segment extraction
@@ -81,13 +85,13 @@ src/
   privateHub.js      (63 lines) — player-specific SSE delivery
 
 public/
-  app.js          (2709 lines) — main frontend logic
+  app.js          (2721 lines) — main frontend logic
 
 test/
   comprehensive-ai.test.mjs (765 lines) — full AI detection and event coverage
   aiOutput.test.mjs         (882 lines) — parser/validator/inference regressions
-  frontend.e2e.mjs          (615 lines) — Playwright browser coverage for visible controls
-  app.test.mjs             (1349 lines) — API integration tests
+  frontend.e2e.mjs          (623 lines) — Playwright browser coverage for visible controls
+  app.test.mjs             (1362 lines) — API integration tests
   db.test.mjs               (922 lines) — persistence tests
   fixtures/
     comprehensive-test-module.json — reusable CoC 7e test module
@@ -664,17 +668,57 @@ Verification after this update:
 - Server health/systemd/Nginx/static cache-bust checks — OK
 - Public deployment audit — OK, room `ET3PKA`, `aiConfigured: true`
 
+## 2026-06-20 Replay Fixture Export Update
+
+Completed the next debugging workflow after replay import: owner-only replay rooms can now export a compact regression fixture for future AI/check test creation.
+
+What changed:
+- `src/export.js` now builds replay fixtures with schema `dm-online-replay-fixture/1.0`.
+- New API: `GET /api/rooms/:code/replay-fixture?playerId=...`.
+- Access rules:
+  - owner only
+  - imported replay/debug rooms only
+  - non-owner requests return 403; normal live rooms return 409
+- Fixture contents include:
+  - room metadata, replay source metadata, clipped summary, and parsed scene state
+  - anonymized participant refs (`P1`, `P2`, ...), character names, characteristics, skills, discovered clues, known NPCs, and clipped state
+  - module title plus clipped segment snippets
+  - complete message timeline with anonymized player/target refs
+  - player ACTION messages and summarized dice/check results
+  - expected AI behavior inferred from `preflight-check` and `structured-events` logs, linked back to action content when possible
+  - slim AI logs and `testHints` for action/check/log counts and warning/preflight presence
+- The owner-only `调试回放` banner now has a `导出回归用例` button that downloads `dm-online-<CODE>-fixture.json`.
+- Static asset cache bust changed to `20260620-replay-fixture`.
+
+Why this matters:
+- Bad real sessions can now become durable debugging artifacts without exposing raw player ids.
+- The next improvement can consume these fixtures into automated `aiOutput` / API / Playwright regressions instead of hand-copying screenshots or logs.
+
+Regression coverage:
+- `test/app.test.mjs` verifies the fixture endpoint, schema, replay metadata, anonymized participant refs, AI behavior hints, and owner-only access.
+- `test/frontend.e2e.mjs` imports an owner playtest export, clicks `导出回归用例`, parses the downloaded file, and verifies schema/source/preflight hints.
+
+Verification after this update:
+- Local `npm run check`
+- Local `node --test test/app.test.mjs` — 13/13 passed
+- Local `npm run test:e2e` — 10/10 passed
+- Local `npm test` — 129/129 passed
+- Server `npm run check`
+- Server `npm test` — 129/129 passed
+- Server health/systemd/Nginx/static cache-bust checks — OK
+- Public deployment audit — OK, room `6XJ2UA`, `aiConfigured: true`
+
 ### Current Recommended Next Work
 
 1. Split large frontend/server files before the next broad feature.
-   - `public/app.js` is now 2709 lines; `src/db.js`, `src/app.js`, and `src/aiOutput.js` are also large.
+   - `public/app.js` is now 2721 lines; `src/db.js`, `src/app.js`, `src/aiOutput.js`, and `src/export.js` are also carrying multiple responsibilities.
    - Best first split: move character-sheet UI, AI log UI, and chat rendering into focused frontend modules.
    - Keep tests green between each extraction; avoid a big-bang refactor.
 
-2. Add fixture generation from owner replay exports.
-   - The import flow now makes bad sessions inspectable in the browser.
-   - The next step is a script that converts an owner export or imported replay into targeted regression fixtures for `aiOutput`, `app`, and Playwright tests.
-   - Good output would include redacted messages, expected checks, expected clue/state changes, and linked AI log snippets.
+2. Add a fixture consumer / test generator for replay fixtures.
+   - Fixture export now exists; the next step is turning `dm-online-replay-fixture/1.0` files into executable regression tests.
+   - Good tooling would load fixture JSON, replay expected preflight/check decisions, and generate focused assertions for `aiOutput`, `app`, and Playwright tests.
+   - Start with a read-only script that validates a fixture and prints proposed test cases before auto-writing test files.
 
 3. Split `aiOutput.js` before more detection tuning.
    - It now mixes JSON extraction, validation, narrative cleanup, required-check inference, opposed-check inference, module matching, and NPC matching.
@@ -690,9 +734,9 @@ Verification after this update:
    - Add future reports as fixtures before changing broad keyword rules; prefer module-specific anchors so normal roleplay does not trigger excessive rolls.
 
 5. Add replay-room owner actions.
-   - Replay rooms are now labeled and counted, but the banner is informational only.
-   - After fixture-generation exists, add one-click `导出回归用例` from the replay banner.
-   - A second useful action would open the AI log dialog pre-filtered to warnings/preflight for that replay.
+   - `导出回归用例` is done.
+   - The next useful action would open the AI log dialog pre-filtered to warnings/preflight for that replay.
+   - Another useful action would copy the fixture API path or show a compact replay diagnostics panel.
 
 ### Lower-Priority Cleanup
 
@@ -768,9 +812,9 @@ AI rounds tracked by task UID. `POST /api/rooms/:code/rollback/:roundId` restore
 
 Local:
 ```bash
-npm run check     # passed on 2026-06-18 01:09 CST
-npm test          # 129/129 passed on 2026-06-18 01:09 CST
-npm run test:e2e  # 10/10 Playwright tests passed on 2026-06-18 01:09 CST
+npm run check     # passed on 2026-06-20 16:05 JST
+npm test          # 129/129 passed on 2026-06-20 16:05 JST
+npm run test:e2e  # 10/10 Playwright tests passed on 2026-06-20 16:05 JST
 ```
 
 Server:
@@ -786,7 +830,7 @@ nginx -t                                         # successful
 Public deployment audit:
 ```bash
 npm run audit:deployment -- http://8.153.147.137
-# ok: true, aiConfigured: true, roomCode: ET3PKA
+# ok: true, aiConfigured: true, roomCode: 6XJ2UA
 ```
 
 ## Deployment Commands
@@ -841,13 +885,14 @@ DEPLOYMENT_AUDIT_AI_TIMEOUT_MS=180000 npm run audit:deployment -- --require-ai h
 - When debugging game sessions, request the owner JSON export (`GET /api/rooms/:code/export?format=json`) to see messages, diceRolls, aiTasks, AI logs, module data, module segments, rounds, scene state, and participant state in context.
 - Owner JSON exports can now be imported through the create-room dialog or `POST /api/imports/playtest` to create a replay/debug room. Use this before manually recreating bad sessions.
 - Imported replay rooms now persist `room.roomMeta.replay` and show an owner-only `调试回放` banner. Keep replay/debug metadata in `room_meta_json`, not `sceneState`, so AI scene context stays clean.
+- Imported replay rooms can now export regression fixtures through the banner button `导出回归用例` or `GET /api/rooms/:code/replay-fixture?playerId=...`. The fixture schema is `dm-online-replay-fixture/1.0` and anonymizes participant refs.
 - The AI detection log endpoint (`GET /api/rooms/:code/ai-log`) is owner-only and now reads persistent SQLite `ai_logs`.
 - `latestPlayerAction` now prefers explicit `triggerMessageId` and skips `aiProcessedTaskUid` actions — if AI check inference stops working unexpectedly, inspect `ai_tasks.trigger_message_id` and `messages.ai_processed_task_uid` first.
 
 ## Potential Follow-Ups
 
-- Add fixture-generation tooling for imported replay rooms so bad sessions can become local regression tests quickly.
-- Add owner actions to the replay banner after fixture generation exists, especially `导出回归用例` and warning/preflight AI-log shortcuts.
+- Add fixture-consumer tooling so exported `dm-online-replay-fixture/1.0` files can become local regression tests quickly.
+- Add owner actions to the replay banner for warning/preflight AI-log shortcuts and compact replay diagnostics.
 - Tune module check matching with newer real playtest logs from `reports/` after another session.
 - Cache NPC candidates per room/task (currently rebuilt every AI call in `npcCandidates()`).
 - Split `aiOutput.js`, `db.js`, `app.js`, and `public/app.js` along existing boundaries when next touching those files.
