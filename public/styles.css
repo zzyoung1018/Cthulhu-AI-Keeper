@@ -1721,6 +1721,56 @@ dialog .module-preview {
   font-size: 0.84rem;
 }
 
+.assist-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(215, 173, 95, 0.24);
+}
+
+.assist-label,
+.assist-waiting {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.assist-label {
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.assist-controls button {
+  min-height: 32px;
+}
+
+.assist-overlay {
+  width: min(680px, 92vw);
+}
+
+.assist-action-preview {
+  border: 1px solid rgba(215, 173, 95, 0.28);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: rgba(215, 173, 95, 0.08);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+}
+
+.assist-opposed-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.assist-opposed-fields[hidden],
+.assist-required-fields[hidden] {
+  display: none;
+}
+
 @media (max-width: 860px) {
   #charSheetDialog {
     width: 90vw;

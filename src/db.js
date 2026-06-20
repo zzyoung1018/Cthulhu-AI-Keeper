@@ -662,6 +662,13 @@ export function createDatabase(dbPath) {
           updated_at = ?
       WHERE id = ? AND message_type = 'ACTION'
     `),
+    markRoomActionAiProcessed: db.prepare(`
+      UPDATE messages
+      SET ai_processed_task_uid = ?,
+          ai_processed_at = ?,
+          updated_at = ?
+      WHERE id = ? AND room_id = ? AND message_type = 'ACTION'
+    `),
     getMessageById: db.prepare('SELECT * FROM messages WHERE id = ?'),
     listMessages: db.prepare(`
       SELECT * FROM messages
@@ -1199,6 +1206,13 @@ export function createDatabase(dbPath) {
       const timestamp = now();
       statements.markMessageAiProcessed.run(task.uid, timestamp, timestamp, task.triggerMessageId);
       return rowToMessage(statements.getMessageById.get(task.triggerMessageId));
+    },
+
+    markActionProcessedByTask({ code, actionMessageId, taskUid }) {
+      const room = ensureRoom(code);
+      const timestamp = now();
+      statements.markRoomActionAiProcessed.run(taskUid || '', timestamp, timestamp, actionMessageId, room.id);
+      return rowToMessage(statements.getMessageById.get(actionMessageId));
     },
 
     createDiceRoll({ code, playerId, rollType, expression, label = '', isPrivate = false, result }) {

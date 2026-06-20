@@ -68,6 +68,14 @@ const els = {
   joinRoomDialog: document.querySelector('#joinRoomDialog'),
   joinRoomForm: document.querySelector('#joinRoomForm'),
   settingsDialog: document.querySelector('#settingsDialog'),
+  assistDialog: document.querySelector('#assistDialog'),
+  assistForm: document.querySelector('#assistForm'),
+  assistActionPreview: document.querySelector('#assistActionPreview'),
+  assistDecision: document.querySelector('#assistDecision'),
+  assistTargetPlayer: document.querySelector('#assistTargetPlayer'),
+  assistRequiredFields: document.querySelector('#assistRequiredFields'),
+  assistOpposedFields: document.querySelector('#assistOpposedFields'),
+  assistSkillOptions: document.querySelector('#assistSkillOptions'),
   // 模组
   moduleSelect: document.querySelector('#moduleSelect'),
   moduleFile: document.querySelector('#moduleFile'),
@@ -992,6 +1000,56 @@ function currentReplayMeta() {
   return replay?.isReplay ? replay : null;
 }
 
+function isAssistedMode() {
+  return String(state.room?.aiConfig?.triggerMode || '').toUpperCase() === 'ASSISTED';
+}
+
+function isPendingAssistedAction(message) {
+  return Boolean(
+    state.room?.status === 'ACTIVE' &&
+    isAssistedMode() &&
+    message?.authorType === 'player' &&
+    message?.messageType === 'ACTION' &&
+    !message?.aiProcessedTaskUid
+  );
+}
+
+function playerLabelForId(playerId) {
+  const participant = state.participants.find((item) => item.playerId === playerId);
+  return participant ? (participant.characterName || participant.displayName) : '调查员';
+}
+
+function renderAssistControls(message) {
+  if (!isPendingAssistedAction(message)) return null;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'assist-controls';
+
+  if (!isOwner()) {
+    const waiting = document.createElement('span');
+    waiting.className = 'assist-waiting';
+    waiting.textContent = message.playerId === state.playerId ? '等待房主裁定检定' : '等待房主裁定';
+    wrap.append(waiting);
+    return wrap;
+  }
+
+  const title = document.createElement('span');
+  title.className = 'assist-label';
+  title.textContent = 'AI 辅助模式';
+  const pass = document.createElement('button');
+  pass.className = 'ghost';
+  pass.type = 'button';
+  pass.dataset.assistNoCheck = String(message.id);
+  pass.textContent = '免检交给 AI';
+  const check = document.createElement('button');
+  check.className = 'secondary';
+  check.type = 'button';
+  check.dataset.assistCheck = String(message.id);
+  check.textContent = '裁定检定';
+  wrap.append(title, pass, check);
+  return wrap;
+}
+
 function findActiveAiTask(tasks = []) {
   return tasks.find((task) => activeAiStatuses.includes(task.status)) || null;
 }
@@ -1216,6 +1274,8 @@ function renderMessages() {
     body.className = 'message-body';
     body.textContent = message.content;
     node.append(head, body);
+    const assistControls = renderAssistControls(message);
+    if (assistControls) node.append(assistControls);
     els.chatLog.append(node);
   }
 
@@ -2072,6 +2132,136 @@ function renderAiConfigForm() {
   setFormValue(els.aiConfigForm, 'contentBoundaries', config.contentBoundaries || '');
 }
 
+function populateAssistSkillOptions() {
+  if (!els.assistSkillOptions) return;
+  const values = [
+    ...Object.keys(defaultSkills),
+    ...Object.keys(characteristicInfo),
+    ...Object.values(characteristicInfo).map((item) => item.label).filter(Boolean)
+  ];
+  const unique = [...new Set(values)].sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'));
+  els.assistSkillOptions.replaceChildren();
+  for (const value of unique) {
+    const option = document.createElement('option');
+    option.value = value;
+    els.assistSkillOptions.append(option);
+  }
+}
+
+function renderAssistTargets(defaultPlayerId = '') {
+  if (!els.assistTargetPlayer) return;
+  els.assistTargetPlayer.replaceChildren();
+  for (const participant of state.participants) {
+    const option = document.createElement('option');
+    option.value = participant.playerId;
+    option.textContent = participant.characterName
+      ? `${participant.characterName}（${participant.displayName}）`
+      : participant.displayName;
+    els.assistTargetPlayer.append(option);
+  }
+  if (defaultPlayerId) els.assistTargetPlayer.value = defaultPlayerId;
+}
+
+function updateAssistDecisionFields() {
+  if (!els.assistDecision) return;
+  const opposed = els.assistDecision.value === 'OPPOSED_CHECK';
+  if (els.assistRequiredFields) els.assistRequiredFields.hidden = opposed;
+  if (els.assistOpposedFields) els.assistOpposedFields.hidden = !opposed;
+  const submit = els.assistForm?.querySelector('button[type="submit"]');
+  if (submit) submit.textContent = opposed ? '进行对抗并交给 AI' : '掷骰并交给 AI';
+}
+
+function openAssistDialog(actionMessage) {
+  if (!els.assistDialog || !els.assistForm || !actionMessage) return;
+  populateAssistSkillOptions();
+  renderAssistTargets(actionMessage.playerId);
+  els.assistForm.reset();
+  els.assistForm.elements.actionMessageId.value = actionMessage.id;
+  els.assistForm.elements.decision.value = 'REQUIRED_CHECK';
+  els.assistForm.elements.targetPlayerId.value = actionMessage.playerId;
+  els.assistForm.elements.skillName.value = '';
+  els.assistForm.elements.difficulty.value = 'REGULAR';
+  els.assistForm.elements.bonusDice.value = '0';
+  els.assistForm.elements.penaltyDice.value = '0';
+  els.assistForm.elements.passiveName.value = '';
+  els.assistForm.elements.passiveSkill.value = '心理学';
+  els.assistForm.elements.passiveTarget.value = '50';
+  els.assistForm.elements.contestType.value = 'social';
+  if (els.assistActionPreview) {
+    els.assistActionPreview.textContent = `${playerLabelForId(actionMessage.playerId)}：${actionMessage.content}`;
+  }
+  updateAssistDecisionFields();
+  els.assistDialog.showModal();
+}
+
+function syncRoomStatePayload(payload) {
+  function timestamp(record) {
+    const value = record?.updatedAt || record?.createdAt || '';
+    const time = new Date(value).getTime();
+    return Number.isFinite(time) ? time : 0;
+  }
+
+  function createdTimestamp(record) {
+    const time = new Date(record?.createdAt || '').getTime();
+    return Number.isFinite(time) ? time : 0;
+  }
+
+  function mergeById(existing = [], incoming = []) {
+    const merged = new Map();
+    for (const item of existing || []) {
+      if (item?.id !== undefined) merged.set(Number(item.id), item);
+    }
+    for (const item of incoming || []) {
+      if (item?.id === undefined) continue;
+      const key = Number(item.id);
+      const previous = merged.get(key);
+      if (!previous || timestamp(item) >= timestamp(previous)) merged.set(key, item);
+    }
+    return [...merged.values()].sort((left, right) =>
+      createdTimestamp(left) - createdTimestamp(right) || Number(left.id || 0) - Number(right.id || 0)
+    );
+  }
+
+  function mergeTasks(existing = [], incoming = []) {
+    const merged = new Map();
+    for (const item of existing || []) {
+      if (item?.uid) merged.set(item.uid, item);
+    }
+    for (const item of incoming || []) {
+      if (!item?.uid) continue;
+      const previous = merged.get(item.uid);
+      if (!previous || timestamp(item) >= timestamp(previous)) merged.set(item.uid, item);
+    }
+    return [...merged.values()].sort((left, right) => timestamp(left) - timestamp(right));
+  }
+
+  state.room = payload.room || state.room;
+  state.participants = payload.participants || state.participants;
+  state.participant = selfFromParticipants(state.participants) || state.participant;
+  state.messages = payload.messages ? mergeById(state.messages, payload.messages) : state.messages;
+  state.aiTasks = payload.aiTasks ? mergeTasks(state.aiTasks, payload.aiTasks) : state.aiTasks;
+  if (payload.aiTask && !state.aiTasks.some((task) => task.uid === payload.aiTask.uid)) {
+    state.aiTasks.push(payload.aiTask);
+  }
+  state.activeAiTask = payload.activeAiTask || findActiveAiTask(state.aiTasks);
+  render();
+}
+
+async function adjudicateAction(actionMessageId, decision, extra = {}) {
+  if (!state.room) return null;
+  const payload = await api(`/api/rooms/${state.room.code}/adjudications`, {
+    method: 'POST',
+    body: JSON.stringify({
+      playerId: state.playerId,
+      actionMessageId: Number(actionMessageId),
+      decision,
+      ...extra
+    })
+  });
+  syncRoomStatePayload(payload);
+  return payload;
+}
+
 function render() {
   const inRoom = Boolean(state.room);
   // 大厅模式居中
@@ -2088,7 +2278,8 @@ function render() {
 
   if (inRoom) {
     els.roomTitle.textContent = state.room.name;
-    els.roomStatus.textContent = roomStatusLabels[state.room.status] || state.room.status || '准备阶段';
+    const modeLabel = isAssistedMode() ? ' · AI辅助' : '';
+    els.roomStatus.textContent = `${roomStatusLabels[state.room.status] || state.room.status || '准备阶段'}${modeLabel}`;
     els.tableTitle.textContent = state.room.name;
     els.roomCode.textContent = state.room.code;
     els.playerCount.textContent = `${state.participants.length}/${state.room.maxPlayers || 5}`;
@@ -2096,8 +2287,14 @@ function render() {
     els.tableSubtitle.textContent = [
       `${state.participants.length}/${state.room.maxPlayers || 5} 名玩家`,
       `房间码 ${state.room.code}`,
-      state.room.moduleTitle ? `模组 ${state.room.moduleTitle}` : ''
+      state.room.moduleTitle ? `模组 ${state.room.moduleTitle}` : '',
+      isAssistedMode() ? '房主裁定检定' : ''
     ].filter(Boolean).join(' · ');
+    if (els.messageForm?.content) {
+      els.messageForm.content.placeholder = isAssistedMode()
+        ? '描述你的行动，提交后等待房主裁定是否检定...'
+        : '描述你的行动，提交给 AI DM...';
+    }
   } else {
     els.tableTitle.textContent = '等待开局';
     els.tableSubtitle.textContent = '创建或加入房间后开始记录冒险。';
@@ -2431,6 +2628,9 @@ async function submitActionToDm(content, { actionId = '' } = {}) {
     state.activeAiTask = findActiveAiTask(state.aiTasks);
     renderAiTaskControls();
     renderMessages();
+  } else if (payload.assistedPending) {
+    setAiBusy(false);
+    toast(isOwner() ? '行动已提交，等待你裁定' : '行动已提交，等待房主裁定');
   }
 
   return payload;
@@ -2460,6 +2660,26 @@ async function continueAfterCheck(checkMessageId) {
 }
 
 els.chatLog.addEventListener('click', async (event) => {
+  const noCheckButton = event.target.closest('[data-assist-no-check]');
+  if (noCheckButton && isOwner()) {
+    noCheckButton.disabled = true;
+    try {
+      await adjudicateAction(noCheckButton.dataset.assistNoCheck, 'NO_CHECK');
+      toast('已交给 AI 继续叙事');
+    } catch (error) {
+      noCheckButton.disabled = false;
+      toast(error.message);
+    }
+    return;
+  }
+
+  const checkButton = event.target.closest('[data-assist-check]');
+  if (checkButton && isOwner()) {
+    const action = state.messages.find((message) => Number(message.id) === Number(checkButton.dataset.assistCheck));
+    openAssistDialog(action);
+    return;
+  }
+
   const button = event.target.closest('[data-continue-from-check]');
   if (!button || !canSubmitToDm()) return;
 
@@ -2533,7 +2753,43 @@ els.aiConfigForm.addEventListener('submit', async (event) => {
     });
     state.room = payload.room;
     closeSettingsDialog();
+    render();
     toast('AI 设置已保存');
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+els.assistDecision?.addEventListener('change', updateAssistDecisionFields);
+document.querySelector('#closeAssistDialog')?.addEventListener('click', () => els.assistDialog.close());
+els.assistDialog?.addEventListener('click', (event) => {
+  if (event.target === els.assistDialog) els.assistDialog.close();
+});
+
+els.assistForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.room) return;
+  const form = new FormData(els.assistForm);
+  const decision = String(form.get('decision') || 'REQUIRED_CHECK');
+
+  try {
+    const extra = {
+      targetPlayerId: String(form.get('targetPlayerId') || ''),
+      skillName: String(form.get('skillName') || ''),
+      difficulty: String(form.get('difficulty') || 'REGULAR'),
+      bonusDice: Number(form.get('bonusDice') || 0),
+      penaltyDice: Number(form.get('penaltyDice') || 0),
+      reason: String(form.get('reason') || '')
+    };
+    if (decision === 'OPPOSED_CHECK') {
+      extra.passiveName = String(form.get('passiveName') || '');
+      extra.passiveSkill = String(form.get('passiveSkill') || '心理学');
+      extra.passiveTarget = Number(form.get('passiveTarget') || 50);
+      extra.contestType = String(form.get('contestType') || 'social');
+    }
+    await adjudicateAction(form.get('actionMessageId'), decision, extra);
+    els.assistDialog.close();
+    toast('检定结果已交给 AI');
   } catch (error) {
     toast(error.message);
   }

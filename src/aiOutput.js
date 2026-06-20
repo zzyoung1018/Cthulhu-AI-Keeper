@@ -1341,7 +1341,7 @@ function sanitizeNarrative(narrative, inferredOpposedChecks, inferredRequiredChe
   };
 }
 
-export function enhanceStructuredEvents({ events, narrative, roomState, triggerMessageId = null } = {}) {
+export function enhanceStructuredEvents({ events, narrative, roomState, triggerMessageId = null, disableCheckInference = false } = {}) {
   const enhancedEvents = { ...(events || {}) };
   const diagnostics = {
     inferredRequiredChecks: [],
@@ -1356,7 +1356,9 @@ export function enhanceStructuredEvents({ events, narrative, roomState, triggerM
     droppedRequiredChecksForOpposedAction: 0,
     strippedActionSuggestions: false,
     strippedDecisiveOutcome: false,
-    latestActionId: null
+    latestActionId: null,
+    checkEventsSuppressed: false,
+    suppressedCheckEventCount: 0
   };
 
   if (Array.isArray(enhancedEvents.opposed_checks)) {
@@ -1369,6 +1371,25 @@ export function enhanceStructuredEvents({ events, narrative, roomState, triggerM
     const before = enhancedEvents.required_checks.length;
     enhancedEvents.required_checks = compactEventArray(enhancedEvents.required_checks, 'required_checks');
     diagnostics.droppedIncompleteRequiredChecks = before - enhancedEvents.required_checks.length;
+  }
+
+  if (disableCheckInference) {
+    const opposedCount = Array.isArray(enhancedEvents.opposed_checks) ? enhancedEvents.opposed_checks.length : 0;
+    const requiredCount = Array.isArray(enhancedEvents.required_checks) ? enhancedEvents.required_checks.length : 0;
+    if (opposedCount > 0) delete enhancedEvents.opposed_checks;
+    if (requiredCount > 0) delete enhancedEvents.required_checks;
+    diagnostics.checkEventsSuppressed = opposedCount + requiredCount > 0;
+    diagnostics.suppressedCheckEventCount = opposedCount + requiredCount;
+
+    const sanitized = sanitizeNarrative(narrative, [], []);
+    diagnostics.strippedActionSuggestions = sanitized.strippedActionSuggestions;
+    diagnostics.strippedDecisiveOutcome = sanitized.strippedDecisiveOutcome;
+
+    return {
+      narrative: sanitized.narrative,
+      events: enhancedEvents,
+      diagnostics
+    };
   }
 
   const inferred = inferOpposedChecks({ events: enhancedEvents, narrative, roomState, triggerMessageId });

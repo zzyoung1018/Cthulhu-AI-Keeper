@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CoC Online</title>
-    <link rel="stylesheet" href="/styles.css?v=20260620-replay-fixture">
+    <link rel="stylesheet" href="/styles.css?v=20260620-assisted-mode">
   </head>
   <body>
     <main class="shell">
@@ -259,6 +259,7 @@
           </div>
           <label>触发模式 <select name="triggerMode">
             <option value="ACTION">行动自动触发</option>
+            <option value="ASSISTED">AI辅助：房主裁定检定</option>
             <option value="MANUAL">手动提交</option>
             <option value="ROUND">回合聚合</option>
           </select></label>
@@ -267,6 +268,63 @@
           <label>内容边界 <textarea name="contentBoundaries" rows="3" maxlength="1600"></textarea></label>
           <p class="hint">API 地址和密钥在服务器环境变量中配置，此处无需填写。</p>
           <button class="secondary" type="submit">保存设置</button>
+        </form>
+      </div>
+    </dialog>
+
+    <!-- 房主裁定弹窗 -->
+    <dialog id="assistDialog">
+      <div class="dialog-content assist-overlay">
+        <div class="dialog-header">
+          <h2>房主裁定</h2>
+          <button class="ghost dialog-close" id="closeAssistDialog" type="button">✕</button>
+        </div>
+        <form id="assistForm" class="form compact">
+          <input type="hidden" name="actionMessageId">
+          <div class="assist-action-preview" id="assistActionPreview"></div>
+          <label>裁定类型 <select name="decision" id="assistDecision">
+            <option value="REQUIRED_CHECK">必要检定</option>
+            <option value="OPPOSED_CHECK">对抗检定</option>
+          </select></label>
+          <label>目标玩家 <select name="targetPlayerId" id="assistTargetPlayer"></select></label>
+          <label>玩家检定项 <input name="skillName" list="assistSkillOptions" maxlength="80" placeholder="侦查 / 话术 / STR / 幸运" required></label>
+          <datalist id="assistSkillOptions"></datalist>
+          <div class="config-grid assist-required-fields" id="assistRequiredFields">
+            <label>难度 <select name="difficulty">
+              <option value="REGULAR">普通</option>
+              <option value="HARD">困难</option>
+              <option value="EXTREME">极难</option>
+            </select></label>
+          </div>
+          <div class="assist-opposed-fields" id="assistOpposedFields" hidden>
+            <div class="config-grid">
+              <label>对手/NPC <input name="passiveName" maxlength="80" placeholder="NPC 或对手名称"></label>
+              <label>对手检定项 <input name="passiveSkill" maxlength="80" value="心理学"></label>
+            </div>
+            <div class="config-grid">
+              <label>对手目标值 <input name="passiveTarget" type="number" min="1" max="100" value="50"></label>
+              <label>对抗类型 <select name="contestType">
+                <option value="social">社交</option>
+                <option value="stealth">潜行</option>
+                <option value="combat">战斗</option>
+                <option value="item">技术</option>
+              </select></label>
+            </div>
+          </div>
+          <div class="config-grid">
+            <label>奖励骰 <select name="bonusDice">
+              <option value="0">0</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+            </select></label>
+            <label>惩罚骰 <select name="penaltyDice">
+              <option value="0">0</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+            </select></label>
+          </div>
+          <label>裁定说明 <input name="reason" maxlength="400" placeholder="可选，告诉 AI 为什么这样裁定"></label>
+          <button class="secondary" type="submit">掷骰并交给 AI</button>
         </form>
       </div>
     </dialog>
@@ -301,6 +359,6 @@
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/app.js?v=20260620-replay-fixture"></script>
+    <script type="module" src="/app.js?v=20260620-assisted-mode"></script>
   </body>
 </html>

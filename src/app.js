@@ -17,10 +17,10 @@ import {
 } from './prompts.js';
 import { RoomAiQueue } from './aiQueue.js';
 import { assertAiSettingsInput, roomRuntimeAiConfig } from './aiSettings.js';
-import { getSkillTarget } from './character.js';
+import { getCheckTarget, getSkillTarget } from './character.js';
 import { isAiConfigured } from './config.js';
 import { createDatabase } from './db.js';
-import { dispatchDiceRoll, formatRollSummary } from './dice.js';
+import { dispatchDiceRoll, formatRollSummary, rollContestedCheck } from './dice.js';
 import { assertString, optionalString, HttpError } from './errors.js';
 import { exportGameJson, exportGameMarkdown, exportReplayFixtureJson } from './export.js';
 import { readJson, sendError, sendJson, serveStatic } from './http.js';
@@ -47,6 +47,22 @@ const STATUS_LABELS = {
   PAUSED: '暂停阶段',
   ENDED: '已结束',
   ARCHIVED: '已归档'
+};
+
+const CHECK_DIFFICULTY_LABELS = {
+  REGULAR: '普通',
+  NORMAL: '普通',
+  HARD: '困难',
+  EXTREME: '极难'
+};
+
+const SUCCESS_LEVEL_LABELS = {
+  CRITICAL: '大成功',
+  EXTREME: '极难成功',
+  HARD: '困难成功',
+  REGULAR: '成功',
+  FAIL: '失败',
+  FUMBLE: '大失败'
 };
 
 class AiTaskCancelled extends Error {
@@ -112,6 +128,67 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     return state;
   }
 
+  function isAssistedMode(room) {
+    return String(room?.aiConfig?.triggerMode || '').toUpperCase() === 'ASSISTED';
+  }
+
+  function difficultyLabel(value) {
+    const key = String(value || 'REGULAR').trim().toUpperCase();
+    return CHECK_DIFFICULTY_LABELS[key] || key;
+  }
+
+  function successLevelLabel(value) {
+    const key = String(value || '').trim().toUpperCase();
+    return SUCCESS_LEVEL_LABELS[key] || key || '未知';
+  }
+
+  function clampBonusPenalty(value) {
+    const number = Number(value || 0);
+    if (!Number.isFinite(number)) return 0;
+    return Math.max(0, Math.min(2, Math.round(number)));
+  }
+
+  function shortActionText(message) {
+    return String(message?.content || '').trim().replace(/\s+/g, ' ').slice(0, 220);
+  }
+
+  function buildRequiredCheckMessage({ actionMessage, participant, checkTarget, result, difficulty, reason }) {
+    const lines = [
+      '🎲 房主裁定：必要检定',
+      `行动：${shortActionText(actionMessage)}`,
+      `调查员：${participant.characterName || participant.displayName}`,
+      `项目：${checkTarget.label}(${checkTarget.target})，难度：${difficultyLabel(difficulty)}`,
+      `结果：1d100 = ${result.total} → ${successLevelLabel(result.successLevel)}，${result.passed ? '通过' : '未通过'}`
+    ];
+    if (result.bonusDice) lines.push(`奖励骰：${result.bonusDice}`);
+    if (result.penaltyDice) lines.push(`惩罚骰：${result.penaltyDice}`);
+    if (reason) lines.push(`原因：${reason}`);
+    lines.push('', '（检定结果已交给 AI DM，等待生成后续剧情。）');
+    return lines.join('\n');
+  }
+
+  function buildOpposedCheckMessage({ actionMessage, participant, activeCheck, passiveName, passiveSkill, passiveTarget, result, contestType, reason }) {
+    const contestTypeLabel = {
+      social: '社交对抗',
+      stealth: '潜行对抗',
+      combat: '战斗对抗',
+      item: '技术对抗'
+    }[String(contestType || '').toLowerCase()] || '对抗检定';
+    const playerWon = result.winner === 'player';
+    const lines = [
+      `🎭 房主裁定：${contestTypeLabel}`,
+      `行动：${shortActionText(actionMessage)}`,
+      `${participant.characterName || participant.displayName} 的 ${activeCheck.label}(${activeCheck.target}) vs ${passiveName} 的 ${passiveSkill}(${passiveTarget})`,
+      `调查员 1d100 = ${result.player.roll} → ${successLevelLabel(result.player.successLevel)}`,
+      `${passiveName} 1d100 = ${result.npc.roll} → ${successLevelLabel(result.npc.successLevel)}`,
+      `判定：${result.reason}`,
+      `结果：${playerWon ? '调查员胜' : (result.winner === 'npc' ? 'NPC胜' : '平局')}`
+    ];
+    if (reason) lines.push(`原因：${reason}`);
+    lines.push('', '（对抗结果已交给 AI DM，等待生成后续剧情。）');
+    return lines.join('\n');
+  }
+
   function firstAppliedCheckMessage(applied) {
     return applied?.opposedChecks?.[0]?.message || applied?.requiredChecks?.[0]?.message || null;
   }
@@ -168,6 +245,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
   function canRunQueuedPreflight(task) {
     if (!task?.triggerMessageId || isCheckContinuationTask(task)) return false;
     const key = String(task.idempotencyKey || '');
+    if (key.startsWith('assisted:')) return false;
     return key.startsWith('message:') || key.startsWith('action:');
   }
 
@@ -361,7 +439,8 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         events,
         narrative,
         roomState: state,
-        triggerMessageId: task?.triggerMessageId || null
+        triggerMessageId: task?.triggerMessageId || null,
+        disableCheckInference: isAssistedMode(state.room)
       });
       const { valid, rejected, issues, warnings } = validateStructuredEvents(enhanced.events, {
         roomState: state,
@@ -765,6 +844,233 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
     });
   }
 
+  function assistedDecision(value) {
+    const text = String(value || 'NO_CHECK').trim().toUpperCase();
+    if (['NO_CHECK', 'PASS', 'SKIP'].includes(text)) return 'NO_CHECK';
+    if (['REQUIRED_CHECK', 'REQUIRED', 'CHECK'].includes(text)) return 'REQUIRED_CHECK';
+    if (['OPPOSED_CHECK', 'OPPOSED', 'CONTEST'].includes(text)) return 'OPPOSED_CHECK';
+    throw new HttpError(400, 'Invalid adjudication decision');
+  }
+
+  function findAdjudicatableAction(state, actionMessageId) {
+    const action = state.messages.find((message) => Number(message.id) === Number(actionMessageId));
+    if (!action || action.authorType !== 'player' || action.messageType !== 'ACTION') {
+      throw new HttpError(400, 'No player action found for adjudication');
+    }
+    if (action.aiProcessedTaskUid) {
+      throw new HttpError(409, 'This action has already been adjudicated');
+    }
+    return action;
+  }
+
+  function queueAssistedAiTask({ code, ownerPlayerId, actionMessage, triggerMessage, idempotencyKey }) {
+    const result = database.createAiTask({
+      code,
+      playerId: ownerPlayerId,
+      triggerMessageId: triggerMessage?.id || actionMessage.id,
+      idempotencyKey
+    });
+    database.markActionProcessedByTask({
+      code,
+      actionMessageId: actionMessage.id,
+      taskUid: result.task.uid
+    });
+    broadcastAiTask(code, result.task);
+    if (result.created) enqueueDm(code, result.task.uid);
+    return result;
+  }
+
+  function adjudicateNoCheck({ code, ownerPlayerId, actionMessage, reason }) {
+    const message = database.createMessage({
+      code,
+      authorType: 'system',
+      messageType: 'SYSTEM',
+      displayName: '房主裁定',
+      content: [
+        '房主裁定：此行动无需检定。',
+        `行动：${shortActionText(actionMessage)}`,
+        reason ? `说明：${reason}` : '',
+        '',
+        '（已交给 AI DM 继续生成剧情。）'
+      ].filter((line) => line !== '').join('\n'),
+      status: 'complete'
+    });
+    hub.broadcast(code, 'message_created', { message });
+    const taskResult = queueAssistedAiTask({
+      code,
+      ownerPlayerId,
+      actionMessage,
+      triggerMessage: actionMessage,
+      idempotencyKey: `assisted:no-check:${actionMessage.id}`
+    });
+    return { message, roll: null, taskResult };
+  }
+
+  function adjudicateRequiredCheck({ code, ownerPlayerId, actionMessage, body }) {
+    const targetPlayerId = optionalString(body.targetPlayerId, 80) || actionMessage.playerId;
+    const { participant } = database.getParticipant(code, targetPlayerId);
+    const skillName = assertString(body.skillName || body.checkName, 'skillName', 80);
+    const checkTarget = getCheckTarget(participant.characterSheet, skillName);
+    if (!checkTarget || !Number.isInteger(checkTarget.target)) {
+      throw new HttpError(400, 'Unknown skill or characteristic for target player');
+    }
+
+    const difficulty = String(body.difficulty || 'REGULAR').trim().toUpperCase();
+    const { result } = dispatchDiceRoll({
+      rollType: 'skill',
+      skillName: checkTarget.label,
+      skillTarget: checkTarget.target,
+      difficulty,
+      bonusDice: clampBonusPenalty(body.bonusDice),
+      penaltyDice: clampBonusPenalty(body.penaltyDice)
+    });
+    const enrichedResult = {
+      ...result,
+      checkType: checkTarget.type,
+      skillName: checkTarget.label
+    };
+
+    const roll = database.createDiceRoll({
+      code,
+      playerId: targetPlayerId,
+      rollType: enrichedResult.type,
+      expression: enrichedResult.expression,
+      label: checkTarget.label,
+      result: enrichedResult
+    });
+
+    const reason = optionalString(body.reason, 400);
+    const message = database.createMessage({
+      code,
+      authorType: 'system',
+      messageType: 'SYSTEM',
+      displayName: '必要检定',
+      content: buildRequiredCheckMessage({
+        actionMessage,
+        participant,
+        checkTarget,
+        result: enrichedResult,
+        difficulty,
+        reason
+      }),
+      status: 'complete'
+    });
+    hub.broadcast(code, 'message_created', { message });
+    hub.broadcast(code, 'dice_rolled', { roll });
+
+    const taskResult = queueAssistedAiTask({
+      code,
+      ownerPlayerId,
+      actionMessage,
+      triggerMessage: message,
+      idempotencyKey: `assisted:required:${actionMessage.id}:${message.id}`
+    });
+    return { message, roll, taskResult };
+  }
+
+  function adjudicateOpposedCheck({ code, ownerPlayerId, actionMessage, body }) {
+    const targetPlayerId = optionalString(body.targetPlayerId, 80) || actionMessage.playerId;
+    const { participant } = database.getParticipant(code, targetPlayerId);
+    const activeSkillName = assertString(body.skillName || body.activeSkill, 'skillName', 80);
+    const activeCheck = getCheckTarget(participant.characterSheet, activeSkillName);
+    if (!activeCheck || !Number.isInteger(activeCheck.target)) {
+      throw new HttpError(400, 'Unknown active skill or characteristic for target player');
+    }
+
+    const passiveName = assertString(body.passiveName || body.passiveNpcName || 'NPC', 'passiveName', 80);
+    const passiveSkill = optionalString(body.passiveSkill, 80) || '心理学';
+    const passiveTarget = Number(body.passiveTarget);
+    if (!Number.isInteger(passiveTarget) || passiveTarget < 1 || passiveTarget > 100) {
+      throw new HttpError(400, 'passiveTarget must be an integer from 1 to 100');
+    }
+    const contestType = String(body.contestType || 'social').trim().toLowerCase();
+    const result = rollContestedCheck({
+      playerSkill: activeCheck.target,
+      npcSkill: passiveTarget,
+      playerName: participant.characterName || participant.displayName,
+      npcName: passiveName,
+      playerBonusDice: clampBonusPenalty(body.bonusDice),
+      playerPenaltyDice: clampBonusPenalty(body.penaltyDice),
+      defenderIsNpc: contestType !== 'combat'
+    });
+
+    const roll = database.createDiceRoll({
+      code,
+      playerId: targetPlayerId,
+      rollType: 'contested_check',
+      expression: '1d100',
+      label: `${activeCheck.label} vs ${passiveName}(${passiveSkill})`,
+      result
+    });
+
+    const reason = optionalString(body.reason, 400);
+    const message = database.createMessage({
+      code,
+      authorType: 'system',
+      messageType: 'SYSTEM',
+      displayName: '对抗检定',
+      content: buildOpposedCheckMessage({
+        actionMessage,
+        participant,
+        activeCheck,
+        passiveName,
+        passiveSkill,
+        passiveTarget,
+        result,
+        contestType,
+        reason
+      }),
+      status: 'complete'
+    });
+    hub.broadcast(code, 'message_created', { message });
+    hub.broadcast(code, 'dice_rolled', { roll });
+
+    const taskResult = queueAssistedAiTask({
+      code,
+      ownerPlayerId,
+      actionMessage,
+      triggerMessage: message,
+      idempotencyKey: `assisted:opposed:${actionMessage.id}:${message.id}`
+    });
+    return { message, roll, taskResult };
+  }
+
+  function performAssistedAdjudication({ code, body }) {
+    const ownerPlayerId = assertString(body.playerId, 'playerId', 80);
+    const actionMessageId = Number(body.actionMessageId);
+    if (!Number.isInteger(actionMessageId)) throw new HttpError(400, 'actionMessageId is required');
+    const decision = assistedDecision(body.decision);
+    const { room } = database.getParticipant(code, ownerPlayerId);
+    if (room.ownerPlayerId !== ownerPlayerId) throw new HttpError(403, 'Only the room owner can adjudicate actions');
+    if (room.status !== 'ACTIVE') throw new HttpError(409, 'Game is not active');
+    if (!isAssistedMode(room)) throw new HttpError(409, 'AI assisted mode is not enabled');
+
+    const state = database.getRoomState(code, { playerId: ownerPlayerId, messageLimit: 200 });
+    const actionMessage = findAdjudicatableAction(state, actionMessageId);
+    const reason = optionalString(body.reason, 400);
+
+    let result;
+    if (decision === 'NO_CHECK') {
+      result = adjudicateNoCheck({ code, ownerPlayerId, actionMessage, reason });
+    } else if (decision === 'REQUIRED_CHECK') {
+      result = adjudicateRequiredCheck({ code, ownerPlayerId, actionMessage, body });
+    } else {
+      result = adjudicateOpposedCheck({ code, ownerPlayerId, actionMessage, body });
+    }
+
+    const nextState = database.getRoomState(code, { playerId: ownerPlayerId, messageLimit: 100 });
+    hub.broadcast(code, 'room_state', database.getRoomState(code, { messageLimit: 100 }));
+    return {
+      ...nextState,
+      decision,
+      adjudicationMessage: result.message,
+      roll: result.roll,
+      aiQueued: true,
+      aiTask: result.taskResult.task,
+      created: result.taskResult.created
+    };
+  }
+
   async function handleApi(request, response, parts, url) {
     if (request.method === 'GET' && parts[1] === 'health') {
       sendJson(response, 200, {
@@ -973,6 +1279,13 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         return;
       }
 
+      if (request.method === 'POST' && parts[3] === 'adjudications') {
+        const body = await readJson(request);
+        const payload = performAssistedAdjudication({ code, body });
+        sendJson(response, 201, payload);
+        return;
+      }
+
       if (request.method === 'POST' && parts[3] === 'continue') {
         const body = await readJson(request);
         const playerId = assertString(body.playerId, 'playerId', 80);
@@ -1077,6 +1390,17 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         hub.broadcast(code, 'message_created', { message });
         let aiTask = null;
         if (triggersAi) {
+          if (isAssistedMode(room)) {
+            sendJson(response, 201, {
+              message,
+              aiQueued: false,
+              aiTask: null,
+              assistedPending: true,
+              preflightCheck: null
+            });
+            return;
+          }
+
           const idempotencyKey = body.actionId
             ? `action:${playerId}:${String(body.actionId).slice(0, 80)}`
             : `message:${message.id}`;

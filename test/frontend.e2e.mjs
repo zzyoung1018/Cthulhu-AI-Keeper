@@ -530,6 +530,40 @@ test('imports owner playtest exports through the create dialog', async ({ page }
   }
 });
 
+test('owner adjudicates checks in AI assisted mode', async ({ page }) => {
+  const fixture = await startFixture(['检定后的后果逐渐清晰。\n\n```json\n{}\n```']);
+  try {
+    const { room } = seedActiveRoom(fixture.app.database);
+    fixture.app.database.updateRoomAiConfig({
+      code: room.code,
+      playerId: 'owner',
+      aiConfig: { triggerMode: 'ASSISTED' }
+    });
+
+    await openSeededRoom(page, fixture.baseUrl, room.code);
+    await expect(page.locator('#roomStatus')).toContainText('AI辅助');
+
+    await page.locator('#messageForm textarea').fill('我检查窗台上的灰尘。');
+    await page.keyboard.press('Control+Enter');
+    await expect(page.locator('.assist-controls').last()).toContainText('AI 辅助模式');
+    await expect(page.getByRole('button', { name: '免检交给 AI' })).toBeVisible();
+
+    await page.getByRole('button', { name: '裁定检定' }).last().click();
+    await expect(page.locator('#assistDialog')).toBeVisible();
+    await page.locator('#assistForm input[name="skillName"]').fill('侦查');
+    await page.locator('#assistForm select[name="difficulty"]').selectOption('HARD');
+    await page.locator('#assistForm input[name="reason"]').fill('窗台灰尘需要仔细观察');
+    await page.locator('#assistForm button[type="submit"]').click();
+
+    await expect(page.locator('#chatLog')).toContainText('房主裁定：必要检定');
+    await expect(page.locator('#chatLog')).toContainText('侦查(68)');
+    await expect(page.locator('#chatLog')).toContainText('检定后的后果逐渐清晰');
+    expect(fixture.fakeAi.requests.length).toBe(1);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('syncs player messages in real time and keeps private messages scoped', async ({ browser }) => {
   const fixture = await startFixture(['脚步声在走廊另一端停住。\n\n```json\n{}\n```']);
   const pages = [];

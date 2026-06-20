@@ -788,6 +788,156 @@ test('preflight required checks roll before AI continuation', async () => {
   }
 });
 
+test('AI assisted mode waits for owner adjudication before narration', async () => {
+  const fakeAi = await startFakeAiServer([
+    [
+      '骰点结果出来后，书桌下沿的划痕显得更清楚。',
+      '',
+      '```json',
+      JSON.stringify({
+        required_checks: [
+          { targetPlayerId: 'p1', skill: '聆听', difficulty: 'HARD', reason: 'AI 不应在辅助模式自行追加检定' }
+        ]
+      }),
+      '```'
+    ].join('\n')
+  ]);
+  const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
+  const app = createApp({
+    config: {
+      dbPath: join(dir, 'test.db'),
+      dataDir: dir,
+      publicDir: resolve('public'),
+      ai: {
+        baseUrl: fakeAi.baseUrl,
+        apiKey: 'test-key',
+        model: 'test-model',
+        temperature: 0.1,
+        timeoutMs: 10_000,
+        localFallback: false
+      }
+    },
+    publicDir: resolve('public')
+  });
+
+  try {
+    const baseUrl = await new Promise((resolveListen) => {
+      app.server.listen(0, '127.0.0.1', () => {
+        const address = app.server.address();
+        resolveListen(`http://127.0.0.1:${address.port}`);
+      });
+    });
+
+    const module = createModule(app.database, 'p1');
+    const created = await jsonRequest(baseUrl, '/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        displayName: 'Keeper',
+        roomName: 'Assisted Room',
+        moduleId: module.id
+      })
+    });
+
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/character`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        playerId: 'p1',
+        displayName: 'Keeper',
+        characterSheet: characterSheet()
+      })
+    });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/ready`, {
+      method: 'PATCH',
+      body: JSON.stringify({ playerId: 'p1', isReady: true })
+    });
+    app.database.setRoomStatus({ code: created.room.code, playerId: 'p1', status: 'ACTIVE' });
+    await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/ai-config`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        playerId: 'p1',
+        aiConfig: { triggerMode: 'ASSISTED' }
+      })
+    });
+
+    const submitted = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        messageType: 'ACTION',
+        content: '我仔细侦查房间，检查书桌下面有没有隐藏痕迹。'
+      })
+    });
+
+    assert.equal(submitted.aiQueued, false);
+    assert.equal(submitted.assistedPending, true);
+    assert.equal(submitted.aiTask, null);
+    assert.equal(fakeAi.requests.length, 0);
+
+    const adjudicated = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/adjudications`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: 'p1',
+        actionMessageId: submitted.message.id,
+        decision: 'REQUIRED_CHECK',
+        targetPlayerId: 'p1',
+        skillName: '侦查',
+        difficulty: 'HARD',
+        reason: '房主认为需要细查'
+      })
+    });
+
+    assert.equal(adjudicated.aiQueued, true);
+    assert.equal(adjudicated.adjudicationMessage.displayName, '必要检定');
+    assert.equal(adjudicated.roll.label, '侦查');
+    assert.equal(adjudicated.roll.result.target, 68);
+
+    const completed = await waitForState(
+      baseUrl,
+      created.room.code,
+      'p1',
+      (roomState) => roomState.aiTasks.some((task) => task.uid === adjudicated.aiTask.uid && task.status === 'COMPLETED')
+    );
+
+    assert.equal(fakeAi.requests.length, 1);
+    const continuationRequest = findAiRequest(fakeAi.requests, (messages) => messages.some((message) =>
+      message.role === 'system' && /检定结果后的继续叙事/.test(message.content)
+    ));
+    assert.ok(continuationRequest);
+
+    const action = completed.messages.find((message) => message.id === submitted.message.id);
+    assert.equal(action.aiProcessedTaskUid, adjudicated.aiTask.uid);
+    assert.equal(completed.diceRolls.filter((roll) => roll.label === '侦查').length, 1);
+    assert.equal(completed.diceRolls.some((roll) => roll.label === '聆听'), false);
+
+    const dmMessage = completed.messages.find((message) => message.authorType === 'dm');
+    assert.ok(dmMessage);
+    assert.match(dmMessage.content, /划痕显得更清楚/);
+    assert.doesNotMatch(dmMessage.content, /此处触发/);
+
+    const logs = app.database.listAiLogs({ code: created.room.code, limit: 20 });
+    const structured = logs.find((entry) => entry.stage === 'structured-events');
+    assert.equal(structured.detection.checkEventsSuppressed, true);
+    assert.equal(structured.detection.suppressedCheckEventCount, 1);
+
+    const duplicate = await fetch(`${baseUrl}/api/rooms/${created.room.code}/adjudications`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        playerId: 'p1',
+        actionMessageId: submitted.message.id,
+        decision: 'NO_CHECK'
+      })
+    });
+    assert.equal(duplicate.status, 409);
+  } finally {
+    await new Promise((resolveClose) => app.server.close(resolveClose));
+    app.database.close();
+    await fakeAi.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('regenerating a preflighted task keeps check continuation context', async () => {
   const fakeAi = await startFakeAiServer([
     '开场叙事。',

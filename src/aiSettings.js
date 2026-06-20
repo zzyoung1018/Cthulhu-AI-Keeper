@@ -2,7 +2,7 @@ import { HttpError } from './errors.js';
 
 const DETAIL_LEVELS = ['BRIEF', 'BALANCED', 'RICH'];
 const STRICTNESS_LEVELS = ['LOOSE', 'STANDARD', 'STRICT'];
-const TRIGGER_MODES = ['ACTION', 'MANUAL', 'ROUND'];
+const TRIGGER_MODES = ['ACTION', 'ASSISTED', 'MANUAL', 'ROUND'];
 
 const DEFAULT_AI_SETTINGS = {
   baseUrl: '',
