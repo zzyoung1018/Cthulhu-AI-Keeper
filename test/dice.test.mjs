@@ -4,6 +4,7 @@ import {
   cocCheckPasses,
   cocSuccessLevel,
   dispatchDiceRoll,
+  formatD100RollDetail,
   formatRollSummary,
   parseDiceExpression,
   rollCocCheck,
@@ -41,6 +42,17 @@ test('rolls CoC d100 bonus and penalty dice', () => {
   const penalty = rollD100({ penaltyDice: 1, rng: sequence([0.4, 0.8, 0.2]) });
   assert.deepEqual(penalty.candidates, [84, 24]);
   assert.equal(penalty.total, 84);
+});
+
+test('formats bonus and penalty dice with visible candidate rolls', () => {
+  const bonus = rollD100({ bonusDice: 1, rng: sequence([0.4, 0.8, 0.2]) });
+  assert.match(formatD100RollDetail(bonus), /奖励骰/);
+  assert.match(formatD100RollDetail(bonus), /候选 84 \/ 24/);
+  assert.match(formatD100RollDetail(bonus), /取最低 24/);
+
+  const penalty = rollD100({ penaltyDice: 1, rng: sequence([0.4, 0.8, 0.2]) });
+  assert.match(formatD100RollDetail(penalty), /惩罚骰/);
+  assert.match(formatD100RollDetail(penalty), /取最高 84/);
 });
 
 test('classifies CoC 7th Edition success levels and difficulty', () => {

@@ -559,19 +559,28 @@ test('owner adjudicates checks in AI assisted mode', async ({ page }) => {
       return {
         clippedHorizontally: contentRect.left < dialogRect.left || contentRect.right > dialogRect.right,
         inputList: input.getAttribute('list'),
-        quickChipCount: document.querySelectorAll('[data-assist-skill]').length
+        quickChipCount: document.querySelectorAll('[data-assist-skill]').length,
+        catalogOptionCount: document.querySelectorAll('#assistSkillCatalog option').length,
+        hasNonQuickSkill: Boolean(document.querySelector('#assistSkillCatalog option[value="法律"]'))
       };
     });
     expect(modalMetrics.clippedHorizontally).toBe(false);
     expect(modalMetrics.inputList).toBe(null);
     expect(modalMetrics.quickChipCount).toBeGreaterThan(0);
-    await page.locator('#assistForm input[name="skillName"]').fill('侦查');
+    expect(modalMetrics.catalogOptionCount).toBeGreaterThan(30);
+    expect(modalMetrics.hasNonQuickSkill).toBe(true);
+    await page.locator('#assistSkillCatalog').selectOption('法律');
+    await expect(page.locator('#assistForm input[name="skillName"]')).toHaveValue('法律');
+    await page.locator('[data-assist-skill="侦查"]').click();
     await page.locator('#assistForm select[name="difficulty"]').selectOption('HARD');
+    await page.locator('#assistForm select[name="bonusDice"]').selectOption('1');
     await page.locator('#assistForm input[name="reason"]').fill('窗台灰尘需要仔细观察');
     await page.locator('#assistForm button[type="submit"]').click();
 
     await expect(page.locator('#chatLog')).toContainText('房主裁定：必要检定');
     await expect(page.locator('#chatLog')).toContainText('侦查(68)');
+    await expect(page.locator('#chatLog')).toContainText('奖励骰');
+    await expect(page.locator('#chatLog')).toContainText('候选');
     await expect(page.locator('#chatLog')).toContainText('检定后的后果逐渐清晰');
     expect(fixture.fakeAi.requests.length).toBe(1);
   } finally {

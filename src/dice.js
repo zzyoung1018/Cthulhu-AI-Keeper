@@ -71,6 +71,36 @@ export function rollD100({ bonusDice = 0, penaltyDice = 0, rng = Math.random } =
   };
 }
 
+function d100AdjustmentText(result = {}) {
+  const bonusDice = Number(result.bonusDice || 0);
+  const penaltyDice = Number(result.penaltyDice || 0);
+  const parts = [];
+  if (bonusDice) parts.push(`${bonusDice} 奖励骰`);
+  if (penaltyDice) parts.push(`${penaltyDice} 惩罚骰`);
+  const netDice = bonusDice - penaltyDice;
+  if (bonusDice && penaltyDice && netDice !== 0) {
+    parts.push(netDice > 0 ? `净 ${netDice} 奖励骰` : `净 ${Math.abs(netDice)} 惩罚骰`);
+  }
+  return parts.join('，');
+}
+
+export function formatD100RollDetail(result = {}) {
+  const total = Number.isInteger(result.total) ? result.total : result.roll;
+  const candidates = Array.isArray(result.candidates) ? result.candidates : [];
+  const adjustment = d100AdjustmentText(result);
+  const netDice = Number(result.bonusDice || 0) - Number(result.penaltyDice || 0);
+
+  if (candidates.length > 1) {
+    const pickText = netDice >= 0 ? '取最低' : '取最高';
+    return `1d100（${adjustment}；候选 ${candidates.join(' / ')}，${pickText} ${total}）`;
+  }
+  if (adjustment) {
+    const cancelled = netDice === 0 ? '，互相抵消' : '';
+    return `1d100（${adjustment}${cancelled}）= ${total}`;
+  }
+  return `1d100 = ${total}`;
+}
+
 export function cocSuccessLevel(roll, target) {
   assertInteger(roll, 'Roll', 1, 100);
   assertInteger(target, 'Target', 0, 100);
@@ -180,14 +210,20 @@ export function rollOpposedCheck({
       roll: activeRoll.total,
       successLevel: activeLevel,
       bonusDice: activeBonusDice,
-      penaltyDice: activePenaltyDice
+      penaltyDice: activePenaltyDice,
+      ones: activeRoll.ones,
+      tensDice: activeRoll.tensDice,
+      candidates: activeRoll.candidates
     },
     passive: {
       target: passiveTarget,
       roll: passiveRoll.total,
       successLevel: passiveLevel,
       bonusDice: passiveBonusDice,
-      penaltyDice: passivePenaltyDice
+      penaltyDice: passivePenaltyDice,
+      ones: passiveRoll.ones,
+      tensDice: passiveRoll.tensDice,
+      candidates: passiveRoll.candidates
     },
     winner
   };
@@ -385,7 +421,10 @@ export function rollContestedCheck({
       isCritical: playerLevel === 'CRITICAL',
       isFumble: playerLevel === 'FUMBLE',
       bonusDice: playerBonusDice,
-      penaltyDice: playerPenaltyDice
+      penaltyDice: playerPenaltyDice,
+      ones: playerRoll.ones,
+      tensDice: playerRoll.tensDice,
+      candidates: playerRoll.candidates
     },
     npc: {
       name: npcName,
@@ -393,7 +432,12 @@ export function rollContestedCheck({
       roll: npcRoll.total,
       successLevel: npcLevel,
       isCritical: npcLevel === 'CRITICAL',
-      isFumble: npcLevel === 'FUMBLE'
+      isFumble: npcLevel === 'FUMBLE',
+      ones: npcRoll.ones,
+      tensDice: npcRoll.tensDice,
+      candidates: npcRoll.candidates,
+      bonusDice: npcBonusDice,
+      penaltyDice: npcPenaltyDice
     },
     winner,
     reason
@@ -405,9 +449,7 @@ export function formatRollSummary({ participantName, label, result }) {
 
   if (result.type === 'coc_check' || result.type === 'skill_check') {
     const skill = result.skillName ? `${result.skillName} ` : '';
-    const lines = [`${prefix}：${skill}1d100 = ${result.total} / ${result.target}，${result.successLevel}，${result.passed ? '通过' : '未通过'}`];
-    if (result.bonusDice) lines.push(`（${result.bonusDice} 奖励骰）`);
-    if (result.penaltyDice) lines.push(`（${result.penaltyDice} 惩罚骰）`);
+    const lines = [`${prefix}：${skill}${formatD100RollDetail(result)} / ${result.target}，${result.successLevel}，${result.passed ? '通过' : '未通过'}`];
     if (result.luckSpend) lines.push(`消耗 ${result.luckSpend.spent} 点幸运值，${result.luckSpend.passed ? '通过' : '仍失败'}`);
     return lines.join(' ');
   }
@@ -415,8 +457,8 @@ export function formatRollSummary({ participantName, label, result }) {
   if (result.type === 'opposed_check') {
     return [
       `${prefix}：对抗检定`,
-      `主动方 1d100 = ${result.active.roll} / ${result.active.target}，${result.active.successLevel}`,
-      `被动方 1d100 = ${result.passive.roll} / ${result.passive.target}，${result.passive.successLevel}`,
+      `主动方 ${formatD100RollDetail(result.active)} / ${result.active.target}，${result.active.successLevel}`,
+      `被动方 ${formatD100RollDetail(result.passive)} / ${result.passive.target}，${result.passive.successLevel}`,
       `结果：${result.winner === 'active' ? '主动方胜' : result.winner === 'passive' ? '被动方胜' : '平局'}`
     ].join(' · ');
   }

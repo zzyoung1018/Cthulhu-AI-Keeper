@@ -883,12 +883,15 @@ test('AI assisted mode waits for owner adjudication before narration', async () 
         targetPlayerId: 'p1',
         skillName: '侦查',
         difficulty: 'HARD',
+        bonusDice: 1,
         reason: '房主认为需要细查'
       })
     });
 
     assert.equal(adjudicated.aiQueued, true);
     assert.equal(adjudicated.adjudicationMessage.displayName, '必要检定');
+    assert.match(adjudicated.adjudicationMessage.content, /奖励骰/);
+    assert.match(adjudicated.adjudicationMessage.content, /候选/);
     assert.equal(adjudicated.roll.label, '侦查');
     assert.equal(adjudicated.roll.result.target, 68);
 

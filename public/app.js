@@ -76,6 +76,7 @@ const els = {
   assistRequiredFields: document.querySelector('#assistRequiredFields'),
   assistOpposedFields: document.querySelector('#assistOpposedFields'),
   assistQuickSkills: document.querySelector('#assistQuickSkills'),
+  assistSkillCatalog: document.querySelector('#assistSkillCatalog'),
   // 模组
   moduleSelect: document.querySelector('#moduleSelect'),
   moduleFile: document.querySelector('#moduleFile'),
@@ -304,6 +305,13 @@ const defaultSkills = {
   药学: 1,
   追踪: 10
 };
+
+const assistSkillCatalogGroups = [
+  { label: '调查与感知', values: ['侦查', '聆听', '图书馆使用', '追踪', '导航', '摄影'] },
+  { label: '社交与心理', values: ['话术', '说服', '魅惑', '恐吓', '心理学', '精神分析', '信用评级', '乔装'] },
+  { label: '行动与战斗', values: ['闪避', '格斗', '射击', '潜行', '妙手', '锁匠', '攀爬', '跳跃', '投掷', '游泳', '驾驶汽车', '驾驶', '骑术'] },
+  { label: '知识与专业', values: ['会计', '人类学', '估价', '考古学', '克苏鲁神话', '电气维修', '急救', '历史', '化学', '母语', '法律', '工艺', '机械维修', '医学', '博物学', '神秘学', '外语', '物理学', '药学'] }
+];
 
 // CoC 7e 职业模板（名称 → 职业技能列表）
 const occupationTemplates = {
@@ -2132,6 +2140,86 @@ function renderAiConfigForm() {
   setFormValue(els.aiConfigForm, 'contentBoundaries', config.contentBoundaries || '');
 }
 
+function selectedAssistParticipant() {
+  const targetPlayerId = els.assistTargetPlayer?.value || '';
+  return state.participants.find((participant) => participant.playerId === targetPlayerId) || null;
+}
+
+function checkScoreLabel(score, fallback = 0) {
+  const value = numberInRange(score, fallback, 0, skillCreationMax);
+  return `(${value})`;
+}
+
+function appendAssistSkillOption(group, name, score, fallback = 0) {
+  const option = document.createElement('option');
+  option.value = name;
+  option.textContent = `${name} ${checkScoreLabel(score, fallback)}`;
+  group.append(option);
+}
+
+function renderAssistSkillCatalog(preferredValue = '') {
+  if (!els.assistSkillCatalog) return;
+  const participant = selectedAssistParticipant();
+  const sheet = participant?.characterSheet || {};
+  const characteristics = { ...defaultCharacteristics, ...(sheet.characteristics || {}) };
+  const skills = { ...defaultSkills, ...(sheet.skills || {}) };
+  const previousValue = preferredValue || els.assistForm?.elements.skillName?.value || els.assistSkillCatalog.value || '';
+  const selectableValues = new Set();
+  const usedSkills = new Set();
+
+  els.assistSkillCatalog.replaceChildren();
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = '选择技能或属性';
+  els.assistSkillCatalog.append(placeholder);
+
+  const characteristicGroup = document.createElement('optgroup');
+  characteristicGroup.label = '属性';
+  for (const key of characteristicKeys) {
+    const option = document.createElement('option');
+    const info = characteristicInfo[key] || {};
+    option.value = key;
+    option.textContent = `${key} ${info.label || ''} ${checkScoreLabel(characteristics[key], defaultCharacteristics[key])}`.trim();
+    characteristicGroup.append(option);
+    selectableValues.add(key);
+  }
+  els.assistSkillCatalog.append(characteristicGroup);
+
+  for (const groupDef of assistSkillCatalogGroups) {
+    const group = document.createElement('optgroup');
+    group.label = groupDef.label;
+    for (const name of groupDef.values) {
+      if (!Object.prototype.hasOwnProperty.call(skills, name)) continue;
+      appendAssistSkillOption(group, name, skills[name], defaultSkills[name] || 0);
+      selectableValues.add(name);
+      usedSkills.add(name);
+    }
+    if (group.children.length > 0) els.assistSkillCatalog.append(group);
+  }
+
+  const remainingSkills = Object.keys(skills)
+    .filter((name) => !usedSkills.has(name))
+    .sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'));
+  if (remainingSkills.length > 0) {
+    const group = document.createElement('optgroup');
+    group.label = '其他与自定义';
+    for (const name of remainingSkills) {
+      appendAssistSkillOption(group, name, skills[name], defaultSkills[name] || 0);
+      selectableValues.add(name);
+    }
+    els.assistSkillCatalog.append(group);
+  }
+
+  els.assistSkillCatalog.value = selectableValues.has(previousValue) ? previousValue : '';
+}
+
+function setAssistSkillValue(value, { focus = true } = {}) {
+  if (!els.assistForm) return;
+  els.assistForm.elements.skillName.value = value || '';
+  if (els.assistSkillCatalog) els.assistSkillCatalog.value = value || '';
+  if (focus) els.assistForm.elements.skillName.focus();
+}
+
 function renderAssistQuickSkills() {
   if (!els.assistQuickSkills) return;
   const values = ['侦查', '聆听', '图书馆使用', '话术', '说服', '心理学', '潜行', '妙手', 'STR', 'DEX', 'INT', '幸运'];
@@ -2191,6 +2279,7 @@ function openAssistDialog(actionMessage) {
   if (els.assistActionPreview) {
     els.assistActionPreview.textContent = `${playerLabelForId(actionMessage.playerId)}：${actionMessage.content}`;
   }
+  renderAssistSkillCatalog();
   updateAssistDecisionFields();
   els.assistDialog.showModal();
 }
@@ -2762,11 +2851,14 @@ els.aiConfigForm.addEventListener('submit', async (event) => {
 });
 
 els.assistDecision?.addEventListener('change', updateAssistDecisionFields);
+els.assistTargetPlayer?.addEventListener('change', () => renderAssistSkillCatalog());
+els.assistSkillCatalog?.addEventListener('change', () => {
+  setAssistSkillValue(els.assistSkillCatalog.value);
+});
 els.assistQuickSkills?.addEventListener('click', (event) => {
   const button = event.target.closest('[data-assist-skill]');
   if (!button || !els.assistForm) return;
-  els.assistForm.elements.skillName.value = button.dataset.assistSkill || '';
-  els.assistForm.elements.skillName.focus();
+  setAssistSkillValue(button.dataset.assistSkill || '');
 });
 document.querySelector('#closeAssistDialog')?.addEventListener('click', () => els.assistDialog.close());
 els.assistDialog?.addEventListener('click', (event) => {

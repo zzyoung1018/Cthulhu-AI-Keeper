@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CoC Online</title>
-    <link rel="stylesheet" href="/styles.css?v=20260620-assist-modal">
+    <link rel="stylesheet" href="/styles.css?v=20260620-assist-controls">
   </head>
   <body>
     <main class="shell">
@@ -287,7 +287,10 @@
             <option value="OPPOSED_CHECK">对抗检定</option>
           </select></label>
           <label>目标玩家 <select name="targetPlayerId" id="assistTargetPlayer"></select></label>
-          <label class="assist-wide">玩家检定项 <input name="skillName" maxlength="80" placeholder="侦查 / 话术 / STR / 幸运" required></label>
+          <label>玩家检定项 <input name="skillName" maxlength="80" placeholder="侦查 / 话术 / STR / 幸运" required></label>
+          <label>详细目录 <select id="assistSkillCatalog">
+            <option value="">选择技能或属性</option>
+          </select></label>
           <div class="assist-skill-chips assist-wide" id="assistQuickSkills" aria-label="常用检定项"></div>
           <div class="config-grid assist-required-fields" id="assistRequiredFields">
             <label>难度 <select name="difficulty">
@@ -359,6 +362,6 @@
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="/app.js?v=20260620-assist-modal"></script>
+    <script type="module" src="/app.js?v=20260620-assist-controls"></script>
   </body>
 </html>

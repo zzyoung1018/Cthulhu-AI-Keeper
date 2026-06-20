@@ -20,7 +20,7 @@ import { assertAiSettingsInput, roomRuntimeAiConfig } from './aiSettings.js';
 import { getCheckTarget, getSkillTarget } from './character.js';
 import { isAiConfigured } from './config.js';
 import { createDatabase } from './db.js';
-import { dispatchDiceRoll, formatRollSummary, rollContestedCheck } from './dice.js';
+import { dispatchDiceRoll, formatD100RollDetail, formatRollSummary, rollContestedCheck } from './dice.js';
 import { assertString, optionalString, HttpError } from './errors.js';
 import { exportGameJson, exportGameMarkdown, exportReplayFixtureJson } from './export.js';
 import { readJson, sendError, sendJson, serveStatic } from './http.js';
@@ -158,10 +158,9 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       `行动：${shortActionText(actionMessage)}`,
       `调查员：${participant.characterName || participant.displayName}`,
       `项目：${checkTarget.label}(${checkTarget.target})，难度：${difficultyLabel(difficulty)}`,
-      `结果：1d100 = ${result.total} → ${successLevelLabel(result.successLevel)}，${result.passed ? '通过' : '未通过'}`
+      `掷骰：${formatD100RollDetail(result)}`,
+      `结果：${successLevelLabel(result.successLevel)}，${result.passed ? '通过' : '未通过'}`
     ];
-    if (result.bonusDice) lines.push(`奖励骰：${result.bonusDice}`);
-    if (result.penaltyDice) lines.push(`惩罚骰：${result.penaltyDice}`);
     if (reason) lines.push(`原因：${reason}`);
     lines.push('', '（检定结果已交给 AI DM，等待生成后续剧情。）');
     return lines.join('\n');
@@ -179,8 +178,8 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       `🎭 房主裁定：${contestTypeLabel}`,
       `行动：${shortActionText(actionMessage)}`,
       `${participant.characterName || participant.displayName} 的 ${activeCheck.label}(${activeCheck.target}) vs ${passiveName} 的 ${passiveSkill}(${passiveTarget})`,
-      `调查员 1d100 = ${result.player.roll} → ${successLevelLabel(result.player.successLevel)}`,
-      `${passiveName} 1d100 = ${result.npc.roll} → ${successLevelLabel(result.npc.successLevel)}`,
+      `调查员 ${formatD100RollDetail(result.player)} → ${successLevelLabel(result.player.successLevel)}`,
+      `${passiveName} ${formatD100RollDetail(result.npc)} → ${successLevelLabel(result.npc.successLevel)}`,
       `判定：${result.reason}`,
       `结果：${playerWon ? '调查员胜' : (result.winner === 'npc' ? 'NPC胜' : '平局')}`
     ];
