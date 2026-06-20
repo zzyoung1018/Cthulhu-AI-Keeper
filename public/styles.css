@@ -643,6 +643,11 @@ select:focus {
   background: rgba(123, 198, 164, 0.09);
 }
 
+.replay-export {
+  width: 100%;
+  min-height: 34px;
+}
+
 .players {
   display: grid;
   gap: 8px;

@@ -1341,6 +1341,19 @@ test('playtest import endpoint creates a replay room from owner export', async (
     assert.equal(roomState.messages[0].content, '这是一条需要复现的记录。');
     const logs = await jsonRequest(baseUrl, `/api/rooms/${imported.room.code}/ai-log?playerId=new-owner`);
     assert.equal(logs.logs[0].stage, 'preflight-check');
+
+    const fixtureResponse = await fetch(`${baseUrl}/api/rooms/${imported.room.code}/replay-fixture?playerId=new-owner`);
+    assert.equal(fixtureResponse.status, 200);
+    assert.match(fixtureResponse.headers.get('content-disposition') || '', /fixture\.json/);
+    const fixture = await fixtureResponse.json();
+    assert.equal(fixture.schemaVersion, 'dm-online-replay-fixture/1.0');
+    assert.equal(fixture.room.replay.sourceRoomCode, created.room.code);
+    assert.equal(fixture.participants[0].ref, 'P1');
+    assert.equal(fixture.aiLogs[0].stage, 'preflight-check');
+    assert.equal(fixture.testHints.aiLogCount, 1);
+
+    const forbidden = await fetch(`${baseUrl}/api/rooms/${imported.room.code}/replay-fixture?playerId=owner`);
+    assert.equal(forbidden.status, 403);
   } finally {
     await new Promise((resolveClose) => app.server.close(resolveClose));
     app.database.close();

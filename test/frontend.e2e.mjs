@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createApp } from '../src/app.js';
@@ -513,6 +513,14 @@ test('imports owner playtest exports through the create dialog', async ({ page }
     await expect(page.locator('#replayBanner')).toContainText(`来源 E2E Room #${room.code}`);
     await expect(page.locator('#replayBanner')).toContainText('消息');
     await expect(page.locator('#replayBanner')).toContainText('日志');
+    const downloadPromise = page.waitForEvent('download');
+    await page.locator('#exportReplayFixture').click();
+    const download = await downloadPromise;
+    const fixturePath = await download.path();
+    const fixtureJson = JSON.parse(readFileSync(fixturePath, 'utf8'));
+    expect(fixtureJson.schemaVersion).toBe('dm-online-replay-fixture/1.0');
+    expect(fixtureJson.room.replay.sourceRoomCode).toBe(room.code);
+    expect(fixtureJson.testHints.hasPreflightChecks).toBe(true);
     await expect(page.locator('#chatLog')).toContainText('登记簿纸页潮湿');
     await expect(page.locator('#btnAiLog')).toBeVisible();
     await page.locator('#btnAiLog').click();

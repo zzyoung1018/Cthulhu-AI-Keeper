@@ -78,6 +78,119 @@ function formatCharacterSheetForExport(sheet, displayName) {
   ].filter(Boolean).join('\n');
 }
 
+function clipText(value, limit = 1200) {
+  const text = String(value || '').trim();
+  return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
+function parseObject(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildPlayerRefs(participants = []) {
+  const refs = new Map();
+  participants.forEach((participant, index) => {
+    refs.set(participant.playerId || '', `P${index + 1}`);
+  });
+  return refs;
+}
+
+function playerRef(refs, playerId) {
+  return refs.get(playerId || '') || '';
+}
+
+function slimDetection(detection, refs) {
+  if (!detection || typeof detection !== 'object') return null;
+  return {
+    source: detection.source || '',
+    kind: detection.kind || '',
+    ruleId: detection.ruleId || '',
+    confidence: detection.confidence ?? null,
+    skill: detection.skill || detection.activeSkill || '',
+    passiveSkill: detection.passiveSkill || '',
+    target: detection.target || '',
+    difficulty: detection.difficulty || '',
+    playerRef: playerRef(refs, detection.playerId || detection.targetPlayerId || detection.activePlayerId || ''),
+    notes: Array.isArray(detection.notes) ? detection.notes.slice(0, 8) : []
+  };
+}
+
+function slimLog(log, refs) {
+  const detection = log.detection || {};
+  return {
+    stage: log.stage || '',
+    taskUid: log.taskUid || '',
+    time: log.time || log.createdAt || '',
+    actionMessageId: log.actionMessageId || null,
+    type: log.type || '',
+    reason: log.reason || '',
+    eventKeys: Array.isArray(log.eventKeys) ? log.eventKeys : [],
+    validKeys: Array.isArray(log.validKeys) ? log.validKeys : [],
+    rejectedKeys: Array.isArray(log.rejectedKeys) ? log.rejectedKeys : [],
+    issues: Array.isArray(log.issues) ? log.issues.slice(0, 12) : [],
+    warnings: Array.isArray(log.warnings) ? log.warnings.slice(0, 12) : [],
+    detection: slimDetection(detection, refs),
+    detectionNotes: Array.isArray(detection.detectionNotes)
+      ? detection.detectionNotes.slice(0, 8).map((note) => slimDetection(note, refs)).filter(Boolean)
+      : [],
+    rawResponseSnippet: clipText(log.rawResponseSnippet, 1000)
+  };
+}
+
+function messageById(messages = []) {
+  return new Map(messages.filter((message) => message.id).map((message) => [message.id, message]));
+}
+
+function checksFromDice(diceRolls = [], refs) {
+  return diceRolls.map((roll) => ({
+    id: roll.id || null,
+    playerRef: playerRef(refs, roll.playerId),
+    rollType: roll.rollType || '',
+    label: roll.label || '',
+    expression: roll.expression || '',
+    isPrivate: Boolean(roll.isPrivate),
+    result: {
+      type: roll.result?.type || '',
+      skillName: roll.result?.skillName || roll.label || '',
+      total: roll.result?.total ?? null,
+      target: roll.result?.target ?? null,
+      difficulty: roll.result?.difficulty || '',
+      successLevel: roll.result?.successLevel || '',
+      passed: roll.result?.passed ?? null,
+      winner: roll.result?.winner || '',
+      activeSkill: roll.result?.activeSkill || '',
+      passiveSkill: roll.result?.passiveSkill || '',
+      passiveName: roll.result?.passiveName || ''
+    },
+    createdAt: roll.createdAt || ''
+  }));
+}
+
+function expectedFromLogs(aiLogs = [], refs) {
+  return aiLogs
+    .filter((log) => ['preflight-check', 'structured-events'].includes(log.stage))
+    .map((log) => ({
+      stage: log.stage,
+      taskUid: log.taskUid || '',
+      actionMessageId: log.actionMessageId || log.detection?.latestActionId || null,
+      type: log.type || '',
+      reason: log.reason || log.detection?.inferredRequiredReason || log.detection?.inferredReason || '',
+      eventKeys: Array.isArray(log.eventKeys) ? log.eventKeys : [],
+      validKeys: Array.isArray(log.validKeys) ? log.validKeys : [],
+      detection: slimDetection(log.detection, refs),
+      detectionNotes: Array.isArray(log.detection?.detectionNotes)
+        ? log.detection.detectionNotes.slice(0, 8).map((note) => slimDetection(note, refs)).filter(Boolean)
+        : []
+    }));
+}
+
 export function exportGameMarkdown(state) {
   const { room, participants, messages, diceRolls } = state;
 
@@ -199,4 +312,105 @@ export function exportGameJson(state) {
     rounds,
     aiLogs
   }, null, 2);
+}
+
+export function buildReplayFixture(state) {
+  const {
+    room,
+    participants = [],
+    messages = [],
+    diceRolls = [],
+    aiLogs = [],
+    module = null,
+    moduleSegments = []
+  } = state;
+  const refs = buildPlayerRefs(participants);
+  const byId = messageById(messages);
+  const replay = room?.roomMeta?.replay || {};
+  const actions = messages
+    .filter((message) => message.messageType === 'ACTION')
+    .map((message) => ({
+      id: message.id || null,
+      playerRef: playerRef(refs, message.playerId),
+      displayName: message.displayName || '',
+      content: clipText(message.content, 2000),
+      createdAt: message.createdAt || ''
+    }));
+
+  return {
+    schemaVersion: 'dm-online-replay-fixture/1.0',
+    generatedAt: new Date().toISOString(),
+    room: {
+      code: room.code,
+      name: room.name,
+      status: room.status,
+      moduleTitle: room.moduleTitle || module?.title || '',
+      summary: clipText(room.summary, 4000),
+      sceneState: parseObject(room.sceneState),
+      replay: {
+        isReplay: Boolean(replay.isReplay),
+        sourceRoomCode: replay.sourceRoomCode || '',
+        sourceRoomName: replay.sourceRoomName || '',
+        sourceModuleTitle: replay.sourceModuleTitle || '',
+        importedAt: replay.importedAt || ''
+      }
+    },
+    participants: participants.map((participant) => ({
+      ref: playerRef(refs, participant.playerId),
+      displayName: participant.displayName,
+      isOwner: Boolean(participant.isOwner),
+      characterName: participant.characterName || participant.characterSheet?.investigator?.name || '',
+      characteristics: participant.characterSheet?.characteristics || {},
+      skills: participant.characterSheet?.skills || {},
+      state: clipText(participant.state, 1000),
+      discoveredClues: participant.discoveredClues || [],
+      knownNpcs: participant.knownNpcs || []
+    })),
+    moduleContext: {
+      title: module?.title || room.moduleTitle || '',
+      segmentCount: moduleSegments.length,
+      segments: moduleSegments.slice(0, 80).map((segment) => ({
+        sortOrder: segment.sortOrder,
+        title: segment.title,
+        scene: segment.scene,
+        content: clipText(segment.content, 1200)
+      }))
+    },
+    timeline: messages.map((message) => ({
+      id: message.id || null,
+      authorType: message.authorType,
+      messageType: message.messageType,
+      playerRef: playerRef(refs, message.playerId),
+      privateTargetRef: playerRef(refs, message.privateTarget),
+      displayName: message.displayName,
+      content: clipText(message.content, 3000),
+      status: message.status,
+      createdAt: message.createdAt
+    })),
+    actions,
+    checks: checksFromDice(diceRolls, refs),
+    expectedAiBehavior: expectedFromLogs(aiLogs, refs).map((entry) => ({
+      ...entry,
+      action: entry.actionMessageId ? {
+        id: entry.actionMessageId,
+        content: clipText(byId.get(entry.actionMessageId)?.content || '', 2000),
+        playerRef: playerRef(refs, byId.get(entry.actionMessageId)?.playerId || '')
+      } : null
+    })),
+    aiLogs: aiLogs.slice(-120).map((log) => slimLog(log, refs)),
+    testHints: {
+      actionCount: actions.length,
+      checkCount: diceRolls.length,
+      aiLogCount: aiLogs.length,
+      hasPreflightChecks: aiLogs.some((log) => log.stage === 'preflight-check'),
+      hasValidationWarnings: aiLogs.some((log) =>
+        (Array.isArray(log.issues) && log.issues.length > 0) ||
+        (Array.isArray(log.warnings) && log.warnings.length > 0)
+      )
+    }
+  };
+}
+
+export function exportReplayFixtureJson(state) {
+  return JSON.stringify(buildReplayFixture(state), null, 2);
 }

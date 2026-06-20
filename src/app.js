@@ -22,7 +22,7 @@ import { isAiConfigured } from './config.js';
 import { createDatabase } from './db.js';
 import { dispatchDiceRoll, formatRollSummary } from './dice.js';
 import { assertString, optionalString, HttpError } from './errors.js';
-import { exportGameJson, exportGameMarkdown } from './export.js';
+import { exportGameJson, exportGameMarkdown, exportReplayFixtureJson } from './export.js';
 import { readJson, sendError, sendJson, serveStatic } from './http.js';
 import { extractModuleText, scoreModuleSegment, segmentModuleText, validateModuleFile } from './moduleParser.js';
 import { readMultipartForm } from './multipart.js';
@@ -1269,6 +1269,19 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
             'Content-Disposition': `attachment; filename="dm-online-${code}.md"` });
           response.end(mdOutput);
         }
+        return;
+      }
+
+      if (request.method === 'GET' && parts[3] === 'replay-fixture') {
+        const playerId = assertString(url.searchParams.get('playerId'), 'playerId', 80);
+        const state = database.getExportState(code, playerId);
+        if (!state.isOwnerExport) throw new HttpError(403, 'Only the room owner can export replay fixtures');
+        if (!state.room.roomMeta?.replay?.isReplay) throw new HttpError(409, 'Room is not an imported replay');
+        const jsonOutput = exportReplayFixtureJson(state);
+        response.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Content-Disposition': `attachment; filename="dm-online-${code}-fixture.json"` });
+        response.end(jsonOutput);
         return;
       }
 

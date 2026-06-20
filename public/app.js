@@ -83,6 +83,7 @@ const els = {
   replayBanner: document.querySelector('#replayBanner'),
   replaySource: document.querySelector('#replaySource'),
   replayMeta: document.querySelector('#replayMeta'),
+  exportReplayFixture: document.querySelector('#exportReplayFixture'),
   roomCode: document.querySelector('#roomCode'),
   codeRow: document.querySelector('#codeRow'),
   playerCount: document.querySelector('#playerCount'),
@@ -952,6 +953,15 @@ function exportFilteredAiLogs() {
   toast(`已导出 ${logs.length} 条 AI 检测日志`);
 }
 
+function exportReplayFixture() {
+  if (!state.room || !currentReplayMeta()) return;
+  const link = document.createElement('a');
+  link.href = `/api/rooms/${state.room.code}/replay-fixture?playerId=${encodeURIComponent(state.playerId)}`;
+  link.download = `dm-online-${state.room.code}-fixture.json`;
+  link.click();
+  toast('正在导出回归用例...');
+}
+
 function setConnection(status, text) {
   els.connectionStatus.textContent = text;
   els.connectionDot.className = `status-dot ${status}`;
@@ -1113,6 +1123,7 @@ function renderReplayBanner() {
   const replay = currentReplayMeta();
   const visible = Boolean(state.room && isOwner() && replay);
   els.replayBanner.hidden = !visible;
+  if (els.exportReplayFixture) els.exportReplayFixture.hidden = !visible;
   if (!visible) {
     els.replaySource.textContent = '';
     els.replayMeta.replaceChildren();
@@ -2226,6 +2237,7 @@ els.aiLogStageFilter?.addEventListener('change', renderAiLogEntries);
 els.aiLogWarningOnly?.addEventListener('change', renderAiLogEntries);
 els.aiLogGroupByTask?.addEventListener('change', renderAiLogEntries);
 els.exportAiLog?.addEventListener('click', exportFilteredAiLogs);
+els.exportReplayFixture?.addEventListener('click', exportReplayFixture);
 
 // 房间码点击复制
 els.codeRow.addEventListener('click', async () => {
