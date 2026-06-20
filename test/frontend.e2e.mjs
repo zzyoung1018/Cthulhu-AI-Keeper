@@ -550,6 +550,21 @@ test('owner adjudicates checks in AI assisted mode', async ({ page }) => {
 
     await page.getByRole('button', { name: '裁定检定' }).last().click();
     await expect(page.locator('#assistDialog')).toBeVisible();
+    const modalMetrics = await page.evaluate(() => {
+      const dialog = document.querySelector('#assistDialog');
+      const content = document.querySelector('#assistDialog .dialog-content');
+      const input = document.querySelector('#assistForm input[name="skillName"]');
+      const dialogRect = dialog.getBoundingClientRect();
+      const contentRect = content.getBoundingClientRect();
+      return {
+        clippedHorizontally: contentRect.left < dialogRect.left || contentRect.right > dialogRect.right,
+        inputList: input.getAttribute('list'),
+        quickChipCount: document.querySelectorAll('[data-assist-skill]').length
+      };
+    });
+    expect(modalMetrics.clippedHorizontally).toBe(false);
+    expect(modalMetrics.inputList).toBe(null);
+    expect(modalMetrics.quickChipCount).toBeGreaterThan(0);
     await page.locator('#assistForm input[name="skillName"]').fill('侦查');
     await page.locator('#assistForm select[name="difficulty"]').selectOption('HARD');
     await page.locator('#assistForm input[name="reason"]').fill('窗台灰尘需要仔细观察');

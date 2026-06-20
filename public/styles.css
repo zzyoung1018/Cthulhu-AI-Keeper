@@ -1746,8 +1746,17 @@ dialog .module-preview {
   min-height: 32px;
 }
 
+#assistDialog {
+  width: min(860px, calc(100vw - 40px));
+  max-width: none;
+  max-height: calc(100vh - 40px);
+}
+
 .assist-overlay {
-  width: min(680px, 92vw);
+  width: auto;
+  max-height: calc(100vh - 42px);
+  overflow-y: auto;
+  box-sizing: border-box;
 }
 
 .assist-action-preview {
@@ -1761,14 +1770,69 @@ dialog .module-preview {
   font-size: 0.9rem;
 }
 
+#assistForm {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+
+#assistForm > label,
+#assistForm .config-grid,
+.assist-opposed-fields {
+  min-width: 0;
+}
+
+.assist-wide,
+.assist-action-preview,
+.assist-opposed-fields,
+#assistForm > button[type="submit"] {
+  grid-column: 1 / -1;
+}
+
+.assist-skill-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: -4px;
+}
+
+.assist-skill-chips span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.assist-skill-chip {
+  min-height: 30px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+}
+
 .assist-opposed-fields {
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
 .assist-opposed-fields[hidden],
 .assist-required-fields[hidden] {
   display: none;
+}
+
+@media (max-width: 760px) {
+  #assistDialog {
+    width: min(94vw, calc(100vw - 20px));
+    max-height: calc(100vh - 20px);
+  }
+
+  .assist-overlay {
+    max-height: calc(100vh - 22px);
+    padding: 18px 16px;
+  }
+
+  #assistForm {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 860px) {

@@ -75,7 +75,7 @@ const els = {
   assistTargetPlayer: document.querySelector('#assistTargetPlayer'),
   assistRequiredFields: document.querySelector('#assistRequiredFields'),
   assistOpposedFields: document.querySelector('#assistOpposedFields'),
-  assistSkillOptions: document.querySelector('#assistSkillOptions'),
+  assistQuickSkills: document.querySelector('#assistQuickSkills'),
   // 模组
   moduleSelect: document.querySelector('#moduleSelect'),
   moduleFile: document.querySelector('#moduleFile'),
@@ -2132,19 +2132,20 @@ function renderAiConfigForm() {
   setFormValue(els.aiConfigForm, 'contentBoundaries', config.contentBoundaries || '');
 }
 
-function populateAssistSkillOptions() {
-  if (!els.assistSkillOptions) return;
-  const values = [
-    ...Object.keys(defaultSkills),
-    ...Object.keys(characteristicInfo),
-    ...Object.values(characteristicInfo).map((item) => item.label).filter(Boolean)
-  ];
-  const unique = [...new Set(values)].sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'));
-  els.assistSkillOptions.replaceChildren();
-  for (const value of unique) {
-    const option = document.createElement('option');
-    option.value = value;
-    els.assistSkillOptions.append(option);
+function renderAssistQuickSkills() {
+  if (!els.assistQuickSkills) return;
+  const values = ['侦查', '聆听', '图书馆使用', '话术', '说服', '心理学', '潜行', '妙手', 'STR', 'DEX', 'INT', '幸运'];
+  els.assistQuickSkills.replaceChildren();
+  const label = document.createElement('span');
+  label.textContent = '常用';
+  els.assistQuickSkills.append(label);
+  for (const value of values) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'assist-skill-chip';
+    button.dataset.assistSkill = value;
+    button.textContent = value;
+    els.assistQuickSkills.append(button);
   }
 }
 
@@ -2173,7 +2174,7 @@ function updateAssistDecisionFields() {
 
 function openAssistDialog(actionMessage) {
   if (!els.assistDialog || !els.assistForm || !actionMessage) return;
-  populateAssistSkillOptions();
+  renderAssistQuickSkills();
   renderAssistTargets(actionMessage.playerId);
   els.assistForm.reset();
   els.assistForm.elements.actionMessageId.value = actionMessage.id;
@@ -2761,6 +2762,12 @@ els.aiConfigForm.addEventListener('submit', async (event) => {
 });
 
 els.assistDecision?.addEventListener('change', updateAssistDecisionFields);
+els.assistQuickSkills?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-assist-skill]');
+  if (!button || !els.assistForm) return;
+  els.assistForm.elements.skillName.value = button.dataset.assistSkill || '';
+  els.assistForm.elements.skillName.focus();
+});
 document.querySelector('#closeAssistDialog')?.addEventListener('click', () => els.assistDialog.close());
 els.assistDialog?.addEventListener('click', (event) => {
   if (event.target === els.assistDialog) els.assistDialog.close();
