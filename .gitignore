@@ -1,10 +1,28 @@
+# Dependencies
 node_modules/
+
+# Local environment and secrets
 .env
-.DS_Store
+.env.local
+.env.*.local
+
+# Runtime data
 data/
 *.db
 *.db-shm
 *.db-wal
+
+# Generated output
 coverage/
 test-results/
+playwright-report/
+reports/
 npm-debug.log*
+
+# Local machine/editor artifacts
+.DS_Store
+.claude/
+handoff.md
+
+# Local/private module source material
+测试模组*/

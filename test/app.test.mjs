@@ -10,7 +10,7 @@ import { exportGameJson } from '../src/export.js';
 test('handles malformed Host headers without crashing', () => {
   const url = parseRequestUrl({
     url: '/',
-    headers: { host: '008.153.147.137' }
+    headers: { host: '008.example.invalid' }
   });
 
   assert.equal(url.pathname, '/');

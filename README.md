@@ -1,6 +1,15 @@
-# DM Online
+# Cthulhu AI Keeper
 
 一个多人线上跑团 DM 网站，支持房间、最多 5 名玩家、实时聊天、AI DM 流式回复、SQLite 持久化、房间级 AI 队列、Nginx 反向代理和 systemd 服务。
+
+## 仓库内容
+
+仓库保留应用源码、前端资源、测试、部署脚本和公开配置示例。以下内容属于本地运行或私有素材，不应提交到 GitHub：
+
+- `.env`、数据库和运行数据：`data/`、`*.db*`
+- 依赖和测试输出：`node_modules/`、`test-results/`、`playwright-report/`
+- 游玩报告与交接笔记：`reports/`、`handoff.md`
+- 本地模组源文件：`测试模组*/`
 
 ## 本地运行
 
@@ -70,11 +79,11 @@ curl -s http://127.0.0.1:4173/api/health
 部署后可从任意能访问服务器的机器运行：
 
 ```bash
-npm run audit:deployment -- http://8.153.147.137
+npm run audit:deployment -- http://your-server.example
 ```
 
 外部 AI 配置完成后运行严格模式：
 
 ```bash
-npm run audit:deployment -- http://8.153.147.137 --require-ai
+npm run audit:deployment -- http://your-server.example --require-ai
 ```
