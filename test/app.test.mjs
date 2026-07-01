@@ -1070,7 +1070,24 @@ test('regenerating a preflighted task keeps check continuation context', async (
 test('preflight opposed checks use recent NPC context before AI narration', async () => {
   const fakeAi = await startFakeAiServer([
     '开场叙事。',
-    '检定结果让陈友的态度出现了细微变化。\n\n```json\n{}\n```'
+    [
+      '检定结果让陈友的态度出现了细微变化。',
+      '',
+      '```json',
+      JSON.stringify({
+        opposed_checks: [
+          {
+            activePlayerId: 'p1',
+            activeSkill: '话术',
+            passiveNpcName: '陈友',
+            passiveSkill: '心理学',
+            contestType: 'social',
+            reason: 'AI 误把已经由服务器完成的对抗检定又返回了一次'
+          }
+        ]
+      }, null, 2),
+      '```'
+    ].join('\n')
   ]);
   const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
   const app = createApp({
@@ -1167,6 +1184,15 @@ test('preflight opposed checks use recent NPC context before AI narration', asyn
 
     const completedTask = state.aiTasks.find((task) => task.uid === submitted.aiTask.uid);
     assert.equal(completedTask.triggerMessageId, checkMessage.id);
+
+    const logs = app.database.listAiLogs({ code: created.room.code, limit: 40 });
+    const structured = logs.find((entry) =>
+      entry.stage === 'structured-events' &&
+      entry.taskUid === submitted.aiTask.uid
+    );
+    assert.equal(structured.checkContinuationMode, true);
+    assert.equal(structured.detection.checkEventsSuppressed, true);
+    assert.equal(structured.detection.suppressedCheckEventCount, 1);
   } finally {
     await new Promise((resolveClose) => app.server.close(resolveClose));
     app.database.close();
