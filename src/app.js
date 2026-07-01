@@ -335,6 +335,11 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
       taskUid: task.uid,
       triggerMessageId: checkMessage.id
     });
+    database.markActionProcessedByTask({
+      code,
+      actionMessageId: actionMessage.id,
+      taskUid: task.uid
+    });
     if (updatedTask) {
       task = updatedTask;
       broadcastAiTask(code, task);
@@ -403,9 +408,10 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
 
     try {
       const aiMessages = buildDmMessages(state);
+      const checkContinuationMode = shouldUseCheckContinuationPrompt(task, queuedPreflight);
       // 结构化输出指令作为 system 消息，优先级最高
       aiMessages.splice(1, 0, { role: 'system', content: buildStructuredOutputPrompt() });
-      if (shouldUseCheckContinuationPrompt(task, queuedPreflight)) {
+      if (checkContinuationMode) {
         aiMessages.splice(2, 0, {
           role: 'system',
           content: [
@@ -413,7 +419,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
             '必须根据最近的骰子/系统检定消息推进结果，不要重复要求同一个检定。',
             '如果最近检定失败，描述失败后果；如果成功，描述成功获得的信息、位置或 NPC 反应。',
             '不要改写、重掷或补编服务器已经给出的 d100 点数和胜负。',
-            '本轮通常不需要再返回 required_checks 或 opposed_checks，除非玩家在检定后已经做了新的正式行动。',
+            '本轮禁止返回 required_checks 或 opposed_checks；服务器已经完成本次判定，你只负责解释结果并推进场景。',
             '若根据成功检定揭示线索，请用 clues_revealed；若 NPC 态度/位置变化，请用 npc_state_changes。'
           ].join('\n')
         });
@@ -439,7 +445,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         narrative,
         roomState: state,
         triggerMessageId: task?.triggerMessageId || null,
-        disableCheckInference: isAssistedMode(state.room)
+        disableCheckInference: isAssistedMode(state.room) || checkContinuationMode
       });
       const { valid, rejected, issues, warnings } = validateStructuredEvents(enhanced.events, {
         roomState: state,
@@ -457,6 +463,7 @@ export function createApp({ config, database = createDatabase(config.dbPath), pu
         rejectedKeys: rejected,
         issues,
         warnings,
+        checkContinuationMode,
         hasOpposedChecks: Array.isArray(enhanced.events.opposed_checks) && enhanced.events.opposed_checks.length > 0,
         opposedCount: Array.isArray(enhanced.events.opposed_checks) ? enhanced.events.opposed_checks.length : 0,
         detection: enhanced.diagnostics,

@@ -675,7 +675,22 @@ test('AI required_checks are executed as server-side rolls', async () => {
 test('preflight required checks roll before AI continuation', async () => {
   const fakeAi = await startFakeAiServer([
     '开场叙事。',
-    '骰点结果出来后，书桌下沿的划痕显得更清楚。\n\n```json\n{}\n```'
+    [
+      '骰点结果出来后，书桌下沿的划痕显得更清楚。',
+      '',
+      '```json',
+      JSON.stringify({
+        required_checks: [
+          {
+            targetPlayerId: 'p1',
+            skill: '侦查',
+            difficulty: 'HARD',
+            reason: 'AI 误把已经由服务器完成的预检定又返回了一次'
+          }
+        ]
+      }, null, 2),
+      '```'
+    ].join('\n')
   ]);
   const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
   const app = createApp({
@@ -764,10 +779,22 @@ test('preflight required checks roll before AI continuation', async () => {
 
     const completedTask = state.aiTasks.find((task) => task.uid === submitted.aiTask.uid);
     assert.equal(completedTask.triggerMessageId, checkMessages[0].id);
+    const actionMessage = state.messages.find((message) => message.id === submitted.message.id);
+    assert.equal(actionMessage.aiProcessedTaskUid, submitted.aiTask.uid);
 
     const dmMessage = state.messages.find((message) => message.authorType === 'dm');
     assert.ok(dmMessage);
     assert.doesNotMatch(dmMessage.content, /```json/);
+    assert.doesNotMatch(dmMessage.content, /此处触发/);
+
+    const logs = app.database.listAiLogs({ code: created.room.code, limit: 40 });
+    const structured = logs.find((entry) =>
+      entry.stage === 'structured-events' &&
+      entry.taskUid === submitted.aiTask.uid
+    );
+    assert.equal(structured.checkContinuationMode, true);
+    assert.equal(structured.detection.checkEventsSuppressed, true);
+    assert.equal(structured.detection.suppressedCheckEventCount, 1);
 
     const rolledBack = await jsonRequest(baseUrl, `/api/rooms/${created.room.code}/rollback/${submitted.aiTask.uid}`, {
       method: 'POST',
@@ -1277,7 +1304,22 @@ test('queued actions run preflight checks when their AI turn starts', async () =
 test('continue endpoint queues AI without creating a visible player action', async () => {
   const fakeAi = await startFakeAiServer([
     '开场叙事。',
-    '陈友看着刚才的检定结果，态度随之改变。\n\n```json\n{}\n```'
+    [
+      '陈友看着刚才的检定结果，态度随之改变。',
+      '',
+      '```json',
+      JSON.stringify({
+        required_checks: [
+          {
+            targetPlayerId: 'p1',
+            skill: '聆听',
+            difficulty: 'REGULAR',
+            reason: 'AI 不应在继续检定结果时追加新检定'
+          }
+        ]
+      }, null, 2),
+      '```'
+    ].join('\n')
   ]);
   const dir = mkdtempSync(join(tmpdir(), 'dm-online-app-test-'));
   const app = createApp({
@@ -1365,7 +1407,18 @@ test('continue endpoint queues AI without creating a visible player action', asy
       message.messageType === 'ACTION' &&
       /继续/.test(message.content)
     ), false);
+    assert.equal(state.diceRolls.some((roll) => roll.label === '聆听'), false);
+    assert.equal(state.messages.filter((message) => message.displayName === '必要检定').length, 1);
     assert.ok(state.messages.some((message) => message.authorType === 'dm'));
+
+    const logs = app.database.listAiLogs({ code: created.room.code, limit: 40 });
+    const structured = logs.find((entry) =>
+      entry.stage === 'structured-events' &&
+      entry.taskUid === queued.aiTask.uid
+    );
+    assert.equal(structured.checkContinuationMode, true);
+    assert.equal(structured.detection.checkEventsSuppressed, true);
+    assert.equal(structured.detection.suppressedCheckEventCount, 1);
   } finally {
     await new Promise((resolveClose) => app.server.close(resolveClose));
     app.database.close();
