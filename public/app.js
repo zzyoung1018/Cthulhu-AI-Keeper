@@ -478,8 +478,25 @@ function toast(message) {
   toast.timer = setTimeout(() => els.toast.classList.remove('show'), 2200);
 }
 
+function detectAppBasePath() {
+  const script = document.querySelector('script[type="module"][src*="app.js"]');
+  if (!script) return '';
+  const scriptUrl = new URL(script.getAttribute('src'), window.location.href);
+  const pathname = scriptUrl.pathname.replace(/\/app\.js$/, '');
+  return pathname === '/' ? '' : pathname.replace(/\/+$/, '');
+}
+
+const appBasePath = detectAppBasePath();
+
+function appPath(path) {
+  const value = String(path || '');
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return value;
+  const normalized = value.startsWith('/') ? value : `/${value}`;
+  return `${appBasePath}${normalized}`;
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(appPath(path), {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -501,7 +518,7 @@ async function uploadModuleFile(file) {
   form.set('title', file.name.replace(/\.[^.]+$/, ''));
   form.set('file', file);
 
-  const response = await fetch('/api/modules', {
+  const response = await fetch(appPath('/api/modules'), {
     method: 'POST',
     body: form
   });
@@ -972,7 +989,7 @@ function exportFilteredAiLogs() {
 function exportReplayFixture() {
   if (!state.room || !currentReplayMeta()) return;
   const link = document.createElement('a');
-  link.href = `/api/rooms/${state.room.code}/replay-fixture?playerId=${encodeURIComponent(state.playerId)}`;
+  link.href = appPath(`/api/rooms/${state.room.code}/replay-fixture?playerId=${encodeURIComponent(state.playerId)}`);
   link.download = `dm-online-${state.room.code}-fixture.json`;
   link.click();
   toast('正在导出回归用例...');
@@ -2405,7 +2422,7 @@ function connectEvents() {
   if (!state.room) return;
   disconnectEvents();
 
-  const source = new EventSource(`/api/rooms/${state.room.code}/events?playerId=${encodeURIComponent(state.playerId)}`);
+  const source = new EventSource(appPath(`/api/rooms/${state.room.code}/events?playerId=${encodeURIComponent(state.playerId)}`));
   state.events = source;
 
   source.addEventListener('connected', async () => {
@@ -2989,7 +3006,7 @@ els.exportGame.addEventListener('click', async () => {
   const format = confirm('导出 JSON？确定=JSON，取消=Markdown') ? 'json' : 'markdown';
   try {
     const link = document.createElement('a');
-    link.href = `/api/rooms/${state.room.code}/export?playerId=${encodeURIComponent(state.playerId)}&format=${format}`;
+    link.href = appPath(`/api/rooms/${state.room.code}/export?playerId=${encodeURIComponent(state.playerId)}&format=${format}`);
     link.download = `dm-online-${state.room.code}.${format === 'json' ? 'json' : 'md'}`;
     link.click();
     toast(`正在导出 ${format.toUpperCase()}...`);

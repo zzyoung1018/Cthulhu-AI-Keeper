@@ -26,6 +26,8 @@ npm start
 
 当前上传链路仅支持结构化 JSON 模组文件（`.json`，需包含 `schema_version`）。TXT/PDF/DOCX 会被拒绝，以保证 AI DM 能稳定读取场景、NPC、线索、检定和全局规则。
 
+在导入新模组前，先把原始模组材料交给一个代码/文档处理 agent，按照仓库根目录的 [`prompt.md`](./prompt.md) 规则转写成可读取的 JSON。推荐使用 Claude Code、Codex 或同类 agent 完成这个任务：让 agent 先理解原模组，再按 prompt 约束精简和结构化，保留剧情流程、NPC 数值、检定、线索和关键数字信息，最后输出一个可被 `JSON.parse` 直接解析的 `.json` 文件。
+
 ## AI 配置
 
 服务使用 OpenAI-compatible Chat Completions 流式接口：
@@ -55,7 +57,7 @@ bash deploy/configure_ai.sh
 bash deploy/install_server.sh
 ```
 
-脚本会安装 Node 22、Nginx，执行 `npm install` 和 `npm test`，然后安装 systemd 服务与 Nginx 反代配置。
+脚本会安装 Node 22、Nginx，执行 `npm install` 和 `npm test`，然后安装 systemd 服务与 Nginx 反代配置。默认公网入口为 `/coc/`，例如 `http://your-server.example/coc/`；根路径 `/` 会跳转到 `/coc/`。
 
 部署后的主要路径：
 
@@ -79,11 +81,11 @@ curl -s http://127.0.0.1:4173/api/health
 部署后可从任意能访问服务器的机器运行：
 
 ```bash
-npm run audit:deployment -- http://your-server.example
+npm run audit:deployment -- http://your-server.example/coc
 ```
 
 外部 AI 配置完成后运行严格模式：
 
 ```bash
-npm run audit:deployment -- http://your-server.example --require-ai
+npm run audit:deployment -- http://your-server.example/coc --require-ai
 ```
